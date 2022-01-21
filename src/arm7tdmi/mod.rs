@@ -110,6 +110,12 @@ impl OperationState {
 
 impl Default for Cpu {
     fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Cpu {
+    pub fn new() -> Self {
         Self {
             run_state: RunState::NotRunning,
             op_state: OperationState::Arm,
@@ -117,20 +123,19 @@ impl Default for Cpu {
             reg: Default::default(),
         }
     }
-}
 
-impl Cpu {
-    pub fn new() -> Self {
-        Default::default()
-    }
-
-    pub fn reset(&mut self) {
+    pub fn soft_reset(&mut self) {
         self.run_state = RunState::Running;
         let mut new_cpsr = (self.reg.cpsr & !PSR_OP_THUMB_MASK) & !PSR_OP_MODE_MASK;
         new_cpsr |=
             OperationMode::Supervisor.psr_mode_bits() | PSR_IRQ_DISABLE_MASK | PSR_FIQ_DISABLE_MASK;
         self.set_cpsr(new_cpsr);
         self.reg.r[R_PC_INDEX] = 0;
+    }
+
+    pub fn hard_reset(&mut self) {
+        *self = Self::new();
+        self.soft_reset();
     }
 
     pub fn set_cpsr(&mut self, cpsr: u32) {
@@ -143,29 +148,40 @@ impl Cpu {
         }
     }
 
-    fn change_mode(&mut self, mode: OperationMode) {
+    fn change_mode(&mut self, new_mode: OperationMode) {
         let old_mode = self.op_mode;
-        let old_bank_i = old_mode.bank_index();
+        let old_bank_index = old_mode.bank_index();
+        let new_bank_index = new_mode.bank_index();
+        self.op_mode = new_mode;
 
-        self.op_mode = mode;
-        let bank_i = mode.bank_index();
-        if old_bank_i == bank_i {
+        if old_bank_index == new_bank_index {
             return;
         }
 
-        if old_mode == OperationMode::FastInterrupt || mode == OperationMode::FastInterrupt {
+        if old_mode == OperationMode::FastInterrupt || new_mode == OperationMode::FastInterrupt {
             self.reg
                 .fiq_r8_12_bank
                 .swap_with_slice(&mut self.reg.r[8..=12]);
         }
+        self.reg.banks[old_bank_index].r13 = self.reg.r[13];
+        self.reg.banks[old_bank_index].r14 = self.reg.r[14];
+        self.reg.banks[old_bank_index].spsr = self.reg.spsr;
 
-        self.reg.banks[old_bank_i].r13 = self.reg.r[13];
-        self.reg.banks[old_bank_i].r14 = self.reg.r[14];
-        self.reg.banks[old_bank_i].spsr = self.reg.spsr;
+        self.reg.r[13] = self.reg.banks[new_bank_index].r13;
+        self.reg.r[14] = self.reg.banks[new_bank_index].r14;
+        self.reg.spsr = self.reg.banks[new_bank_index].spsr;
+    }
 
-        self.reg.r[13] = self.reg.banks[bank_i].r13;
-        self.reg.r[14] = self.reg.banks[bank_i].r14;
-        self.reg.spsr = self.reg.banks[bank_i].spsr;
+    pub fn step(&mut self, cycles: usize) {
+        if self.run_state != RunState::Running {
+            return;
+        }
+
+        // TODO: cycles may need to be isize, and we'll likely need to accumulate steps if the last
+        // instruction that we can execute here requires more steps than is available
+        while cycles > 0 {
+            todo!();
+        }
     }
 }
 
@@ -184,7 +200,7 @@ mod tests {
     #[test]
     fn set_cpsr_works() {
         let mut cpu = Cpu::new();
-        cpu.reset();
+        cpu.soft_reset();
 
         cpu.set_cpsr(OperationMode::Abort.psr_mode_bits() | PSR_OP_THUMB_MASK);
         assert_eq!(RunState::Running, cpu.run_state);
@@ -196,17 +212,17 @@ mod tests {
         assert_eq!(OperationMode::Undefined, cpu.op_mode);
         assert_eq!(OperationState::Arm, cpu.op_state);
 
-        // invalid mode should hang (actually, behaviour is indeterminate, but this is easier)
+        // invalid mode should hang
         cpu.set_cpsr(0);
         assert_eq!(RunState::Hung, cpu.run_state);
     }
 
-    #[test]
-    fn reset_sets_correct_values() {
-        let mut cpu = Cpu::new();
-        cpu.reg.r[R_PC_INDEX] = 0xdead;
-        cpu.reg.cpsr = (0b1111 << 28) | 0b1111_1111;
-        cpu.reset();
+    fn test_reset(cpu: &mut Cpu, hard_reset: bool) {
+        if hard_reset {
+            cpu.hard_reset();
+        } else {
+            cpu.soft_reset();
+        }
 
         assert_eq!(RunState::Running, cpu.run_state);
         assert_eq!(OperationMode::Supervisor, cpu.op_mode);
@@ -221,6 +237,15 @@ mod tests {
         assert_eq!(0, cpu.reg.cpsr & PSR_OP_THUMB_MASK);
         assert_ne!(0, cpu.reg.cpsr & PSR_IRQ_DISABLE_MASK);
         assert_ne!(0, cpu.reg.cpsr & PSR_FIQ_DISABLE_MASK);
+    }
+
+    #[test]
+    fn soft_reset_works() {
+        let mut cpu = Cpu::new();
+        cpu.reg.r[R_PC_INDEX] = 0xdead;
+        cpu.reg.cpsr = (0b1111 << 28) | 0b1111_1111;
+        test_reset(&mut cpu, false);
+
         // condition flags should be preserved
         assert_eq!(
             0b1111 << 28,
@@ -229,9 +254,29 @@ mod tests {
     }
 
     #[test]
+    fn hard_reset_works() {
+        let mut cpu = Cpu::new();
+        cpu.reg.r.fill(0xdead);
+        cpu.reg.cpsr = (0b1111 << 28) | 0b1111_1111;
+        test_reset(&mut cpu, true);
+
+        assert_eq!([0; 16], cpu.reg.r);
+        assert_eq!(0, cpu.reg.spsr);
+        for b in cpu.reg.banks {
+            assert_eq!(RegisterBank::default(), b);
+        }
+        assert_eq!([0; 5], cpu.reg.fiq_r8_12_bank);
+        // all condition flags should be cleared
+        assert_eq!(
+            0,
+            cpu.reg.cpsr & (PSR_NEG_LT_MASK | PSR_ZERO_MASK | PSR_CARRY_MASK | PSR_OVERFLOW_MASK)
+        );
+    }
+
+    #[test]
     fn change_mode_works() {
         let mut cpu = Cpu::new();
-        cpu.reset();
+        cpu.soft_reset();
         cpu.change_mode(OperationMode::User);
 
         assert_eq!(OperationMode::User, cpu.op_mode);
@@ -286,8 +331,8 @@ mod tests {
             cpu.reg.banks[OperationMode::FastInterrupt.bank_index()]
         );
 
-        // no need to do banking when switching to the same mode, or when switching between usr
-        // and sys modes (they share the same "bank", which is actually no bank; that's an
+        // no need to do banking when switching to the same mode, or when switching between usr and
+        // sys modes (they share the same "bank", which is actually no bank; that's an
         // implementation detail)
         cpu.change_mode(OperationMode::System);
 

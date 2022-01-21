@@ -6,11 +6,19 @@ struct Gba {
 }
 
 impl Gba {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Default::default()
     }
 
-    fn reset(&mut self) {
-        self.cpu.reset();
+    pub fn soft_reset(&mut self) {
+        self.cpu.soft_reset();
+    }
+
+    pub fn hard_reset(&mut self) {
+        self.cpu.hard_reset();
+    }
+
+    pub fn step(&mut self, cycles: usize) {
+        self.cpu.step(cycles);
     }
 }
