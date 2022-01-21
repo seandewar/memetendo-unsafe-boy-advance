@@ -1,4 +1,6 @@
-nothing to see here
+# Memetendo Unsafe Boy Advance
+
+nothing to see here yet; I'll be working on this in my spare time :)
 
 ## What's with the name?
 
