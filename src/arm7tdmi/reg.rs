@@ -83,7 +83,7 @@ impl IndexMut<NamedGeneralRegister> for GeneralRegisters {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 pub(crate) struct Registers {
     pub(crate) r: GeneralRegisters,
     pub(crate) cpsr: StatusRegister,

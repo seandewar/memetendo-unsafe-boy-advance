@@ -128,22 +128,24 @@ mod tests {
         assert_eq!(RunState::Hung, cpu.run_state);
     }
 
-    fn assert_exception_result(cpu: &mut Cpu, exception: Exception, old_fiq_disabled: bool) {
+    fn assert_exception_result(cpu: &mut Cpu, exception: Exception, old_reg: Registers) {
         assert_eq!(RunState::Running, cpu.run_state);
         assert_eq!(exception.entry_mode(), cpu.reg.cpsr.mode());
         assert_eq!(
-            exception.disables_fiq() || old_fiq_disabled,
+            exception.disables_fiq() || old_reg.cpsr.fiq_disabled,
             cpu.reg.cpsr.fiq_disabled
         );
         assert_eq!(exception.vector_addr(), cpu.reg.r[Pc]);
+        assert_eq!(old_reg.r[Pc], cpu.reg.r[Lr]);
+        assert_eq!(old_reg.cpsr, cpu.reg.spsr);
         assert!(!cpu.reg.cpsr.thumb_enabled);
         assert!(cpu.reg.cpsr.irq_disabled);
     }
 
     fn test_exception(cpu: &mut Cpu, exception: Exception) {
-        let old_fiq_disabled = cpu.reg.cpsr.fiq_disabled;
+        let old_reg = cpu.reg;
         cpu.enter_exception(exception);
-        assert_exception_result(cpu, exception, old_fiq_disabled);
+        assert_exception_result(cpu, exception, old_reg);
     }
 
     #[test]
@@ -151,9 +153,11 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.set_cpsr((0b1111 << 28) | 0b1111_1111);
         cpu.reg.r[Pc] = 0xbeef;
-        cpu.reset();
+        let old_reg = cpu.reg;
 
-        assert_exception_result(&mut cpu, Exception::Reset, false);
+        cpu.reset();
+        assert_exception_result(&mut cpu, Exception::Reset, old_reg);
+
         // condition flags should be preserved by reset
         assert!(cpu.reg.cpsr.sign);
         assert!(cpu.reg.cpsr.zero);
