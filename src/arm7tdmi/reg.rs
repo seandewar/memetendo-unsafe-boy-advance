@@ -125,11 +125,11 @@ impl Registers {
     }
 
     pub(crate) fn set_mode(&mut self, mode: OperationMode) {
-        self.change_banks(mode);
+        self.change_bank(mode);
         self.cpsr.mode = mode;
     }
 
-    fn change_banks(&mut self, mode: OperationMode) {
+    fn change_bank(&mut self, mode: OperationMode) {
         let old_bank_index = self.cpsr.mode.bank_index();
         let bank_index = mode.bank_index();
         if old_bank_index == bank_index {

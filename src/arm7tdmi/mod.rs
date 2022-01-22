@@ -10,7 +10,7 @@ pub struct Cpu {
     run_state: RunState,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum RunState {
     NotRunning,
     Running,
@@ -29,14 +29,8 @@ impl Cpu {
     }
 
     pub fn reset(&mut self) {
-        // TODO: this should raise the Reset exception instead but we haven't implemented
-        // exceptions yet
         self.run_state = RunState::Running;
-        self.reg.set_mode(OperationMode::Supervisor);
-        self.reg.cpsr.thumb_enabled = false;
-        self.reg.cpsr.irq_disabled = true;
-        self.reg.cpsr.fiq_disabled = true;
-        self.reg.r[Pc] = 0; // TODO: set_pc_addr?
+        self.enter_exception(Exception::Reset);
     }
 
     pub(crate) fn set_cpsr(&mut self, cpsr: u32) {
@@ -56,10 +50,9 @@ impl Cpu {
     }
 }
 
-/// Exceptions mapped to vector addresses.
-#[derive(Copy, Clone, PartialEq, Eq, IntoPrimitive, Debug)]
+#[derive(PartialEq, Eq, IntoPrimitive, Debug)]
 #[repr(u32)]
-enum Exception {
+pub(crate) enum Exception {
     Reset = 0x00,
     UndefinedInstr = 0x04,
     SoftwareInterrupt = 0x08,
@@ -71,12 +64,7 @@ enum Exception {
 
 impl Exception {
     #[must_use]
-    fn vector_addr(self) -> u32 {
-        self.into()
-    }
-
-    #[must_use]
-    fn entry_mode(self) -> OperationMode {
+    fn entry_mode(&self) -> OperationMode {
         match self {
             Self::Reset => OperationMode::Supervisor,
             Self::UndefinedInstr => OperationMode::UndefinedInstr,
@@ -90,13 +78,18 @@ impl Exception {
 }
 
 impl Cpu {
-    fn enter_exception(&mut self, except: Exception) {
-        let entry_mode = except.entry_mode();
-        let fiq_disable = except == Exception::Reset || except == Exception::FastInterrupt;
+    pub(crate) fn enter_exception(&mut self, exception: Exception) {
+        let old_cpsr = self.reg.cpsr;
 
+        self.reg.set_mode(exception.entry_mode());
+        self.reg.cpsr.thumb_enabled = false;
+        self.reg.cpsr.irq_disabled = true;
+        self.reg.cpsr.fiq_disabled =
+            exception == Exception::Reset || exception == Exception::FastInterrupt;
+
+        self.reg.spsr = old_cpsr;
         self.reg.r[Lr] = self.reg.r[Pc];
-        self.reg.r[Pc] = except.vector_addr();
-        todo!();
+        self.reg.r[Pc] = exception.into();
     }
 }
 
