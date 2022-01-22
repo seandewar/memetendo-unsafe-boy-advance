@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-num_enum = "0.5.6"
+strum = "0.23.0"
+strum_macros = "0.23.0"

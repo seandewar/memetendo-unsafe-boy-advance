@@ -1,8 +1,8 @@
 mod reg;
 
-use num_enum::IntoPrimitive;
-
 use self::reg::{NamedGeneralRegister::*, OperationMode, Registers};
+
+use strum_macros::EnumIter;
 
 #[derive(Default, Debug)]
 pub struct Cpu {
@@ -50,7 +50,7 @@ impl Cpu {
     }
 }
 
-#[derive(PartialEq, Eq, IntoPrimitive, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, EnumIter, Debug)]
 #[repr(u32)]
 pub(crate) enum Exception {
     Reset = 0x00,
@@ -64,6 +64,11 @@ pub(crate) enum Exception {
 
 impl Exception {
     #[must_use]
+    fn vector_addr(&self) -> u32 {
+        *self as _
+    }
+
+    #[must_use]
     fn entry_mode(&self) -> OperationMode {
         match self {
             Self::Reset => OperationMode::Supervisor,
@@ -75,6 +80,11 @@ impl Exception {
             Self::FastInterrupt => OperationMode::FastInterrupt,
         }
     }
+
+    #[must_use]
+    fn disables_fiq(&self) -> bool {
+        matches!(self, Self::Reset | Self::FastInterrupt)
+    }
 }
 
 impl Cpu {
@@ -82,19 +92,20 @@ impl Cpu {
         let old_cpsr = self.reg.cpsr;
 
         self.reg.set_mode(exception.entry_mode());
-        self.reg.cpsr.thumb_enabled = false;
+        self.reg.cpsr.fiq_disabled |= exception.disables_fiq();
         self.reg.cpsr.irq_disabled = true;
-        self.reg.cpsr.fiq_disabled =
-            exception == Exception::Reset || exception == Exception::FastInterrupt;
+        self.reg.cpsr.thumb_enabled = false;
 
         self.reg.spsr = old_cpsr;
         self.reg.r[Lr] = self.reg.r[Pc];
-        self.reg.r[Pc] = exception.into();
+        self.reg.r[Pc] = exception.vector_addr();
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use strum::IntoEnumIterator;
+
     use super::*;
 
     #[test]
@@ -102,12 +113,12 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.reset();
 
-        cpu.set_cpsr(OperationMode::Abort as u32 | (1 << 5));
+        cpu.set_cpsr(OperationMode::Abort.psr() | (1 << 5));
         assert_eq!(RunState::Running, cpu.run_state);
         assert_eq!(OperationMode::Abort, cpu.reg.cpsr.mode());
         assert!(cpu.reg.cpsr.thumb_enabled);
 
-        cpu.set_cpsr(OperationMode::UndefinedInstr as _);
+        cpu.set_cpsr(OperationMode::UndefinedInstr.psr());
         assert_eq!(RunState::Running, cpu.run_state);
         assert_eq!(OperationMode::UndefinedInstr, cpu.reg.cpsr.mode());
         assert!(!cpu.reg.cpsr.thumb_enabled);
@@ -117,6 +128,24 @@ mod tests {
         assert_eq!(RunState::Hung, cpu.run_state);
     }
 
+    fn assert_exception_result(cpu: &mut Cpu, exception: Exception, old_fiq_disabled: bool) {
+        assert_eq!(RunState::Running, cpu.run_state);
+        assert_eq!(exception.entry_mode(), cpu.reg.cpsr.mode());
+        assert_eq!(
+            exception.disables_fiq() || old_fiq_disabled,
+            cpu.reg.cpsr.fiq_disabled
+        );
+        assert_eq!(exception.vector_addr(), cpu.reg.r[Pc]);
+        assert!(!cpu.reg.cpsr.thumb_enabled);
+        assert!(cpu.reg.cpsr.irq_disabled);
+    }
+
+    fn test_exception(cpu: &mut Cpu, exception: Exception) {
+        let old_fiq_disabled = cpu.reg.cpsr.fiq_disabled;
+        cpu.enter_exception(exception);
+        assert_exception_result(cpu, exception, old_fiq_disabled);
+    }
+
     #[test]
     fn reset_works() {
         let mut cpu = Cpu::new();
@@ -124,17 +153,20 @@ mod tests {
         cpu.reg.r[Pc] = 0xbeef;
         cpu.reset();
 
-        assert_eq!(RunState::Running, cpu.run_state);
-        assert_eq!(OperationMode::Supervisor, cpu.reg.cpsr.mode());
-        assert_eq!(0, cpu.reg.r[Pc]);
-        assert!(!cpu.reg.cpsr.thumb_enabled);
-        assert!(cpu.reg.cpsr.irq_disabled);
-        assert!(cpu.reg.cpsr.fiq_disabled);
-
-        // condition flags should be preserved
+        assert_exception_result(&mut cpu, Exception::Reset, false);
+        // condition flags should be preserved by reset
         assert!(cpu.reg.cpsr.sign);
         assert!(cpu.reg.cpsr.zero);
         assert!(cpu.reg.cpsr.carry);
         assert!(cpu.reg.cpsr.overflow);
+    }
+
+    #[test]
+    fn enter_exception_works() {
+        let mut cpu = Cpu::new();
+        cpu.reset();
+        for exception in Exception::iter() {
+            test_exception(&mut cpu, exception);
+        }
     }
 }

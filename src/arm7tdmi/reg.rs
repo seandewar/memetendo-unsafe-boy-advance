@@ -3,9 +3,9 @@ use std::{
     slice::SliceIndex,
 };
 
-use num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
+use strum_macros::FromRepr;
 
-#[derive(Copy, Clone, PartialEq, Eq, IntoPrimitive, TryFromPrimitive, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
 #[repr(u8)]
 pub enum OperationMode {
     User = 0b10000,
@@ -20,6 +20,13 @@ pub enum OperationMode {
 impl Default for OperationMode {
     fn default() -> Self {
         Self::Supervisor
+    }
+}
+
+impl OperationMode {
+    #[must_use]
+    pub fn psr(&self) -> u32 {
+        *self as _
     }
 }
 
@@ -107,11 +114,8 @@ impl OperationMode {
 }
 
 impl Registers {
-    pub(crate) fn set_cpsr(
-        &mut self,
-        cpsr: u32,
-    ) -> Result<(), TryFromPrimitiveError<OperationMode>> {
-        self.set_mode(OperationMode::try_from((cpsr & 0b11111) as u8)?);
+    pub(crate) fn set_cpsr(&mut self, cpsr: u32) -> Result<(), ()> {
+        self.set_mode(OperationMode::from_repr((cpsr & 0b11111) as u8).ok_or(())?);
 
         self.cpsr.sign = cpsr & (1 << 31) != 0;
         self.cpsr.zero = cpsr & (1 << 30) != 0;
@@ -165,7 +169,7 @@ impl StatusRegister {
     #[must_use]
     pub fn psr(&self) -> u32 {
         let mut psr = 0;
-        psr |= self.mode as u32;
+        psr |= self.mode.psr();
         psr |= (self.sign as u32) << 31;
         psr |= (self.zero as u32) << 30;
         psr |= (self.carry as u32) << 29;
