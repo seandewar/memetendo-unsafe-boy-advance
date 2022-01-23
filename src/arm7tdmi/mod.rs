@@ -159,7 +159,7 @@ mod tests {
         assert_exception_result(&mut cpu, Exception::Reset, old_reg);
 
         // condition flags should be preserved by reset
-        assert!(cpu.reg.cpsr.sign);
+        assert!(cpu.reg.cpsr.negative);
         assert!(cpu.reg.cpsr.zero);
         assert!(cpu.reg.cpsr.carry);
         assert!(cpu.reg.cpsr.overflow);

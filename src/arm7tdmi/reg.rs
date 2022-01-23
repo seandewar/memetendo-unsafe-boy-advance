@@ -117,7 +117,7 @@ impl Registers {
     pub(crate) fn set_cpsr(&mut self, cpsr: u32) -> Result<(), ()> {
         self.set_mode(OperationMode::from_repr((cpsr & 0b11111) as u8).ok_or(())?);
 
-        self.cpsr.sign = cpsr & (1 << 31) != 0;
+        self.cpsr.negative = cpsr & (1 << 31) != 0;
         self.cpsr.zero = cpsr & (1 << 30) != 0;
         self.cpsr.carry = cpsr & (1 << 29) != 0;
         self.cpsr.overflow = cpsr & (1 << 28) != 0;
@@ -155,7 +155,7 @@ impl Registers {
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub struct StatusRegister {
-    pub(crate) sign: bool,
+    pub(crate) negative: bool,
     pub(crate) zero: bool,
     pub(crate) carry: bool,
     pub(crate) overflow: bool,
@@ -170,7 +170,7 @@ impl StatusRegister {
     pub fn psr(&self) -> u32 {
         let mut psr = 0;
         psr |= self.mode.psr();
-        psr |= (self.sign as u32) << 31;
+        psr |= (self.negative as u32) << 31;
         psr |= (self.zero as u32) << 30;
         psr |= (self.carry as u32) << 29;
         psr |= (self.overflow as u32) << 28;
@@ -184,6 +184,11 @@ impl StatusRegister {
     #[must_use]
     pub fn mode(&self) -> OperationMode {
         self.mode
+    }
+
+    pub(crate) fn set_zn_from(&mut self, result: u32) {
+        self.zero = result == 0;
+        self.negative = (result as i32).is_negative();
     }
 }
 
