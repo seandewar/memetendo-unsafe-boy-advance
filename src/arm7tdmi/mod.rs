@@ -1,5 +1,5 @@
-mod decode;
 mod reg;
+mod thumb;
 
 use self::reg::{NamedGeneralRegister::*, OperationMode, Registers};
 
