@@ -1,13 +1,16 @@
+mod decode;
 mod reg;
 
 use self::reg::{NamedGeneralRegister::*, OperationMode, Registers};
+
+use crate::bus::DataBus;
 
 use strum_macros::EnumIter;
 
 #[derive(Default, Debug)]
 pub struct Cpu {
-    reg: Registers,
     run_state: RunState,
+    reg: Registers,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -39,14 +42,11 @@ impl Cpu {
         }
     }
 
-    pub fn step(&mut self, cycles: usize) {
+    pub fn step(&mut self, bus: &mut impl DataBus, cycles: usize) {
         if self.run_state != RunState::Running {
             return;
         }
-
-        // TODO: cycles may need to be isize, and we'll likely need to accumulate steps if the last
-        // instruction that we can execute here requires more steps than is available
-        todo!()
+        todo!();
     }
 }
 
@@ -97,7 +97,7 @@ impl Cpu {
         self.reg.cpsr.thumb_enabled = false;
 
         self.reg.spsr = old_cpsr;
-        self.reg.r[Lr] = self.reg.r[Pc];
+        self.reg.r[Lr] = self.reg.r[Pc]; // TODO: PC+nn?
         self.reg.r[Pc] = exception.vector_addr();
     }
 }

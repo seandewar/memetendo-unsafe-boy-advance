@@ -1,4 +1,5 @@
 mod arm7tdmi;
+mod bus;
 mod gba;
 
 fn main() {

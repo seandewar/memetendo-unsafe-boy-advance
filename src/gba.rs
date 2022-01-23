@@ -1,8 +1,9 @@
-use crate::arm7tdmi;
+use crate::{arm7tdmi::Cpu, bus::GbaBus};
 
 #[derive(Default, Debug)]
 struct Gba {
-    cpu: arm7tdmi::Cpu,
+    cpu: Cpu,
+    bus: GbaBus,
 }
 
 impl Gba {
@@ -15,6 +16,6 @@ impl Gba {
     }
 
     pub fn step(&mut self, cycles: usize) {
-        self.cpu.step(cycles);
+        self.cpu.step(&mut self.bus, cycles);
     }
 }
