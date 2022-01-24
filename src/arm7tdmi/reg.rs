@@ -170,13 +170,13 @@ impl StatusRegister {
     pub fn psr(&self) -> u32 {
         let mut psr = 0;
         psr |= self.mode.psr();
-        psr |= (self.negative as u32) << 31;
-        psr |= (self.zero as u32) << 30;
-        psr |= (self.carry as u32) << 29;
-        psr |= (self.overflow as u32) << 28;
-        psr |= (self.irq_disabled as u32) << 7;
-        psr |= (self.fiq_disabled as u32) << 6;
-        psr |= (self.thumb_enabled as u32) << 5;
+        psr |= u32::from(self.negative) << 31;
+        psr |= u32::from(self.zero) << 30;
+        psr |= u32::from(self.carry) << 29;
+        psr |= u32::from(self.overflow) << 28;
+        psr |= u32::from(self.irq_disabled) << 7;
+        psr |= u32::from(self.fiq_disabled) << 6;
+        psr |= u32::from(self.thumb_enabled) << 5;
 
         psr
     }

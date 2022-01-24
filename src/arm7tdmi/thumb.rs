@@ -74,11 +74,11 @@ impl Cpu {
         match decode_format(instr) {
             // TODO: 1S cycle
             MoveShiftedReg => {
-                let r_dst = instr as usize & 0b111;
+                let r_dst = usize::from(instr) & 0b111;
                 let offset = (instr >> 6) & 0b1_1111;
 
                 if offset > 0 {
-                    let val = self.reg.r[(instr as usize >> 3) & 0b111];
+                    let val = self.reg.r[(usize::from(instr) >> 3) & 0b111];
                     let op = (instr >> 11) & 0b11;
 
                     match op {
@@ -104,27 +104,27 @@ impl Cpu {
             }
             // TODO: 1S cycle
             AddSub => {
-                let r_dst = instr as usize & 0b111;
-                let val1 = self.reg.r[(instr as usize >> 3) & 0b111];
+                let r_dst = usize::from(instr) & 0b111;
+                let val1 = self.reg.r[(usize::from(instr) >> 3) & 0b111];
                 let r_or_imm = (instr >> 6) & 0b111;
                 let op = (instr >> 9) & 0b11;
 
                 let mut val2 = if op & 0b10 == 0 {
-                    self.reg.r[r_or_imm as usize] // register
+                    self.reg.r[usize::from(r_or_imm)] // register
                 } else {
-                    r_or_imm as u32 // immediate
+                    r_or_imm.into() // immediate
                 };
                 if op & 1 != 0 {
                     val2 = -(val2 as i32) as _; // SUB
                 }
 
-                let result: u64 = (val1 as u64).wrapping_add(val2 as _);
+                let result = u64::from(val1).wrapping_add(val2.into());
                 let (val1_signed, val2_signed) = (val1 as i32, val2 as i32);
                 let (val1_neg, val2_neg) = (val1_signed.is_negative(), val2_signed.is_negative());
                 let same_sign = val1_neg == val2_neg;
 
                 self.reg.cpsr.overflow = same_sign && (result as i32).is_negative() != val1_neg;
-                self.reg.cpsr.carry = result > u32::MAX as _;
+                self.reg.cpsr.carry = result > u32::MAX.into();
                 self.reg.cpsr.set_zn_from(result as _);
                 self.reg.r[r_dst] = result as _;
             }
