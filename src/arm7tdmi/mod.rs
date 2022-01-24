@@ -42,7 +42,7 @@ impl Cpu {
         }
     }
 
-    pub fn step(&mut self, bus: &mut impl DataBus, cycles: usize) {
+    pub fn step(&mut self, _bus: &mut impl DataBus, _cycles: usize) {
         if self.run_state != RunState::Running {
             return;
         }
