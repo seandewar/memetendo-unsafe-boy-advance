@@ -78,61 +78,70 @@ impl Cpu {
         use InstructionFormat::*;
 
         // TODO: add to CPU cycle counts when implemented
-        #[allow(clippy::match_same_arms)]
         match decode_format(instr) {
             // TODO: 1S cycle
             #[allow(clippy::cast_possible_truncation)]
             MoveShiftedReg => {
-                let r_dst = usize::from(instr) & 0b111;
+                // Rd,Rs,#Offset
                 let offset = (instr >> 6) as u8 & 0b1_1111;
                 let value = self.reg.r[(usize::from(instr) >> 3) & 0b111];
                 let op = (instr >> 11) & 0b11;
 
-                match op {
-                    // LSL{S}, ASL{S}
-                    0 => self.reg.r[r_dst] = self.execute_lsl_asl(value, offset),
-
+                self.reg.r[(usize::from(instr) & 0b111)] = match op {
+                    // LSL{S}
+                    0 => self.execute_lsl(value, offset),
                     // LSR{S}, ASR{S}
-                    1 | 2 => self.reg.r[r_dst] = self.execute_lsr_asr(value, offset, op == 1),
-
+                    1 | 2 => self.execute_lsr_asr(value, offset, op == 1),
                     _ => unreachable!("format should be AddSub"),
-                }
+                };
             }
 
             // TODO: 1S cycle
             #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             AddSub => {
-                let r_dst = usize::from(instr) & 0b111;
                 let a = self.reg.r[(usize::from(instr) >> 3) & 0b111];
-                let r_or_imm = (instr >> 6) & 0b111;
+                let r_or_value = (instr >> 6) & 0b111;
                 let op = (instr >> 9) & 0b11;
-
                 let b = if op & 0b10 == 0 {
-                    self.reg.r[usize::from(r_or_imm)] // register
+                    // Rd,Rs,Rn
+                    self.reg.r[usize::from(r_or_value)]
                 } else {
-                    r_or_imm.into() // immediate
+                    // Rd,Rs,#nn
+                    r_or_value.into()
                 };
 
-                self.reg.r[r_dst] = if op & 1 == 0 {
-                    self.execute_add(a, b)
+                self.reg.r[(usize::from(instr) & 0b111)] = if op & 1 == 0 {
+                    // ADD{S}
+                    self.execute_add_cmn(a, b)
                 } else {
-                    self.execute_sub(a, b)
+                    // SUB{S}
+                    self.execute_sub_cmp(a, b)
                 };
             }
 
             // TODO: 1S cycle
             MoveCmpAddSubImm => {
-                let imm = u32::from(instr & 0b1111_1111);
+                // Rd,#nn
+                let value = u32::from(instr & 0b1111_1111);
                 let r_dst = (usize::from(instr) >> 8) & 0b111;
-                let op = (instr >> 11) & 0b11;
 
-                match op {
-                    0 => self.reg.r[r_dst] = self.execute_mov(imm),
-                    1 => {
-                        self.execute_sub(self.reg.r[r_dst], imm); // CMP
+                match (instr >> 11) & 0b11 {
+                    // MOV{S}
+                    0 => {
+                        self.reg.r[r_dst] = self.execute_mov(value);
                     }
-                    2 => self.reg.r[r_dst] = self.execute_add(self.reg.r[r_dst], imm),
-                    3 => self.reg.r[r_dst] = self.execute_sub(self.reg.r[r_dst], imm),
+                    // CMP{S}
+                    1 => {
+                        self.execute_sub_cmp(self.reg.r[r_dst], value);
+                    }
+                    // ADD{S}
+                    2 => {
+                        self.reg.r[r_dst] = self.execute_add_cmn(self.reg.r[r_dst], value);
+                    }
+                    // SUB{S}
+                    3 => {
+                        self.reg.r[r_dst] = self.execute_sub_cmp(self.reg.r[r_dst], value);
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -141,80 +150,76 @@ impl Cpu {
             //       1S+1I: LSL, LSR, ASR, ROR
             //       1S+mI: MUL (m=1..4; depending on MSBs of incoming Rd value)
             AluOp => {
+                // Rd,Rs
                 let r_dst = usize::from(instr) & 0b111;
                 let value = self.reg.r[(usize::from(instr) >> 3) & 0b111];
                 let op = (instr >> 6) & 0b1111;
 
                 match op {
                     // AND{S}
-                    0 => self.reg.r[r_dst] = self.execute_and(self.reg.r[r_dst], value),
-
-                    // EOR{S} (logical XOR) TODO: factor
-                    1 => {
-                        let result = self.reg.r[r_dst] ^ value;
-                        self.reg.r[r_dst] = result;
-                        self.reg.cpsr.set_nz_from(result);
+                    0 => {
+                        self.reg.r[r_dst] = self.execute_and_tst(self.reg.r[r_dst], value);
                     }
-
+                    // EOR{S} (XOR)
+                    1 => {
+                        self.reg.r[r_dst] = self.execute_eor(self.reg.r[r_dst], value);
+                    }
                     // LSL{S}
                     #[allow(clippy::cast_possible_truncation)]
-                    2 => self.reg.r[r_dst] = self.execute_lsl_asl(self.reg.r[r_dst], value as _),
-
+                    2 => {
+                        self.reg.r[r_dst] = self.execute_lsl(self.reg.r[r_dst], value as _);
+                    }
                     // LSR{S}, ASR{S}
                     #[allow(clippy::cast_possible_truncation)]
                     3 | 4 => {
                         self.reg.r[r_dst] =
                             self.execute_lsr_asr(self.reg.r[r_dst], value as _, op == 3);
                     }
-
                     // ADC{S}
-                    5 => self.reg.r[r_dst] = self.execute_adc(self.reg.r[r_dst], value),
-
+                    5 => {
+                        self.reg.r[r_dst] = self.execute_adc(self.reg.r[r_dst], value);
+                    }
                     // SBC{S}
-                    6 => self.reg.r[r_dst] = self.execute_sbc(self.reg.r[r_dst], value),
-
+                    6 => {
+                        self.reg.r[r_dst] = self.execute_sbc(self.reg.r[r_dst], value);
+                    }
                     // ROR{S}
                     #[allow(clippy::cast_possible_truncation)]
-                    7 => self.reg.r[r_dst] = self.execute_ror(self.reg.r[r_dst], value as _),
-
+                    7 => {
+                        self.reg.r[r_dst] = self.execute_ror(self.reg.r[r_dst], value as _);
+                    }
                     // TST
                     8 => {
-                        self.execute_and(self.reg.r[r_dst], value);
+                        self.execute_and_tst(self.reg.r[r_dst], value);
                     }
-
                     // NEG{S}
-                    9 => self.reg.r[r_dst] = self.execute_sub(0, value),
-
+                    9 => {
+                        self.reg.r[r_dst] = self.execute_sub_cmp(0, value);
+                    }
                     // CMP
                     10 => {
-                        self.execute_sub(self.reg.r[r_dst], value);
+                        self.execute_sub_cmp(self.reg.r[r_dst], value);
                     }
-
                     // CMN
                     11 => {
-                        self.execute_add(self.reg.r[r_dst], value);
+                        self.execute_add_cmn(self.reg.r[r_dst], value);
                     }
-
-                    // ORR{S} logical TODO: factor
+                    // ORR{S}
                     12 => {
-                        let result = self.reg.r[r_dst] | value;
-                        self.reg.r[r_dst] = result;
-                        self.reg.cpsr.set_nz_from(result);
+                        self.reg.r[r_dst] = self.execute_orr(self.reg.r[r_dst], value);
                     }
-
                     // MUL{S}
-                    13 => self.reg.r[r_dst] = self.execute_mul(self.reg.r[r_dst], value),
-
-                    // BIC{S}
-                    14 => self.reg.r[r_dst] = self.execute_and(self.reg.r[r_dst], !value),
-
-                    // MVN{S} TODO: factor?
-                    15 => {
-                        let result = !value;
-                        self.reg.r[r_dst] = result;
-                        self.reg.cpsr.set_nz_from(result);
+                    13 => {
+                        self.reg.r[r_dst] = self.execute_mul(self.reg.r[r_dst], value);
                     }
-
+                    // BIC{S}
+                    14 => {
+                        self.reg.r[r_dst] = self.execute_and_tst(self.reg.r[r_dst], !value);
+                    }
+                    // MVN{S}
+                    15 => {
+                        self.reg.r[r_dst] = self.execute_mvn(value);
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -247,7 +252,7 @@ impl Cpu {
     }
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-    fn execute_add(&mut self, a: u32, b: u32) -> u32 {
+    fn execute_add_cmn(&mut self, a: u32, b: u32) -> u32 {
         let result = u64::from(a).wrapping_add(b.into());
         let (a_signed, b_signed) = (a as i32, b as i32);
         let (a_neg, b_neg) = (a_signed.is_negative(), b_signed.is_negative());
@@ -261,22 +266,21 @@ impl Cpu {
     }
 
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-    fn execute_sub(&mut self, a: u32, b: u32) -> u32 {
-        self.execute_add(a, -(b as i32) as _)
+    fn execute_sub_cmp(&mut self, a: u32, b: u32) -> u32 {
+        self.execute_add_cmn(a, -(b as i32) as _)
     }
 
     fn execute_adc(&mut self, a: u32, b: u32) -> u32 {
-        self.execute_add(a, b.wrapping_add(self.reg.cpsr.carry.into()))
+        self.execute_add_cmn(a, b.wrapping_add(self.reg.cpsr.carry.into()))
     }
 
     fn execute_sbc(&mut self, a: u32, b: u32) -> u32 {
-        self.execute_sub(a, b.wrapping_add((!self.reg.cpsr.carry).into()))
+        self.execute_sub_cmp(a, b.wrapping_add((!self.reg.cpsr.carry).into()))
     }
 
     fn execute_mul(&mut self, a: u32, b: u32) -> u32 {
         let result = a.wrapping_mul(b);
-        self.reg.cpsr.set_nz_from(result);
-        // TODO: MUL also corrupts the carry flag (lol), but in what way?
+        self.reg.cpsr.set_nz_from(result); // TODO: MUL corrupts carry flag (lol), but how?
 
         result
     }
@@ -287,14 +291,35 @@ impl Cpu {
         value
     }
 
-    fn execute_and(&mut self, a: u32, b: u32) -> u32 {
+    fn execute_and_tst(&mut self, a: u32, b: u32) -> u32 {
         let result = a & b;
         self.reg.cpsr.set_nz_from(result);
 
         result
     }
 
-    fn execute_lsl_asl(&mut self, value: u32, offset: u8) -> u32 {
+    fn execute_eor(&mut self, a: u32, b: u32) -> u32 {
+        let result = a ^ b;
+        self.reg.cpsr.set_nz_from(result);
+
+        result
+    }
+
+    fn execute_orr(&mut self, a: u32, b: u32) -> u32 {
+        let result = a | b;
+        self.reg.cpsr.set_nz_from(result);
+
+        result
+    }
+
+    fn execute_mvn(&mut self, value: u32) -> u32 {
+        let result = !value;
+        self.reg.cpsr.set_nz_from(result);
+
+        result
+    }
+
+    fn execute_lsl(&mut self, value: u32, offset: u8) -> u32 {
         let mut result = value;
         if offset != 0 {
             result <<= offset;
