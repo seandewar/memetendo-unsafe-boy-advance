@@ -38,8 +38,8 @@ pub enum NamedGeneralRegister {
     Pc = 15,
 }
 
-#[derive(Default, Copy, Clone, Debug)]
-pub struct GeneralRegisters([u32; 16]);
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub struct GeneralRegisters(pub(crate) [u32; 16]);
 
 impl Deref for GeneralRegisters {
     type Target = [u32; 16];

@@ -72,6 +72,7 @@ impl Cpu {
 
         // TODO: add to CPU cycle counts when implemented
         match decode_format(instr) {
+            // TODO: 1S cycle
             MoveShiftedReg => {
                 let r_dst = instr as usize & 0b111;
                 let offset = (instr >> 6) & 0b1_1111;
@@ -128,22 +129,34 @@ impl Cpu {
 mod tests {
     use super::*;
 
+    use crate::arm7tdmi::reg::{GeneralRegisters, StatusRegister};
+
+    fn test_instr(
+        before: impl Fn(&mut Cpu),
+        instr: u16,
+        expected_rs: &GeneralRegisters,
+        expected_cspr: &StatusRegister,
+    ) {
+        let mut cpu = Cpu::new();
+        cpu.reset();
+        cpu.reg.cpsr.irq_disabled = false;
+        cpu.reg.cpsr.fiq_disabled = false;
+        before(&mut cpu);
+        cpu.execute_thumb(instr);
+
+        assert_eq!(cpu.reg.r, *expected_rs);
+        assert_eq!(cpu.reg.cpsr, *expected_cspr);
+    }
+
     macro_rules! test_instr {
         ($before:expr, $instr:expr, $expected_rs:expr, $($expected_cspr_flags:ident)|*) => {
-            let mut cpu = Cpu::new();
-            cpu.reset();
-            cpu.reg.cpsr.irq_disabled = false;
-            cpu.reg.cpsr.fiq_disabled = false;
-            $before(&mut cpu);
-            cpu.execute_thumb($instr);
-            assert_eq!(*cpu.reg.r, $expected_rs);
-
             #[allow(unused_mut)]
-            let mut expected_cspr = $crate::arm7tdmi::reg::StatusRegister::default();
+            let mut expected_cspr = StatusRegister::default();
             $(
                 test_instr!(@expand &mut expected_cspr, $expected_cspr_flags);
             )*
-            assert_eq!(cpu.reg.cpsr, expected_cspr);
+
+            test_instr($before, $instr, &GeneralRegisters($expected_rs), &expected_cspr);
         };
 
         ($instr:expr, $expected_rs:expr, $($expected_cspr_flags:ident)|*) => {
