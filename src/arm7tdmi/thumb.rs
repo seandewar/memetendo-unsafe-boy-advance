@@ -120,30 +120,35 @@ impl Cpu {
                 let r_or_imm = (instr >> 6) & 0b111;
                 let op = (instr >> 9) & 0b11;
 
-                let mut b = if op & 0b10 == 0 {
+                let b = if op & 0b10 == 0 {
                     self.reg.r[usize::from(r_or_imm)] // register
                 } else {
                     r_or_imm.into() // immediate
                 };
 
-                #[allow(clippy::cast_sign_loss)]
-                if op & 1 != 0 {
-                    b = -(b as i32) as _; // SUB
-                }
-
-                let result = u64::from(a).wrapping_add(b.into());
-                let (a_signed, b_signed) = (a as i32, b as i32);
-                let (a_neg, b_neg) = (a_signed.is_negative(), b_signed.is_negative());
-                let same_sign = a_neg == b_neg;
-
-                self.reg.cpsr.overflow = same_sign && (result as i32).is_negative() != a_neg;
-                self.reg.cpsr.carry = result > u32::MAX.into();
-                self.reg.cpsr.set_zn_from(result as _);
-                self.reg.r[r_dst] = result as _;
+                self.reg.r[r_dst] = if op & 1 == 0 {
+                    self.execute_add(a, b)
+                } else {
+                    self.execute_sub(a, b)
+                };
             }
 
             // TODO: 1S cycle
-            MoveCmpAddSubImm => {}
+            MoveCmpAddSubImm => {
+                let imm = u32::from(instr & 0b1111_1111);
+                let r_dst = (usize::from(instr) >> 8) & 0b111;
+                let op = (instr >> 11) & 0b11;
+
+                match op {
+                    0b00 => self.reg.r[r_dst] = self.execute_mov(imm),
+                    0b01 => {
+                        self.execute_sub(self.reg.r[r_dst], imm);
+                    }
+                    0b10 => self.reg.r[r_dst] = self.execute_add(self.reg.r[r_dst], imm),
+                    0b11 => self.reg.r[r_dst] = self.execute_sub(self.reg.r[r_dst], imm),
+                    _ => unreachable!(),
+                }
+            }
 
             AluOp => todo!(),
             HiRegOpBranchExchange => todo!(),
@@ -164,8 +169,34 @@ impl Cpu {
             Undefined => self.enter_exception(Exception::UndefinedInstr),
         }
     }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    fn execute_add(&mut self, a: u32, b: u32) -> u32 {
+        let result = u64::from(a).wrapping_add(b.into());
+        let (a_signed, b_signed) = (a as i32, b as i32);
+        let (a_neg, b_neg) = (a_signed.is_negative(), b_signed.is_negative());
+        let same_sign = a_neg == b_neg;
+
+        self.reg.cpsr.overflow = same_sign && (result as i32).is_negative() != a_neg;
+        self.reg.cpsr.carry = result > u32::MAX.into();
+        self.reg.cpsr.set_zn_from(result as _);
+
+        result as _
+    }
+
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+    fn execute_sub(&mut self, a: u32, b: u32) -> u32 {
+        self.execute_add(a, -(b as i32) as _)
+    }
+
+    fn execute_mov(&mut self, value: u32) -> u32 {
+        self.reg.cpsr.set_zn_from(value);
+        value
+    }
 }
 
+#[allow(clippy::unusual_byte_groupings, clippy::cast_sign_loss)]
+#[allow(clippy::unnecessary_cast)] // this lint is just plain wrong
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,7 +206,7 @@ mod tests {
         before: impl Fn(&mut Cpu),
         instr: u16,
         expected_rs: &GeneralRegisters,
-        expected_cspr: &StatusRegister,
+        expected_cspr: StatusRegister,
     ) {
         let mut cpu = Cpu::new();
         cpu.reset();
@@ -185,7 +216,7 @@ mod tests {
         cpu.execute_thumb(instr);
 
         assert_eq!(cpu.reg.r, *expected_rs);
-        assert_eq!(cpu.reg.cpsr, *expected_cspr);
+        assert_eq!(cpu.reg.cpsr, expected_cspr);
     }
 
     macro_rules! test_instr {
@@ -196,7 +227,7 @@ mod tests {
                 test_instr!(@expand &mut expected_cspr, $expected_cspr_flags);
             )*
 
-            test_instr($before, $instr, &GeneralRegisters($expected_rs), &expected_cspr);
+            test_instr($before, $instr, &GeneralRegisters($expected_rs), expected_cspr);
         };
 
         ($instr:expr, $expected_rs:expr, $($expected_cspr_flags:ident)|*) => {
@@ -367,6 +398,50 @@ mod tests {
             0b00011_11_010_000_000, // SUB R0,R0,#2
             [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             carry
+        );
+    }
+
+    #[test]
+    fn execute_instr_mov_cmp_add_sub_imm() {
+        // MOV Rd,#nn
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.cpsr.negative = true,
+            0b001_00_101_11111111, // MOV R5,#255
+            [0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[1] = 1337,
+            0b001_00_001_00000000, // MOV R1,#0
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+
+        // CMP Rd,#nn
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[6] = 255,
+            0b001_01_110_11111111, // CMP R6,#255
+            [0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero | carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[2] = 13,
+            0b001_01_010_00000000, // CMP R2,#0
+            [0, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+
+        // ADD Rd,#nn
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[7] = 3,
+            0b001_10_111_10101010, // ADD R7,#170
+            [0, 0, 0, 0, 0, 0, 0, 173, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+
+        // SUB Rd,#nn
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[3] = 10,
+            0b001_11_011_00001111, // SUB R3,#15
+            [0, 0, 0, -5 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
         );
     }
 }
