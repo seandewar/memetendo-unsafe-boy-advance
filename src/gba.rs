@@ -8,7 +8,7 @@ struct Gba {
 
 impl Gba {
     pub fn new() -> Self {
-        Default::default()
+        Self::default()
     }
 
     pub fn reset(&mut self) {

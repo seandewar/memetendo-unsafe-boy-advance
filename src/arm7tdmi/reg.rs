@@ -25,8 +25,8 @@ impl Default for OperationMode {
 
 impl OperationMode {
     #[must_use]
-    pub fn psr(&self) -> u32 {
-        *self as _
+    pub fn psr(self) -> u32 {
+        self as _
     }
 }
 
@@ -116,14 +116,13 @@ impl OperationMode {
 impl Registers {
     pub(crate) fn set_cpsr(&mut self, cpsr: u32) -> Result<(), ()> {
         self.set_mode(OperationMode::from_repr((cpsr & 0b11111) as u8).ok_or(())?);
-
+        self.cpsr.state = OperationState::from_repr((cpsr & (1 << 5)) as u8).unwrap();
         self.cpsr.negative = cpsr & (1 << 31) != 0;
         self.cpsr.zero = cpsr & (1 << 30) != 0;
         self.cpsr.carry = cpsr & (1 << 29) != 0;
         self.cpsr.overflow = cpsr & (1 << 28) != 0;
         self.cpsr.irq_disabled = cpsr & (1 << 7) != 0;
         self.cpsr.fiq_disabled = cpsr & (1 << 6) != 0;
-        self.cpsr.thumb_enabled = cpsr & (1 << 5) != 0;
 
         Ok(())
     }
@@ -153,6 +152,27 @@ impl Registers {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
+#[repr(u8)]
+pub enum OperationState {
+    Arm = 0,
+    Thumb = 1 << 5,
+}
+
+impl Default for OperationState {
+    fn default() -> Self {
+        Self::Arm
+    }
+}
+
+impl OperationState {
+    #[must_use]
+    fn psr(self) -> u32 {
+        self as _
+    }
+}
+
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub struct StatusRegister {
     pub(crate) negative: bool,
@@ -161,14 +181,15 @@ pub struct StatusRegister {
     pub(crate) overflow: bool,
     pub(crate) irq_disabled: bool,
     pub(crate) fiq_disabled: bool,
-    pub(crate) thumb_enabled: bool,
+    pub(crate) state: OperationState,
     mode: OperationMode,
 }
 
 impl StatusRegister {
     #[must_use]
-    pub fn psr(&self) -> u32 {
+    pub fn psr(self) -> u32 {
         let mut psr = 0;
+        psr |= self.state.psr();
         psr |= self.mode.psr();
         psr |= u32::from(self.negative) << 31;
         psr |= u32::from(self.zero) << 30;
@@ -176,16 +197,16 @@ impl StatusRegister {
         psr |= u32::from(self.overflow) << 28;
         psr |= u32::from(self.irq_disabled) << 7;
         psr |= u32::from(self.fiq_disabled) << 6;
-        psr |= u32::from(self.thumb_enabled) << 5;
 
         psr
     }
 
     #[must_use]
-    pub fn mode(&self) -> OperationMode {
+    pub fn mode(self) -> OperationMode {
         self.mode
     }
 
+    #[allow(clippy::cast_possible_wrap)]
     pub(crate) fn set_zn_from(&mut self, result: u32) {
         self.zero = result == 0;
         self.negative = (result as i32).is_negative();

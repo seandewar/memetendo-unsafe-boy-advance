@@ -1,11 +1,14 @@
 mod reg;
 mod thumb;
 
-use self::reg::{NamedGeneralRegister::*, OperationMode, Registers};
-
-use crate::bus::DataBus;
+use self::reg::{
+    NamedGeneralRegister::{Lr, Pc},
+    OperationMode, OperationState, Registers,
+};
 
 use strum_macros::EnumIter;
+
+use crate::bus::DataBus;
 
 #[derive(Default, Debug)]
 pub struct Cpu {
@@ -28,7 +31,7 @@ impl Default for RunState {
 
 impl Cpu {
     pub fn new() -> Self {
-        Default::default()
+        Self::default()
     }
 
     pub fn reset(&mut self) {
@@ -64,25 +67,23 @@ pub(crate) enum Exception {
 
 impl Exception {
     #[must_use]
-    fn vector_addr(&self) -> u32 {
-        *self as _
+    fn vector_addr(self) -> u32 {
+        self as _
     }
 
     #[must_use]
-    fn entry_mode(&self) -> OperationMode {
+    fn entry_mode(self) -> OperationMode {
         match self {
-            Self::Reset => OperationMode::Supervisor,
-            Self::UndefinedInstr => OperationMode::UndefinedInstr,
-            Self::SoftwareInterrupt => OperationMode::Supervisor,
-            Self::PrefetchAbort => OperationMode::Abort,
-            Self::DataAbort => OperationMode::Abort,
+            Self::Reset | Self::SoftwareInterrupt => OperationMode::Supervisor,
+            Self::PrefetchAbort | Self::DataAbort => OperationMode::Abort,
             Self::Interrupt => OperationMode::Interrupt,
             Self::FastInterrupt => OperationMode::FastInterrupt,
+            Self::UndefinedInstr => OperationMode::UndefinedInstr,
         }
     }
 
     #[must_use]
-    fn disables_fiq(&self) -> bool {
+    fn disables_fiq(self) -> bool {
         matches!(self, Self::Reset | Self::FastInterrupt)
     }
 }
@@ -94,7 +95,7 @@ impl Cpu {
         self.reg.set_mode(exception.entry_mode());
         self.reg.cpsr.fiq_disabled |= exception.disables_fiq();
         self.reg.cpsr.irq_disabled = true;
-        self.reg.cpsr.thumb_enabled = false;
+        self.reg.cpsr.state = OperationState::Arm;
 
         self.reg.spsr = old_cpsr;
         self.reg.r[Lr] = self.reg.r[Pc]; // TODO: PC+nn?
@@ -116,12 +117,12 @@ mod tests {
         cpu.set_cpsr(OperationMode::Abort.psr() | (1 << 5));
         assert_eq!(RunState::Running, cpu.run_state);
         assert_eq!(OperationMode::Abort, cpu.reg.cpsr.mode());
-        assert!(cpu.reg.cpsr.thumb_enabled);
+        assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
 
         cpu.set_cpsr(OperationMode::UndefinedInstr.psr());
         assert_eq!(RunState::Running, cpu.run_state);
         assert_eq!(OperationMode::UndefinedInstr, cpu.reg.cpsr.mode());
-        assert!(!cpu.reg.cpsr.thumb_enabled);
+        assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
 
         // invalid cpsr mode should hang
         cpu.set_cpsr(0);
@@ -138,7 +139,7 @@ mod tests {
         assert_eq!(exception.vector_addr(), cpu.reg.r[Pc]);
         assert_eq!(old_reg.r[Pc], cpu.reg.r[Lr]);
         assert_eq!(old_reg.cpsr, cpu.reg.spsr);
-        assert!(!cpu.reg.cpsr.thumb_enabled);
+        assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
         assert!(cpu.reg.cpsr.irq_disabled);
     }
 

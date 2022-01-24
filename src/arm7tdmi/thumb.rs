@@ -1,4 +1,7 @@
-use super::{reg::NamedGeneralRegister::*, reg::Registers, Cpu, Exception};
+use super::{
+    reg::{NamedGeneralRegister::Pc, Registers},
+    Cpu, Exception,
+};
 
 #[derive(Copy, Clone, Debug)]
 enum InstructionFormat {
@@ -26,8 +29,10 @@ enum InstructionFormat {
 
 #[must_use]
 fn decode_format(instr: u16) -> InstructionFormat {
+    #[allow(clippy::enum_glob_use)]
     use InstructionFormat::*;
 
+    #[allow(clippy::cast_possible_truncation)]
     let hi8 = (instr >> 8) as u8;
     let hi6 = hi8 >> 2;
     let hi5 = hi8 >> 3;
@@ -68,9 +73,11 @@ impl Registers {
 
 impl Cpu {
     pub(crate) fn execute_thumb(&mut self, instr: u16) {
+        #[allow(clippy::enum_glob_use)]
         use InstructionFormat::*;
 
         // TODO: add to CPU cycle counts when implemented
+        #[allow(clippy::match_same_arms)]
         match decode_format(instr) {
             // TODO: 1S cycle
             MoveShiftedReg => {
@@ -78,22 +85,24 @@ impl Cpu {
                 let offset = (instr >> 6) & 0b1_1111;
 
                 if offset > 0 {
-                    let val = self.reg.r[(usize::from(instr) >> 3) & 0b111];
+                    let x = self.reg.r[(usize::from(instr) >> 3) & 0b111];
                     let op = (instr >> 11) & 0b11;
 
                     match op {
                         // LSL, ASL
                         0b00 => {
-                            self.reg.cpsr.carry = (val << (offset - 1)) & (1 << 31) != 0;
-                            self.reg.r[r_dst] = val << offset;
+                            self.reg.cpsr.carry = (x << (offset - 1)) & (1 << 31) != 0;
+                            self.reg.r[r_dst] = x << offset;
                         }
+
                         // LSR, ASR
+                        #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
                         0b01 | 0b10 => {
-                            self.reg.cpsr.carry = (val >> (offset - 1)) & 1 != 0;
+                            self.reg.cpsr.carry = (x >> (offset - 1)) & 1 != 0;
                             self.reg.r[r_dst] = if op == 0b01 {
-                                val >> offset
+                                x >> offset
                             } else {
-                                ((val as i32) >> offset) as _
+                                ((x as i32) >> offset) as _
                             };
                         }
                         _ => unreachable!("format should be AddSub"),
@@ -102,33 +111,40 @@ impl Cpu {
 
                 self.reg.cpsr.set_zn_from(self.reg.r[r_dst]);
             }
+
             // TODO: 1S cycle
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             AddSub => {
                 let r_dst = usize::from(instr) & 0b111;
-                let val1 = self.reg.r[(usize::from(instr) >> 3) & 0b111];
+                let a = self.reg.r[(usize::from(instr) >> 3) & 0b111];
                 let r_or_imm = (instr >> 6) & 0b111;
                 let op = (instr >> 9) & 0b11;
 
-                let mut val2 = if op & 0b10 == 0 {
+                let mut b = if op & 0b10 == 0 {
                     self.reg.r[usize::from(r_or_imm)] // register
                 } else {
                     r_or_imm.into() // immediate
                 };
+
+                #[allow(clippy::cast_sign_loss)]
                 if op & 1 != 0 {
-                    val2 = -(val2 as i32) as _; // SUB
+                    b = -(b as i32) as _; // SUB
                 }
 
-                let result = u64::from(val1).wrapping_add(val2.into());
-                let (val1_signed, val2_signed) = (val1 as i32, val2 as i32);
-                let (val1_neg, val2_neg) = (val1_signed.is_negative(), val2_signed.is_negative());
-                let same_sign = val1_neg == val2_neg;
+                let result = u64::from(a).wrapping_add(b.into());
+                let (a_signed, b_signed) = (a as i32, b as i32);
+                let (a_neg, b_neg) = (a_signed.is_negative(), b_signed.is_negative());
+                let same_sign = a_neg == b_neg;
 
-                self.reg.cpsr.overflow = same_sign && (result as i32).is_negative() != val1_neg;
+                self.reg.cpsr.overflow = same_sign && (result as i32).is_negative() != a_neg;
                 self.reg.cpsr.carry = result > u32::MAX.into();
                 self.reg.cpsr.set_zn_from(result as _);
                 self.reg.r[r_dst] = result as _;
             }
-            MoveCmpAddSubImm => todo!(),
+
+            // TODO: 1S cycle
+            MoveCmpAddSubImm => {}
+
             AluOp => todo!(),
             HiRegOpBranchExchange => todo!(),
             LoadPcRel => todo!(),
@@ -153,7 +169,6 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::arm7tdmi::reg::{GeneralRegisters, StatusRegister};
 
     fn test_instr(

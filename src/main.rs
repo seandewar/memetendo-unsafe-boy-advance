@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 mod arm7tdmi;
 mod bus;
 mod gba;

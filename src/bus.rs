@@ -1,6 +1,8 @@
+#[allow(clippy::module_name_repetitions)]
 pub trait DataBus {
     #[must_use]
     fn read8(&self, addr: u32) -> u8;
+
     fn write8(&mut self, addr: u32, value: u8);
 }
 
