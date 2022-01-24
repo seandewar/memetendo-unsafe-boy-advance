@@ -72,6 +72,7 @@ impl Registers {
 }
 
 impl Cpu {
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn execute_thumb(&mut self, instr: u16) {
         #[allow(clippy::enum_glob_use)]
         use InstructionFormat::*;
@@ -80,36 +81,22 @@ impl Cpu {
         #[allow(clippy::match_same_arms)]
         match decode_format(instr) {
             // TODO: 1S cycle
+            #[allow(clippy::cast_possible_truncation)]
             MoveShiftedReg => {
                 let r_dst = usize::from(instr) & 0b111;
-                let offset = (instr >> 6) & 0b1_1111;
+                let offset = (instr >> 6) as u8 & 0b1_1111;
+                let value = self.reg.r[(usize::from(instr) >> 3) & 0b111];
+                let op = (instr >> 11) & 0b11;
 
-                if offset > 0 {
-                    let x = self.reg.r[(usize::from(instr) >> 3) & 0b111];
-                    let op = (instr >> 11) & 0b11;
+                match op {
+                    // LSL{S}, ASL{S}
+                    0 => self.reg.r[r_dst] = self.execute_lsl_asl(value, offset),
 
-                    match op {
-                        // LSL, ASL
-                        0b00 => {
-                            self.reg.cpsr.carry = (x << (offset - 1)) & (1 << 31) != 0;
-                            self.reg.r[r_dst] = x << offset;
-                        }
+                    // LSR{S}, ASR{S}
+                    1 | 2 => self.reg.r[r_dst] = self.execute_lsr_asr(value, offset, op == 1),
 
-                        // LSR, ASR
-                        #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-                        0b01 | 0b10 => {
-                            self.reg.cpsr.carry = (x >> (offset - 1)) & 1 != 0;
-                            self.reg.r[r_dst] = if op == 0b01 {
-                                x >> offset
-                            } else {
-                                ((x as i32) >> offset) as _
-                            };
-                        }
-                        _ => unreachable!("format should be AddSub"),
-                    }
+                    _ => unreachable!("format should be AddSub"),
                 }
-
-                self.reg.cpsr.set_zn_from(self.reg.r[r_dst]);
             }
 
             // TODO: 1S cycle
@@ -140,18 +127,107 @@ impl Cpu {
                 let op = (instr >> 11) & 0b11;
 
                 match op {
-                    0b00 => self.reg.r[r_dst] = self.execute_mov(imm),
-                    0b01 => {
-                        self.execute_sub(self.reg.r[r_dst], imm);
+                    0 => self.reg.r[r_dst] = self.execute_mov(imm),
+                    1 => {
+                        self.execute_sub(self.reg.r[r_dst], imm); // CMP
                     }
-                    0b10 => self.reg.r[r_dst] = self.execute_add(self.reg.r[r_dst], imm),
-                    0b11 => self.reg.r[r_dst] = self.execute_sub(self.reg.r[r_dst], imm),
+                    2 => self.reg.r[r_dst] = self.execute_add(self.reg.r[r_dst], imm),
+                    3 => self.reg.r[r_dst] = self.execute_sub(self.reg.r[r_dst], imm),
                     _ => unreachable!(),
                 }
             }
 
-            AluOp => todo!(),
-            HiRegOpBranchExchange => todo!(),
+            // TODO: 1S: AND, EOR, ADC, SBC, TST, NEG, CMP, CMN, ORR, BIC, MVN
+            //       1S+1I: LSL, LSR, ASR, ROR
+            //       1S+mI: MUL (m=1..4; depending on MSBs of incoming Rd value)
+            AluOp => {
+                let r_dst = usize::from(instr) & 0b111;
+                let value = self.reg.r[(usize::from(instr) >> 3) & 0b111];
+                let op = (instr >> 6) & 0b1111;
+
+                match op {
+                    // AND{S}
+                    0 => self.reg.r[r_dst] = self.execute_and(self.reg.r[r_dst], value),
+
+                    // EOR{S} (logical XOR) TODO: factor
+                    1 => {
+                        let result = self.reg.r[r_dst] ^ value;
+                        self.reg.r[r_dst] = result;
+                        self.reg.cpsr.set_nz_from(result);
+                    }
+
+                    // LSL{S}
+                    #[allow(clippy::cast_possible_truncation)]
+                    2 => self.reg.r[r_dst] = self.execute_lsl_asl(self.reg.r[r_dst], value as _),
+
+                    // LSR{S}, ASR{S}
+                    #[allow(clippy::cast_possible_truncation)]
+                    3 | 4 => {
+                        self.reg.r[r_dst] =
+                            self.execute_lsr_asr(self.reg.r[r_dst], value as _, op == 3);
+                    }
+
+                    // ADC{S}
+                    5 => self.reg.r[r_dst] = self.execute_adc(self.reg.r[r_dst], value),
+
+                    // SBC{S}
+                    6 => self.reg.r[r_dst] = self.execute_sbc(self.reg.r[r_dst], value),
+
+                    // ROR{S}
+                    #[allow(clippy::cast_possible_truncation)]
+                    7 => self.reg.r[r_dst] = self.execute_ror(self.reg.r[r_dst], value as _),
+
+                    // TST
+                    8 => {
+                        self.execute_and(self.reg.r[r_dst], value);
+                    }
+
+                    // NEG{S}
+                    9 => self.reg.r[r_dst] = self.execute_sub(0, value),
+
+                    // CMP
+                    10 => {
+                        self.execute_sub(self.reg.r[r_dst], value);
+                    }
+
+                    // CMN
+                    11 => {
+                        self.execute_add(self.reg.r[r_dst], value);
+                    }
+
+                    // ORR{S} logical TODO: factor
+                    12 => {
+                        let result = self.reg.r[r_dst] | value;
+                        self.reg.r[r_dst] = result;
+                        self.reg.cpsr.set_nz_from(result);
+                    }
+
+                    // MUL{S}
+                    13 => self.reg.r[r_dst] = self.execute_mul(self.reg.r[r_dst], value),
+
+                    // BIC{S}
+                    14 => self.reg.r[r_dst] = self.execute_and(self.reg.r[r_dst], !value),
+
+                    // MVN{S} TODO: factor?
+                    15 => {
+                        let result = !value;
+                        self.reg.r[r_dst] = result;
+                        self.reg.cpsr.set_nz_from(result);
+                    }
+
+                    _ => unreachable!(),
+                }
+            }
+
+            // TODO: 1S cycle for ADD, MOV, CMP
+            //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
+            HiRegOpBranchExchange => {
+                let r_dst_no_msb = usize::from(instr) & 0b111;
+                let r_src = (usize::from(instr) >> 3) & 0b1111;
+                let r_dst_msb_or_bl = instr & (1 << 7) != 0;
+                let op = todo!();
+            }
+
             LoadPcRel => todo!(),
             LoadStoreRel => todo!(),
             LoadStoreSignExtend => todo!(),
@@ -179,7 +255,7 @@ impl Cpu {
 
         self.reg.cpsr.overflow = same_sign && (result as i32).is_negative() != a_neg;
         self.reg.cpsr.carry = result > u32::MAX.into();
-        self.reg.cpsr.set_zn_from(result as _);
+        self.reg.cpsr.set_nz_from(result as _);
 
         result as _
     }
@@ -189,14 +265,73 @@ impl Cpu {
         self.execute_add(a, -(b as i32) as _)
     }
 
+    fn execute_adc(&mut self, a: u32, b: u32) -> u32 {
+        self.execute_add(a, b.wrapping_add(self.reg.cpsr.carry.into()))
+    }
+
+    fn execute_sbc(&mut self, a: u32, b: u32) -> u32 {
+        self.execute_sub(a, b.wrapping_add((!self.reg.cpsr.carry).into()))
+    }
+
+    fn execute_mul(&mut self, a: u32, b: u32) -> u32 {
+        let result = a.wrapping_mul(b);
+        self.reg.cpsr.set_nz_from(result);
+        // TODO: MUL also corrupts the carry flag (lol), but in what way?
+
+        result
+    }
+
     fn execute_mov(&mut self, value: u32) -> u32 {
-        self.reg.cpsr.set_zn_from(value);
+        self.reg.cpsr.set_nz_from(value);
+
         value
+    }
+
+    fn execute_and(&mut self, a: u32, b: u32) -> u32 {
+        let result = a & b;
+        self.reg.cpsr.set_nz_from(result);
+
+        result
+    }
+
+    fn execute_lsl_asl(&mut self, value: u32, offset: u8) -> u32 {
+        let mut result = value;
+        if offset != 0 {
+            result <<= offset;
+            self.reg.cpsr.carry = (value << (offset - 1)) & (1 << 31) != 0;
+        }
+        self.reg.cpsr.set_nz_from(result);
+
+        result
+    }
+
+    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+    fn execute_lsr_asr(&mut self, value: u32, offset: u8, logical: bool) -> u32 {
+        let mut result = value;
+        if offset != 0 {
+            result = if logical {
+                value >> offset
+            } else {
+                ((value as i32) >> offset) as _
+            };
+            self.reg.cpsr.carry = (value >> (offset - 1)) & 1 != 0;
+        }
+        self.reg.cpsr.set_nz_from(result);
+
+        result
+    }
+
+    fn execute_ror(&mut self, value: u32, offset: u8) -> u32 {
+        let result = value.rotate_right(offset.into());
+        self.reg.cpsr.carry = (value >> (offset - 1)) & 1 != 0;
+        self.reg.cpsr.set_nz_from(result);
+
+        result
     }
 }
 
 #[allow(clippy::unusual_byte_groupings, clippy::cast_sign_loss)]
-#[allow(clippy::unnecessary_cast)] // this lint is just plain wrong
+#[allow(clippy::unnecessary_cast)] // this lint doesn't detect negative literals properly
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,7 +376,7 @@ mod tests {
 
     #[test]
     fn execute_thumb_move_shifted_reg() {
-        // LSL Rd,Rs,#Offset
+        // LSL{S} Rd,Rs,#Offset
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[1] = 0b10,
             0b000_00_00011_001_100, // LSL R4,R1,#3
@@ -270,7 +405,7 @@ mod tests {
             negative
         );
 
-        // LSR Rd,Rs,#Offset
+        // LSR{S} Rd,Rs,#Offset
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[1] = 0b100,
             0b000_01_00011_001_100, // LSR R4,R1,#2
@@ -295,7 +430,7 @@ mod tests {
             negative
         );
 
-        // ASR Rd,Rs,#Offset
+        // ASR{S} Rd,Rs,#Offset
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
             0b000_10_11111_111_111, // ASR R7,R7,#31
@@ -313,7 +448,7 @@ mod tests {
 
     #[test]
     fn execute_thumb_add_sub() {
-        // ADD Rd,Rs,Rn
+        // ADD{S} Rd,Rs,Rn
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[1] = 13;
@@ -358,7 +493,7 @@ mod tests {
             carry | overflow
         );
 
-        // SUB Rd,Rs,Rn
+        // SUB{S} Rd,Rs,Rn
         #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| {
@@ -385,14 +520,14 @@ mod tests {
             negative | carry
         );
 
-        // ADD Rd,Rs,#nn
+        // ADD{S} Rd,Rs,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[0] = 10,
             0b00011_10_101_000_000, // ADD R0,R0,#5
             [15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         );
 
-        // SUB Rd,Rs,#nn
+        // SUB{S} Rd,Rs,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[0] = 10,
             0b00011_11_010_000_000, // SUB R0,R0,#2
@@ -403,7 +538,7 @@ mod tests {
 
     #[test]
     fn execute_instr_mov_cmp_add_sub_imm() {
-        // MOV Rd,#nn
+        // MOV{S} Rd,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.cpsr.negative = true,
             0b001_00_101_11111111, // MOV R5,#255
@@ -416,7 +551,7 @@ mod tests {
             zero
         );
 
-        // CMP Rd,#nn
+        // CMP{S} Rd,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[6] = 255,
             0b001_01_110_11111111, // CMP R6,#255
@@ -429,14 +564,14 @@ mod tests {
             [0, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         );
 
-        // ADD Rd,#nn
+        // ADD{S} Rd,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 3,
             0b001_10_111_10101010, // ADD R7,#170
             [0, 0, 0, 0, 0, 0, 0, 173, 0, 0, 0, 0, 0, 0, 0, 0],
         );
 
-        // SUB Rd,#nn
+        // SUB{S} Rd,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[3] = 10,
             0b001_11_011_00001111, // SUB R3,#15

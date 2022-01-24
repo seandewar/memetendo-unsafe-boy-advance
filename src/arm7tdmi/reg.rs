@@ -207,7 +207,7 @@ impl StatusRegister {
     }
 
     #[allow(clippy::cast_possible_wrap)]
-    pub(crate) fn set_zn_from(&mut self, result: u32) {
+    pub(crate) fn set_nz_from(&mut self, result: u32) {
         self.zero = result == 0;
         self.negative = (result as i32).is_negative();
     }
