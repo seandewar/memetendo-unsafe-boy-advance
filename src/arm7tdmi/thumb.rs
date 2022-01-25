@@ -90,8 +90,10 @@ impl Cpu {
                 self.reg.r[(usize::from(instr) & 0b111)] = match op {
                     // LSL{S}
                     0 => self.execute_lsl(value, offset),
-                    // LSR{S}, ASR{S}
-                    1 | 2 => self.execute_lsr_asr(value, offset, op == 1),
+                    // LSR{S}
+                    1 => self.execute_lsr(value, offset),
+                    // ASR{S}
+                    2 => self.execute_asr(value, offset),
                     _ => unreachable!("format should be AddSub"),
                 };
             }
@@ -169,11 +171,15 @@ impl Cpu {
                     2 => {
                         self.reg.r[r_dst] = self.execute_lsl(self.reg.r[r_dst], value as _);
                     }
-                    // LSR{S}, ASR{S}
+                    // LSR{S}
                     #[allow(clippy::cast_possible_truncation)]
-                    3 | 4 => {
-                        self.reg.r[r_dst] =
-                            self.execute_lsr_asr(self.reg.r[r_dst], value as _, op == 3);
+                    3 => {
+                        self.reg.r[r_dst] = self.execute_lsr(self.reg.r[r_dst], value as _);
+                    }
+                    // ASR{S}
+                    #[allow(clippy::cast_possible_truncation)]
+                    4 => {
+                        self.reg.r[r_dst] = self.execute_asr(self.reg.r[r_dst], value as _);
                     }
                     // ADC{S}
                     5 => {
@@ -321,26 +327,38 @@ impl Cpu {
 
     fn execute_lsl(&mut self, value: u32, offset: u8) -> u32 {
         let mut result = value;
-        if offset != 0 {
-            result <<= offset;
-            self.reg.cpsr.carry = (value << (offset - 1)) & (1 << 31) != 0;
+        if offset > 0 {
+            result = result.checked_shl((offset - 1).into()).unwrap_or(0);
+            self.reg.cpsr.carry = result & (1 << 31) != 0;
+            result <<= 1;
         }
         self.reg.cpsr.set_nz_from(result);
 
         result
     }
 
-    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-    fn execute_lsr_asr(&mut self, value: u32, offset: u8, logical: bool) -> u32 {
+    /// NOTE: LSR/ASR #0 is a special case that works like LSR/ASR #32.
+    fn execute_lsr(&mut self, value: u32, offset: u8) -> u32 {
+        let offset = if offset == 0 { 32 } else { offset.into() };
+
         let mut result = value;
-        if offset != 0 {
-            result = if logical {
-                value >> offset
-            } else {
-                ((value as i32) >> offset) as _
-            };
-            self.reg.cpsr.carry = (value >> (offset - 1)) & 1 != 0;
-        }
+        result = result.checked_shr(offset - 1).unwrap_or(0);
+        self.reg.cpsr.carry = result & 1 != 0;
+        result >>= 1;
+        self.reg.cpsr.set_nz_from(result);
+
+        result
+    }
+
+    /// NOTE: LSR/ASR #0 is a special case that works like LSR/ASR #32.
+    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+    fn execute_asr(&mut self, value: u32, offset: u8) -> u32 {
+        let offset = if offset == 0 { 32 } else { offset.into() };
+
+        let mut result = value as i32;
+        result = result.checked_shr(offset - 1).unwrap_or(0);
+        self.reg.cpsr.carry = result & 1 != 0;
+        let result = (result >> 1) as _;
         self.reg.cpsr.set_nz_from(result);
 
         result
@@ -450,9 +468,9 @@ mod tests {
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
-            0b000_01_00000_111_111, // LSR R7,R7,#0
-            [0, 0, 0, 0, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 0],
-            negative
+            0b000_01_00000_111_111, // LSR R7,R7,#32
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero | carry
         );
 
         // ASR{S} Rd,Rs,#Offset
@@ -468,6 +486,12 @@ mod tests {
             0b000_10_00001_101_000, // ASR R0,R5,#1
             [!(0b11 << 30), 0, 0, 0, 0, !(1 << 31), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
+            0b000_10_00000_111_111, // RSR R7,R7,#32
+            [0, 0, 0, 0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative | carry
         );
     }
 
@@ -562,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_instr_mov_cmp_add_sub_imm() {
+    fn execute_thumb_mov_cmp_add_sub_imm() {
         // MOV{S} Rd,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.cpsr.negative = true,
@@ -601,6 +625,65 @@ mod tests {
             |cpu: &mut Cpu| cpu.reg.r[3] = 10,
             0b001_11_011_00001111, // SUB R3,#15
             [0, 0, 0, -5 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
+        );
+    }
+
+    #[test]
+    fn execute_thumb_alu_op() {
+        // AND{S} Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0b0011;
+                cpu.reg.r[1] = 0b1010;
+            },
+            0b010000_0000_001_000, // AND R0,R1
+            [0b0010, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = 0b1010;
+            },
+            0b010000_0000_001_000, // AND R0,R1
+            [0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        #[rustfmt::skip]
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = i32::MIN as _;
+                cpu.reg.r[5] = 1 << 31;
+            },
+            0b010000_0000_101_001, // AND R1,R5
+            [0, i32::MIN as _, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
+        );
+
+        // EOR{S} Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0b0011;
+                cpu.reg.r[1] = 0b1110;
+            },
+            0b010000_0001_001_000, // EOR R0,R1
+            [0b1101, 0b1110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0b1100;
+                cpu.reg.r[1] = 0b1100;
+            },
+            0b010000_0001_000_001, // EOR R1,R0
+            [0b1100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = u32::MAX;
+                cpu.reg.r[7] = u32::MAX >> 1;
+            },
+            0b010000_0001_001_111, // EOR R7,R1
+            [0, u32::MAX, 0, 0, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 0],
             negative
         );
     }
