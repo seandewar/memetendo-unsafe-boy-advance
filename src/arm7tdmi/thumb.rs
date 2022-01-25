@@ -396,8 +396,12 @@ impl Cpu {
     }
 
     fn execute_ror(&mut self, value: u32, offset: u8) -> u32 {
-        let result = value.rotate_right(offset.into());
-        self.reg.cpsr.carry = (value >> (offset - 1)) & 1 != 0;
+        let mut result = value;
+        if offset > 0 {
+            result = value.rotate_right(u32::from(offset) - 1);
+            self.reg.cpsr.carry = result & 1 != 0;
+            result = result.rotate_right(1);
+        }
         self.reg.cpsr.set_nz_from(result);
 
         result
@@ -962,6 +966,43 @@ mod tests {
             0b010000_0110_000_111, // SBC R7,R0
             [i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             overflow | carry | zero
+        );
+
+        // ROR{S} Rd,Rs
+        #[rustfmt::skip]
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 2;
+                cpu.reg.r[1] = 0b1111;
+            },
+            0b010000_0111_000_001, // ROR R1,R0
+            [2, (0b11 << 30) | 0b11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry | negative
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0;
+                cpu.reg.r[1] = 0b1111;
+            },
+            0b010000_0111_000_001, // ROR R1,R0
+            [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[2] = 255;
+                cpu.reg.r[3] = 0b1111;
+            },
+            0b010000_0111_010_011, // ROR R3,R2
+            [0, 0, 255, 0b11110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[2] = 255;
+                cpu.reg.r[3] = 0;
+            },
+            0b010000_0111_010_011, // ROR R3,R2
+            [0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
         );
 
         // TODO: tests for rest of the ALU ops
