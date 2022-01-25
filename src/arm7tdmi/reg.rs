@@ -7,7 +7,7 @@ use strum_macros::FromRepr;
 
 #[derive(Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
 #[repr(u8)]
-pub enum OperationMode {
+pub(super) enum OperationMode {
     User = 0b10000,
     FastInterrupt = 0b10001,
     Interrupt = 0b10010,
@@ -25,21 +25,21 @@ impl Default for OperationMode {
 
 impl OperationMode {
     #[must_use]
-    pub fn psr(self) -> u32 {
+    pub(super) fn psr(self) -> u32 {
         self as _
     }
 }
 
 #[derive(Copy, Clone, Debug)]
 #[repr(usize)]
-pub enum NamedGeneralRegister {
+pub(super) enum NamedGeneralRegister {
     Sp = 13,
     Lr = 14,
     Pc = 15,
 }
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
-pub struct GeneralRegisters(pub(crate) [u32; 16]);
+pub(super) struct GeneralRegisters(pub(crate) [u32; 16]);
 
 impl Deref for GeneralRegisters {
     type Target = [u32; 16];
@@ -84,10 +84,10 @@ impl IndexMut<NamedGeneralRegister> for GeneralRegisters {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-pub(crate) struct Registers {
-    pub(crate) r: GeneralRegisters,
-    pub(crate) cpsr: StatusRegister,
-    pub(crate) spsr: StatusRegister,
+pub(super) struct Registers {
+    pub(super) r: GeneralRegisters,
+    pub(super) cpsr: StatusRegister,
+    pub(super) spsr: StatusRegister,
     banks: [Bank; 6],
     fiq_r8_12_bank: [u32; 5],
 }
@@ -114,7 +114,7 @@ impl OperationMode {
 }
 
 impl Registers {
-    pub(crate) fn set_cpsr(&mut self, cpsr: u32) -> Result<(), ()> {
+    pub(super) fn set_cpsr(&mut self, cpsr: u32) -> Result<(), ()> {
         self.set_mode(OperationMode::from_repr((cpsr & 0b11111) as u8).ok_or(())?);
         self.cpsr.state = OperationState::from_repr((cpsr & (1 << 5)) as u8).unwrap();
         self.cpsr.negative = cpsr & (1 << 31) != 0;
@@ -127,7 +127,7 @@ impl Registers {
         Ok(())
     }
 
-    pub(crate) fn set_mode(&mut self, mode: OperationMode) {
+    pub(super) fn set_mode(&mut self, mode: OperationMode) {
         self.change_bank(mode);
         self.cpsr.mode = mode;
     }
@@ -154,7 +154,7 @@ impl Registers {
 
 #[derive(Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
 #[repr(u8)]
-pub enum OperationState {
+pub(super) enum OperationState {
     Arm = 0,
     Thumb = 1 << 5,
 }
@@ -174,20 +174,20 @@ impl OperationState {
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
-pub struct StatusRegister {
-    pub(crate) negative: bool,
-    pub(crate) zero: bool,
-    pub(crate) carry: bool,
-    pub(crate) overflow: bool,
-    pub(crate) irq_disabled: bool,
-    pub(crate) fiq_disabled: bool,
-    pub(crate) state: OperationState,
+pub(super) struct StatusRegister {
+    pub(super) negative: bool,
+    pub(super) zero: bool,
+    pub(super) carry: bool,
+    pub(super) overflow: bool,
+    pub(super) irq_disabled: bool,
+    pub(super) fiq_disabled: bool,
+    pub(super) state: OperationState,
     mode: OperationMode,
 }
 
 impl StatusRegister {
     #[must_use]
-    pub fn psr(self) -> u32 {
+    pub(super) fn psr(self) -> u32 {
         let mut psr = 0;
         psr |= self.state.psr();
         psr |= self.mode.psr();
@@ -202,12 +202,12 @@ impl StatusRegister {
     }
 
     #[must_use]
-    pub fn mode(self) -> OperationMode {
+    pub(super) fn mode(self) -> OperationMode {
         self.mode
     }
 
     #[allow(clippy::cast_possible_wrap)]
-    pub(crate) fn set_nz_from(&mut self, result: u32) {
+    pub(super) fn set_nz_from(&mut self, result: u32) {
         self.zero = result == 0;
         self.negative = (result as i32).is_negative();
     }

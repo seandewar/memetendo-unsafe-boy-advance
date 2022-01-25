@@ -18,7 +18,7 @@ pub struct Cpu {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum RunState {
+enum RunState {
     NotRunning,
     Running,
     Hung,
@@ -40,23 +40,23 @@ impl Cpu {
         self.enter_exception(Exception::Reset);
     }
 
-    pub(crate) fn set_cpsr(&mut self, cpsr: u32) {
-        if self.reg.set_cpsr(cpsr).is_err() {
-            self.run_state = RunState::Hung;
-        }
-    }
-
     pub fn step(&mut self, _bus: &mut impl DataBus, _cycles: usize) {
         if self.run_state != RunState::Running {
             return;
         }
         todo!();
     }
+
+    fn set_cpsr(&mut self, cpsr: u32) {
+        if self.reg.set_cpsr(cpsr).is_err() {
+            self.run_state = RunState::Hung;
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, EnumIter, Debug)]
 #[repr(u32)]
-pub(crate) enum Exception {
+enum Exception {
     Reset = 0x00,
     UndefinedInstr = 0x04,
     SoftwareInterrupt = 0x08,
@@ -90,7 +90,7 @@ impl Exception {
 }
 
 impl Cpu {
-    pub(crate) fn enter_exception(&mut self, exception: Exception) {
+    fn enter_exception(&mut self, exception: Exception) {
         let old_cpsr = self.reg.cpsr;
 
         self.reg.set_mode(exception.entry_mode());

@@ -6,8 +6,9 @@ pub trait DataBus {
     fn write8(&mut self, addr: u32, value: u8);
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Default, Debug)]
-pub(crate) struct GbaBus;
+pub struct GbaBus;
 
 impl DataBus for GbaBus {
     fn read8(&self, _addr: u32) -> u8 {

@@ -66,14 +66,14 @@ fn decode_format(instr: u16) -> InstructionFormat {
 
 impl Registers {
     #[must_use]
-    pub(crate) fn pc_thumb_addr(&self) -> u32 {
+    pub(super) fn pc_thumb_addr(&self) -> u32 {
         self.r[Pc] & !1
     }
 }
 
 impl Cpu {
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn execute_thumb(&mut self, instr: u16) {
+    pub(super) fn execute_thumb(&mut self, instr: u16) {
         #[allow(clippy::enum_glob_use)]
         use InstructionFormat::*;
 

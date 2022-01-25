@@ -26,72 +26,72 @@ fn execute_sub_impl(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
 }
 
 impl Cpu {
-    pub(crate) fn execute_add_cmn(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_add_cmn(&mut self, a: u32, b: u32) -> u32 {
         execute_add_impl(self, a, b, 0)
     }
 
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-    pub(crate) fn execute_sub_cmp(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_sub_cmp(&mut self, a: u32, b: u32) -> u32 {
         execute_sub_impl(self, a, b, 0)
     }
 
-    pub(crate) fn execute_adc(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_adc(&mut self, a: u32, b: u32) -> u32 {
         execute_add_impl(self, a, b, self.reg.cpsr.carry.into())
     }
 
-    pub(crate) fn execute_sbc(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_sbc(&mut self, a: u32, b: u32) -> u32 {
         execute_sub_impl(self, a, b, (!self.reg.cpsr.carry).into())
     }
 
-    pub(crate) fn execute_mul(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_mul(&mut self, a: u32, b: u32) -> u32 {
         let result = a.wrapping_mul(b);
         self.reg.cpsr.set_nz_from(result); // TODO: MUL corrupts carry flag (lol), but how?
 
         result
     }
 
-    pub(crate) fn execute_mov(&mut self, value: u32) -> u32 {
+    pub(super) fn execute_mov(&mut self, value: u32) -> u32 {
         self.reg.cpsr.set_nz_from(value);
 
         value
     }
 
-    pub(crate) fn execute_and_tst(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_and_tst(&mut self, a: u32, b: u32) -> u32 {
         let result = a & b;
         self.reg.cpsr.set_nz_from(result);
 
         result
     }
 
-    pub(crate) fn execute_bic(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_bic(&mut self, a: u32, b: u32) -> u32 {
         let result = a & !b;
         self.reg.cpsr.set_nz_from(result);
 
         result
     }
 
-    pub(crate) fn execute_eor(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_eor(&mut self, a: u32, b: u32) -> u32 {
         let result = a ^ b;
         self.reg.cpsr.set_nz_from(result);
 
         result
     }
 
-    pub(crate) fn execute_orr(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_orr(&mut self, a: u32, b: u32) -> u32 {
         let result = a | b;
         self.reg.cpsr.set_nz_from(result);
 
         result
     }
 
-    pub(crate) fn execute_mvn(&mut self, value: u32) -> u32 {
+    pub(super) fn execute_mvn(&mut self, value: u32) -> u32 {
         let result = !value;
         self.reg.cpsr.set_nz_from(result);
 
         result
     }
 
-    pub(crate) fn execute_lsl(&mut self, value: u32, offset: u8) -> u32 {
+    pub(super) fn execute_lsl(&mut self, value: u32, offset: u8) -> u32 {
         let mut result = value;
         if offset > 0 {
             result = result.checked_shl((offset - 1).into()).unwrap_or(0);
@@ -103,7 +103,7 @@ impl Cpu {
         result
     }
 
-    pub(crate) fn execute_lsr(&mut self, value: u32, offset: u8) -> u32 {
+    pub(super) fn execute_lsr(&mut self, value: u32, offset: u8) -> u32 {
         // LSR/ASR #0 is a special case that works like LSR/ASR #32
         let offset = if offset == 0 { 32 } else { offset.into() };
 
@@ -117,7 +117,7 @@ impl Cpu {
     }
 
     #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-    pub(crate) fn execute_asr(&mut self, value: u32, offset: u8) -> u32 {
+    pub(super) fn execute_asr(&mut self, value: u32, offset: u8) -> u32 {
         // LSR/ASR #0 is a special case that works like LSR/ASR #32
         let offset = if offset == 0 { 32 } else { offset.into() };
 
@@ -138,7 +138,7 @@ impl Cpu {
         result
     }
 
-    pub(crate) fn execute_ror(&mut self, value: u32, offset: u8) -> u32 {
+    pub(super) fn execute_ror(&mut self, value: u32, offset: u8) -> u32 {
         let mut result = value;
         if offset > 0 {
             result = value.rotate_right(u32::from(offset) - 1);
