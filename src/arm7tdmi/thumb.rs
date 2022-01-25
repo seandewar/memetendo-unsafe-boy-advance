@@ -259,16 +259,25 @@ impl Cpu {
 }
 
 /// Private 3 argument ADD (and CMN) implementation.
-/// The 3rd argument is an implementation detail to handle addition with carry (ADC).
+/// The `c` argument is an implementation detail to handle addition with carry (ADC).
 #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 fn execute_add3(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
-    let result = u64::from(a) + u64::from(b) + u64::from(c);
+    let (a_neg, b_neg, c_neg) = (
+        (a as i32).is_negative(),
+        (b as i32).is_negative(),
+        (c as i32).is_negative(),
+    );
+    let mut result = u64::from(a) + u64::from(b);
+    let a_plus_b_neg = (result as i32).is_negative();
 
-    let (a_signed, b_signed) = (a as i32, b as i32);
-    let (a_neg, b_neg) = (a_signed.is_negative(), b_signed.is_negative());
-    let same_sign = a_neg == b_neg;
+    // a + b and (a + b) + c calculation may overflow, so we need to do the calculation in two
+    // parts and check for overflow twice.
+    // this does not apply to calculating the carry flag, as the result is u64 and is big enough to
+    // hold any (a + b + c), so we can just check if the result is greater than u32::MAX.
+    cpu.reg.cpsr.overflow = a_neg == b_neg && (result as i32).is_negative() != a_neg;
 
-    cpu.reg.cpsr.overflow = same_sign && (result as i32).is_negative() != a_neg;
+    result += u64::from(c);
+    cpu.reg.cpsr.overflow |= a_plus_b_neg == c_neg && (result as i32).is_negative() != c_neg;
     cpu.reg.cpsr.carry = result > u32::MAX.into();
     cpu.reg.cpsr.set_nz_from(result as _);
 
@@ -877,5 +886,84 @@ mod tests {
             [u32::MAX, 0, 0, 0, 0, 0, 0, -1 as _, 0, 0, 0, 0, 0, 0, 0, 0],
             carry | negative
         );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = u32::MAX;
+                cpu.reg.r[7] = u32::MAX;
+                cpu.reg.cpsr.carry = true;
+            },
+            0b010000_0101_000_111, // ADC R7,R0
+            [u32::MAX, 0, 0, 0, 0, 0, 0, -1 as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry | negative
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = u32::MAX;
+                cpu.reg.r[7] = 0;
+                cpu.reg.cpsr.carry = true;
+            },
+            0b010000_0101_000_111, // ADC R7,R0
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry | zero
+        );
+
+        // SBC{S} Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 5;
+                cpu.reg.r[1] = 32;
+            },
+            0b010000_0110_000_001, // SBC R1,R0
+            [5, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 5;
+                cpu.reg.r[1] = 32;
+                cpu.reg.cpsr.carry = true;
+            },
+            0b010000_0110_000_001, // SBC R1,R0
+            [5, 27, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = -1 as _;
+                cpu.reg.r[7] = 1;
+            },
+            0b010000_0110_000_111, // SBC R7,R0
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = -1 as _;
+                cpu.reg.r[7] = 1;
+                cpu.reg.cpsr.carry = true;
+            },
+            0b010000_0110_000_111, // SBC R7,R0
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0;
+                cpu.reg.r[7] = i32::MIN as _;
+            },
+            0b010000_0110_000_111, // SBC R7,R0
+            [0, 0, 0, 0, 0, 0, 0, i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            overflow | carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = i32::MAX as _;
+                cpu.reg.r[7] = i32::MIN as _;
+            },
+            0b010000_0110_000_111, // SBC R7,R0
+            [i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            overflow | carry | zero
+        );
+
+        // TODO: tests for rest of the ALU ops
     }
 }
