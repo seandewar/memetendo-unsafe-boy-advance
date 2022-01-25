@@ -1034,11 +1034,30 @@ mod tests {
         // BIC{S} Rd,Rs
         test_instr!(
             |cpu: &mut Cpu| {
-                cpu.reg.r[0] = 11;
-                cpu.reg.r[1] = 3;
+                cpu.reg.r[0] = 0b11111;
+                cpu.reg.r[1] = 0b10101;
             },
-            0b010000_1101_001_000, // BIC R0,R1
-            [33, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            0b010000_1110_001_000, // BIC R0,R1
+            [0b01010, 0b10101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = u32::MAX;
+                cpu.reg.r[1] = u32::MAX;
+            },
+            0b010000_1110_001_000, // BIC R0,R1
+            [0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        #[rustfmt::skip]
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = u32::MAX;
+                cpu.reg.r[1] = u32::MAX >> 1;
+            },
+            0b010000_1110_001_000, // BIC R0,R1
+            [1 << 31, u32::MAX >> 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
         );
 
         // TODO: tests for rest of the ALU ops
