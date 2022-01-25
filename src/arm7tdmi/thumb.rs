@@ -355,8 +355,16 @@ impl Cpu {
     fn execute_asr(&mut self, value: u32, offset: u8) -> u32 {
         let offset = if offset == 0 { 32 } else { offset.into() };
 
+        // a value shifted 32 or more times is either 0 or has all bits set depending on the
+        // initial value of the sign bit (due to sign extension)
         let mut result = value as i32;
-        result = result.checked_shr(offset - 1).unwrap_or(0);
+        let overflow_result = if result.is_negative() {
+            u32::MAX as _
+        } else {
+            0
+        };
+
+        result = result.checked_shr(offset - 1).unwrap_or(overflow_result);
         self.reg.cpsr.carry = result & 1 != 0;
         let result = (result >> 1) as _;
         self.reg.cpsr.set_nz_from(result);
@@ -373,8 +381,12 @@ impl Cpu {
     }
 }
 
-#[allow(clippy::unusual_byte_groupings, clippy::cast_sign_loss)]
-#[allow(clippy::unnecessary_cast)] // this lint doesn't detect negative literals properly
+#[allow(
+    clippy::unusual_byte_groupings,
+    clippy::cast_sign_loss,
+    clippy::too_many_lines,
+    clippy::unnecessary_cast // lint doesn't work properly with negative literals
+)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,6 +697,106 @@ mod tests {
             0b010000_0001_001_111, // EOR R7,R1
             [0, u32::MAX, 0, 0, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 0],
             negative
+        );
+
+        // LSL{S} Rd,Rs
+        // this test should not panic due to shift overflow:
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = 32;
+                cpu.reg.r[7] = 1;
+            },
+            0b010000_0010_001_111, // LSL R7,R1
+            [0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero | carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = 33;
+                cpu.reg.r[7] = 1;
+            },
+            0b010000_0010_001_111, // LSL R7,R1
+            [0, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = u8::MAX.into();
+                cpu.reg.r[7] = 1;
+            },
+            0b010000_0010_001_111, // LSL R7,R1
+            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+
+        // LSR{S} Rd,Rs
+        // this test should not panic due to shift overflow:
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1 << 31;
+                cpu.reg.r[1] = 32;
+            },
+            0b010000_0011_001_000, // LSR R1,R0
+            [0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero | carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1 << 31;
+                cpu.reg.r[1] = 33;
+            },
+            0b010000_0011_001_000, // LSR R1,R0
+            [0, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1;
+                cpu.reg.r[1] = u8::MAX.into();
+            },
+            0b010000_0011_001_000, // LSR R1,R0
+            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+
+        // ASR{S} Rd,Rs
+        // this test should not panic due to shift overflow:
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1 << 31;
+                cpu.reg.r[1] = 32;
+            },
+            0b010000_0100_001_000, // ASR R1,R0
+            [u32::MAX, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative | carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1 << 31;
+                cpu.reg.r[1] = 33;
+            },
+            0b010000_0100_001_000, // ASR R1,R0
+            [u32::MAX, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative | carry
+        );
+        #[rustfmt::skip]
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1 << 31;
+                cpu.reg.r[1] = u8::MAX.into();
+            },
+            0b010000_0100_001_000, // ASR R1,R0
+            [u32::MAX, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative | carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1 << 30;
+                cpu.reg.r[1] = u8::MAX.into();
+            },
+            0b010000_0100_001_000, // ASR R1,R0
+            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
         );
     }
 }
