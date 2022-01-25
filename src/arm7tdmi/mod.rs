@@ -1,3 +1,4 @@
+mod op;
 mod reg;
 mod thumb;
 

@@ -220,7 +220,7 @@ impl Cpu {
                     }
                     // BIC{S}
                     14 => {
-                        self.reg.r[r_dst] = self.execute_and_tst(self.reg.r[r_dst], !value);
+                        self.reg.r[r_dst] = self.execute_bic(self.reg.r[r_dst], value);
                     }
                     // MVN{S}
                     15 => {
@@ -255,153 +255,6 @@ impl Cpu {
             LongBranchWithLink => todo!(),
             Undefined => self.enter_exception(Exception::UndefinedInstr),
         }
-    }
-}
-
-/// Private 3 variable ADD (and CMN) implementation.
-/// The `c` argument is an implementation detail to handle addition with carry (ADC).
-#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-fn execute_add_impl(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
-    let actual_result = i64::from(a) + i64::from(b) + i64::from(c);
-    let (a_b, a_b_overflow) = (a as i32).overflowing_add(b as _);
-    let (result, a_b_c_overflow) = a_b.overflowing_add(c as _);
-
-    cpu.reg.cpsr.overflow = a_b_overflow || a_b_c_overflow;
-    cpu.reg.cpsr.carry = actual_result as u64 > u32::MAX.into();
-    cpu.reg.cpsr.set_nz_from(result as _);
-
-    result as _
-}
-
-/// Private 3 variable SUB (and CMP) implementation. See also: [`execute_add_impl`]
-#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-fn execute_sub_impl(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
-    // using overflowing_neg(), check if b == i32::MIN. if it is, we'll overflow negating it here
-    // (-i32::MIN == i32::MIN in 2s complement!), so make sure the overflow flag is set after.
-    // c is our implementation detail, so an overflow in c is our fault and isn't handled here.
-    let (b_neg, overflow) = (b as i32).overflowing_neg();
-    let result = execute_add_impl(cpu, a, b_neg as _, -(c as i32) as _);
-    cpu.reg.cpsr.overflow |= overflow;
-
-    result
-}
-
-impl Cpu {
-    fn execute_add_cmn(&mut self, a: u32, b: u32) -> u32 {
-        execute_add_impl(self, a, b, 0)
-    }
-
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-    fn execute_sub_cmp(&mut self, a: u32, b: u32) -> u32 {
-        execute_sub_impl(self, a, b, 0)
-    }
-
-    fn execute_adc(&mut self, a: u32, b: u32) -> u32 {
-        execute_add_impl(self, a, b, self.reg.cpsr.carry.into())
-    }
-
-    fn execute_sbc(&mut self, a: u32, b: u32) -> u32 {
-        execute_sub_impl(self, a, b, (!self.reg.cpsr.carry).into())
-    }
-
-    fn execute_mul(&mut self, a: u32, b: u32) -> u32 {
-        let result = a.wrapping_mul(b);
-        self.reg.cpsr.set_nz_from(result); // TODO: MUL corrupts carry flag (lol), but how?
-
-        result
-    }
-
-    fn execute_mov(&mut self, value: u32) -> u32 {
-        self.reg.cpsr.set_nz_from(value);
-
-        value
-    }
-
-    fn execute_and_tst(&mut self, a: u32, b: u32) -> u32 {
-        let result = a & b;
-        self.reg.cpsr.set_nz_from(result);
-
-        result
-    }
-
-    fn execute_eor(&mut self, a: u32, b: u32) -> u32 {
-        let result = a ^ b;
-        self.reg.cpsr.set_nz_from(result);
-
-        result
-    }
-
-    fn execute_orr(&mut self, a: u32, b: u32) -> u32 {
-        let result = a | b;
-        self.reg.cpsr.set_nz_from(result);
-
-        result
-    }
-
-    fn execute_mvn(&mut self, value: u32) -> u32 {
-        let result = !value;
-        self.reg.cpsr.set_nz_from(result);
-
-        result
-    }
-
-    fn execute_lsl(&mut self, value: u32, offset: u8) -> u32 {
-        let mut result = value;
-        if offset > 0 {
-            result = result.checked_shl((offset - 1).into()).unwrap_or(0);
-            self.reg.cpsr.carry = result & (1 << 31) != 0;
-            result <<= 1;
-        }
-        self.reg.cpsr.set_nz_from(result);
-
-        result
-    }
-
-    /// NOTE: LSR/ASR #0 is a special case that works like LSR/ASR #32.
-    fn execute_lsr(&mut self, value: u32, offset: u8) -> u32 {
-        let offset = if offset == 0 { 32 } else { offset.into() };
-
-        let mut result = value;
-        result = result.checked_shr(offset - 1).unwrap_or(0);
-        self.reg.cpsr.carry = result & 1 != 0;
-        result >>= 1;
-        self.reg.cpsr.set_nz_from(result);
-
-        result
-    }
-
-    /// NOTE: LSR/ASR #0 is a special case that works like LSR/ASR #32.
-    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-    fn execute_asr(&mut self, value: u32, offset: u8) -> u32 {
-        let offset = if offset == 0 { 32 } else { offset.into() };
-
-        // a value shifted 32 or more times is either 0 or has all bits set depending on the
-        // initial value of the sign bit (due to sign extension)
-        let mut result = value as i32;
-        let overflow_result = if result.is_negative() {
-            u32::MAX as _
-        } else {
-            0
-        };
-
-        result = result.checked_shr(offset - 1).unwrap_or(overflow_result);
-        self.reg.cpsr.carry = result & 1 != 0;
-        let result = (result >> 1) as _;
-        self.reg.cpsr.set_nz_from(result);
-
-        result
-    }
-
-    fn execute_ror(&mut self, value: u32, offset: u8) -> u32 {
-        let mut result = value;
-        if offset > 0 {
-            result = value.rotate_right(u32::from(offset) - 1);
-            self.reg.cpsr.carry = result & 1 != 0;
-            result = result.rotate_right(1);
-        }
-        self.reg.cpsr.set_nz_from(result);
-
-        result
     }
 }
 
@@ -1176,6 +1029,16 @@ mod tests {
             },
             0b010000_1101_001_000, // MUL R0,R1
             [16, -4 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+
+        // BIC{S} Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 11;
+                cpu.reg.r[1] = 3;
+            },
+            0b010000_1101_001_000, // BIC R0,R1
+            [33, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         );
 
         // TODO: tests for rest of the ALU ops
