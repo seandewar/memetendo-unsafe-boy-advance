@@ -1005,6 +1005,43 @@ mod tests {
             zero
         );
 
+        // TST Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0;
+                cpu.reg.r[1] = 0b1111;
+            },
+            0b010000_1000_000_001, // TST R1,R0
+            [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0b10000;
+                cpu.reg.r[1] = 0b01111;
+            },
+            0b010000_1000_000_001, // TST R1,R0
+            [0b10000, 0b01111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1;
+                cpu.reg.r[1] = 1;
+            },
+            0b010000_1000_000_001, // TST R1,R0
+            [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1 << 31;
+                cpu.reg.r[1] = u32::MAX;
+            },
+            0b010000_1000_000_001, // TST R1,R0
+            [1 << 31, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
+        );
+
         // TODO: tests for rest of the ALU ops
     }
 }
