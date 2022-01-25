@@ -222,7 +222,7 @@ impl Cpu {
                     14 => {
                         self.reg.r[r_dst] = self.execute_bic(self.reg.r[r_dst], value);
                     }
-                    // MVN{S}
+                    // MVN{S} (NOT)
                     15 => {
                         self.reg.r[r_dst] = self.execute_mvn(value);
                     }
@@ -1060,6 +1060,19 @@ mod tests {
             negative
         );
 
-        // TODO: tests for rest of the ALU ops
+        // MVN{S} Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[0] = u32::MAX,
+            0b010000_1111_000_000, // MVN R0,R0
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        #[rustfmt::skip]
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[3] = 0b1111_0000,
+            0b010000_1111_011_000, // MVN R0,R3
+            [!0b1111_0000, 0, 0, 0b1111_0000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
+        );
     }
 }
