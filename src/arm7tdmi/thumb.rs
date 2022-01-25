@@ -284,9 +284,18 @@ fn execute_add3(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
     result as _
 }
 
+/// Private 3 argument SUB (and CMP) implementation.
+/// See also: [execute_add3]
 #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 fn execute_sub3(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
-    execute_add3(cpu, a, -(b as i32) as _, -(c as i32) as _)
+    // using checked_reg(), check if b == i32::MIN. if it is, we'll overflow negating it here
+    // (-i32::MIN == i32::MIN in 2s complement!), so make sure the overflow flag is set after.
+    // don't bother handling c, as that's *our* responsibility to not overflow it...
+    let b_neg = (b as i32).checked_neg();
+    let result = execute_add3(cpu, a, b_neg.map_or(b, |x| x as _), -(c as i32) as _);
+    cpu.reg.cpsr.overflow |= b_neg.is_none();
+
+    result
 }
 
 impl Cpu {
@@ -605,6 +614,16 @@ mod tests {
             },
             0b00011_01_000_001_010, // SUB R2,R1,R0
             [5, -10 as _, -15 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative | carry
+        );
+        #[rustfmt::skip]
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 1;
+                cpu.reg.r[1] = i32::MIN as u32 + 1;
+            },
+            0b00011_01_000_001_010, // SUB R2,R1,R0
+            [1, i32::MIN as u32 + 1, i32::MIN as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             negative | carry
         );
 
@@ -1040,6 +1059,33 @@ mod tests {
             0b010000_1000_000_001, // TST R1,R0
             [1 << 31, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             negative
+        );
+
+        // NEG{S} Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[3] = 30,
+            0b010000_1001_011_111, // NEG R7,R3
+            [0, 0, 0, 30, 0, 0, 0, -30 as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[3] = 0,
+            0b010000_1001_011_111, // NEG R7,R3
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[3] = -10 as _,
+            0b010000_1001_011_111, // NEG R7,R3
+            [0, 0, 0, -10 as _, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        // negating i32::MIN isn't possible, and it should also set the overflow flag
+        #[rustfmt::skip]
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[3] = i32::MIN as _,
+            0b010000_1001_011_111, // NEG R7,R3
+            [0, 0, 0, i32::MIN as _, 0, 0, 0, i32::MIN as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative | overflow
         );
 
         // TODO: tests for rest of the ALU ops
