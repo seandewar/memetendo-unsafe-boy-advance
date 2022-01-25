@@ -258,62 +258,50 @@ impl Cpu {
     }
 }
 
-/// Private 3 argument ADD (and CMN) implementation.
+/// Private 3 variable ADD (and CMN) implementation.
 /// The `c` argument is an implementation detail to handle addition with carry (ADC).
-#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-fn execute_add3(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
-    let (a_neg, b_neg, c_neg) = (
-        (a as i32).is_negative(),
-        (b as i32).is_negative(),
-        (c as i32).is_negative(),
-    );
-    let mut result = u64::from(a) + u64::from(b);
-    let a_plus_b_neg = (result as i32).is_negative();
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+fn execute_add_impl(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
+    let actual_result = i64::from(a) + i64::from(b) + i64::from(c);
+    let (a_b, a_b_overflow) = (a as i32).overflowing_add(b as _);
+    let (result, a_b_c_overflow) = a_b.overflowing_add(c as _);
 
-    // a + b and (a + b) + c calculation may overflow, so we need to do the calculation in two
-    // parts and check for overflow twice.
-    // this does not apply to calculating the carry flag, as the result is u64 and is big enough to
-    // hold any (a + b + c), so we can just check if the result is greater than u32::MAX.
-    cpu.reg.cpsr.overflow = a_neg == b_neg && (result as i32).is_negative() != a_neg;
-
-    result += u64::from(c);
-    cpu.reg.cpsr.overflow |= a_plus_b_neg == c_neg && (result as i32).is_negative() != c_neg;
-    cpu.reg.cpsr.carry = result > u32::MAX.into();
+    cpu.reg.cpsr.overflow = a_b_overflow || a_b_c_overflow;
+    cpu.reg.cpsr.carry = actual_result as u64 > u32::MAX.into();
     cpu.reg.cpsr.set_nz_from(result as _);
 
     result as _
 }
 
-/// Private 3 argument SUB (and CMP) implementation.
-/// See also: [execute_add3]
+/// Private 3 variable SUB (and CMP) implementation. See also: [`execute_add_impl`]
 #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-fn execute_sub3(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
-    // using checked_reg(), check if b == i32::MIN. if it is, we'll overflow negating it here
+fn execute_sub_impl(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
+    // using overflowing_neg(), check if b == i32::MIN. if it is, we'll overflow negating it here
     // (-i32::MIN == i32::MIN in 2s complement!), so make sure the overflow flag is set after.
-    // don't bother handling c, as that's *our* responsibility to not overflow it...
-    let b_neg = (b as i32).checked_neg();
-    let result = execute_add3(cpu, a, b_neg.map_or(b, |x| x as _), -(c as i32) as _);
-    cpu.reg.cpsr.overflow |= b_neg.is_none();
+    // c is our implementation detail, so an overflow in c is our fault and isn't handled here.
+    let (b_neg, overflow) = (b as i32).overflowing_neg();
+    let result = execute_add_impl(cpu, a, b_neg as _, -(c as i32) as _);
+    cpu.reg.cpsr.overflow |= overflow;
 
     result
 }
 
 impl Cpu {
     fn execute_add_cmn(&mut self, a: u32, b: u32) -> u32 {
-        execute_add3(self, a, b, 0)
+        execute_add_impl(self, a, b, 0)
     }
 
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
     fn execute_sub_cmp(&mut self, a: u32, b: u32) -> u32 {
-        execute_sub3(self, a, b, 0)
+        execute_sub_impl(self, a, b, 0)
     }
 
     fn execute_adc(&mut self, a: u32, b: u32) -> u32 {
-        execute_add3(self, a, b, self.reg.cpsr.carry.into())
+        execute_add_impl(self, a, b, self.reg.cpsr.carry.into())
     }
 
     fn execute_sbc(&mut self, a: u32, b: u32) -> u32 {
-        execute_sub3(self, a, b, (!self.reg.cpsr.carry).into())
+        execute_sub_impl(self, a, b, (!self.reg.cpsr.carry).into())
     }
 
     fn execute_mul(&mut self, a: u32, b: u32) -> u32 {
@@ -1133,7 +1121,7 @@ mod tests {
             carry
         );
 
-        // ORR Rd,Rs
+        // ORR{S} Rd,Rs
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[5] = 0b1010;
