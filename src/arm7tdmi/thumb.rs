@@ -1142,6 +1142,42 @@ mod tests {
             negative
         );
 
+        // MUL{S} Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 11;
+                cpu.reg.r[1] = 3;
+            },
+            0b010000_1101_001_000, // MUL R0,R1
+            [33, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0;
+                cpu.reg.r[1] = 5;
+            },
+            0b010000_1101_001_000, // MUL R0,R1
+            [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = -8 as _;
+                cpu.reg.r[1] = 14;
+            },
+            0b010000_1101_001_000, // MUL R0,R1
+            [-112 as _, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = -4 as _;
+                cpu.reg.r[1] = -4 as _;
+            },
+            0b010000_1101_001_000, // MUL R0,R1
+            [16, -4 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+
         // TODO: tests for rest of the ALU ops
     }
 }
