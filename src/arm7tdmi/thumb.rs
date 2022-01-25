@@ -922,7 +922,6 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[0] = u32::MAX;
-                cpu.reg.r[7] = 0;
                 cpu.reg.cpsr.carry = true;
             },
             0b010000_0101_000_111, // ADC R7,R0
@@ -969,10 +968,7 @@ mod tests {
             [u32::MAX, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0],
         );
         test_instr!(
-            |cpu: &mut Cpu| {
-                cpu.reg.r[0] = 0;
-                cpu.reg.r[7] = i32::MIN as _;
-            },
+            |cpu: &mut Cpu| cpu.reg.r[7] = i32::MIN as _,
             0b010000_0110_000_111, // SBC R7,R0
             [0, 0, 0, 0, 0, 0, 0, i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0],
             overflow | carry
@@ -999,10 +995,7 @@ mod tests {
             carry | negative
         );
         test_instr!(
-            |cpu: &mut Cpu| {
-                cpu.reg.r[0] = 0;
-                cpu.reg.r[1] = 0b1111;
-            },
+            |cpu: &mut Cpu| cpu.reg.r[1] = 0b1111,
             0b010000_0111_000_001, // ROR R1,R0
             [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         );
@@ -1015,10 +1008,7 @@ mod tests {
             [0, 0, 255, 0b11110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         );
         test_instr!(
-            |cpu: &mut Cpu| {
-                cpu.reg.r[2] = 255;
-                cpu.reg.r[3] = 0;
-            },
+            |cpu: &mut Cpu| cpu.reg.r[2] = 255,
             0b010000_0111_010_011, // ROR R3,R2
             [0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             zero
@@ -1026,10 +1016,7 @@ mod tests {
 
         // TST Rd,Rs
         test_instr!(
-            |cpu: &mut Cpu| {
-                cpu.reg.r[0] = 0;
-                cpu.reg.r[1] = 0b1111;
-            },
+            |cpu: &mut Cpu| cpu.reg.r[1] = 0b1111,
             0b010000_1000_000_001, // TST R1,R0
             [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             zero
@@ -1144,6 +1131,27 @@ mod tests {
             0b010000_1011_011_100, // CMN R4,R3
             [0, 0, 0, -20 as _, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             carry
+        );
+
+        // ORR Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[5] = 0b1010;
+                cpu.reg.r[0] = 0b0101;
+            },
+            0b010000_1100_101_000, // ORR R0,R5
+            [0b1111, 0, 0, 0, 0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            0b010000_1100_101_000, // ORR R0,R5
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[4] = u32::MAX,
+            0b010000_1100_100_100, // ORR R4,R4
+            [0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
         );
 
         // TODO: tests for rest of the ALU ops
