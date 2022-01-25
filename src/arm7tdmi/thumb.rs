@@ -1088,6 +1088,35 @@ mod tests {
             negative | overflow
         );
 
+        // CMP Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[3] = 30;
+                cpu.reg.r[4] = 30;
+            },
+            0b010000_1010_011_100, // CMP R4,R3
+            [0, 0, 0, 30, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            zero | carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[3] = 30;
+                cpu.reg.r[4] = 20;
+            },
+            0b010000_1010_011_100, // CMP R4,R3
+            [0, 0, 0, 30, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            negative
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[3] = 20;
+                cpu.reg.r[4] = 30;
+            },
+            0b010000_1010_011_100, // CMP R4,R3
+            [0, 0, 0, 20, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry
+        );
+
         // TODO: tests for rest of the ALU ops
     }
 }
