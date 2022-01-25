@@ -256,32 +256,46 @@ impl Cpu {
             Undefined => self.enter_exception(Exception::UndefinedInstr),
         }
     }
+}
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+/// Private 3 argument ADD (and CMN) implementation.
+/// The 3rd argument is an implementation detail to handle addition with carry (ADC).
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+fn execute_add3(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
+    let result = u64::from(a) + u64::from(b) + u64::from(c);
+
+    let (a_signed, b_signed) = (a as i32, b as i32);
+    let (a_neg, b_neg) = (a_signed.is_negative(), b_signed.is_negative());
+    let same_sign = a_neg == b_neg;
+
+    cpu.reg.cpsr.overflow = same_sign && (result as i32).is_negative() != a_neg;
+    cpu.reg.cpsr.carry = result > u32::MAX.into();
+    cpu.reg.cpsr.set_nz_from(result as _);
+
+    result as _
+}
+
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+fn execute_sub3(cpu: &mut Cpu, a: u32, b: u32, c: u32) -> u32 {
+    execute_add3(cpu, a, -(b as i32) as _, -(c as i32) as _)
+}
+
+impl Cpu {
     fn execute_add_cmn(&mut self, a: u32, b: u32) -> u32 {
-        let result = u64::from(a).wrapping_add(b.into());
-        let (a_signed, b_signed) = (a as i32, b as i32);
-        let (a_neg, b_neg) = (a_signed.is_negative(), b_signed.is_negative());
-        let same_sign = a_neg == b_neg;
-
-        self.reg.cpsr.overflow = same_sign && (result as i32).is_negative() != a_neg;
-        self.reg.cpsr.carry = result > u32::MAX.into();
-        self.reg.cpsr.set_nz_from(result as _);
-
-        result as _
+        execute_add3(self, a, b, 0)
     }
 
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
     fn execute_sub_cmp(&mut self, a: u32, b: u32) -> u32 {
-        self.execute_add_cmn(a, -(b as i32) as _)
+        execute_sub3(self, a, b, 0)
     }
 
     fn execute_adc(&mut self, a: u32, b: u32) -> u32 {
-        self.execute_add_cmn(a, b.wrapping_add(self.reg.cpsr.carry.into()))
+        execute_add3(self, a, b, self.reg.cpsr.carry.into())
     }
 
     fn execute_sbc(&mut self, a: u32, b: u32) -> u32 {
-        self.execute_sub_cmp(a, b.wrapping_add((!self.reg.cpsr.carry).into()))
+        execute_sub3(self, a, b, (!self.reg.cpsr.carry).into())
     }
 
     fn execute_mul(&mut self, a: u32, b: u32) -> u32 {
@@ -733,30 +747,38 @@ mod tests {
         // this test should not panic due to shift overflow:
         test_instr!(
             |cpu: &mut Cpu| {
-                cpu.reg.r[0] = 1 << 31;
-                cpu.reg.r[1] = 32;
+                cpu.reg.r[0] = 32;
+                cpu.reg.r[1] = 1 << 31;
             },
-            0b010000_0011_001_000, // LSR R1,R0
-            [0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            0b010000_0011_000_001, // LSR R1,R0
+            [32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             zero | carry
         );
         test_instr!(
             |cpu: &mut Cpu| {
-                cpu.reg.r[0] = 1 << 31;
-                cpu.reg.r[1] = 33;
+                cpu.reg.r[0] = 33;
+                cpu.reg.r[1] = 1 << 31;
             },
-            0b010000_0011_001_000, // LSR R1,R0
-            [0, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            0b010000_0011_000_001, // LSR R1,R0
+            [33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             zero
         );
         test_instr!(
             |cpu: &mut Cpu| {
-                cpu.reg.r[0] = 1;
-                cpu.reg.r[1] = u8::MAX.into();
+                cpu.reg.r[0] = u8::MAX.into();
+                cpu.reg.r[1] = 1;
             },
-            0b010000_0011_001_000, // LSR R1,R0
-            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            0b010000_0011_000_001, // LSR R1,R0
+            [u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 3;
+                cpu.reg.r[1] = 0b1000;
+            },
+            0b010000_0011_000_001, // LSR R1,R0
+            [3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         );
 
         // ASR{S} Rd,Rs
@@ -766,7 +788,7 @@ mod tests {
                 cpu.reg.r[0] = 1 << 31;
                 cpu.reg.r[1] = 32;
             },
-            0b010000_0100_001_000, // ASR R1,R0
+            0b010000_0100_001_000, // ASR R0,R1
             [u32::MAX, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             negative | carry
         );
@@ -775,7 +797,7 @@ mod tests {
                 cpu.reg.r[0] = 1 << 31;
                 cpu.reg.r[1] = 33;
             },
-            0b010000_0100_001_000, // ASR R1,R0
+            0b010000_0100_001_000, // ASR R0,R1
             [u32::MAX, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             negative | carry
         );
@@ -785,7 +807,7 @@ mod tests {
                 cpu.reg.r[0] = 1 << 31;
                 cpu.reg.r[1] = u8::MAX.into();
             },
-            0b010000_0100_001_000, // ASR R1,R0
+            0b010000_0100_001_000, // ASR R0,R1
             [u32::MAX, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             negative | carry
         );
@@ -794,9 +816,66 @@ mod tests {
                 cpu.reg.r[0] = 1 << 30;
                 cpu.reg.r[1] = u8::MAX.into();
             },
-            0b010000_0100_001_000, // ASR R1,R0
+            0b010000_0100_001_000, // ASR R0,R1
             [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             zero
+        );
+
+        // ADC{S} Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 5;
+                cpu.reg.r[1] = 32;
+            },
+            0b010000_0101_000_001, // ADC R1,R0
+            [5, 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 5;
+                cpu.reg.r[1] = 32;
+                cpu.reg.cpsr.carry = true;
+            },
+            0b010000_0101_000_001, // ADC R1,R0
+            [5, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = u32::MAX;
+                cpu.reg.r[7] = 1;
+            },
+            0b010000_0101_000_111, // ADC R7,R0
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry | zero
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = u32::MAX;
+                cpu.reg.r[7] = 1;
+                cpu.reg.cpsr.carry = true;
+            },
+            0b010000_0101_000_111, // ADC R7,R0
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = u32::MAX;
+                cpu.reg.r[7] = u32::MAX;
+            },
+            0b010000_0101_000_111, // ADC R7,R0
+            [u32::MAX, 0, 0, 0, 0, 0, 0, -2 as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry | negative
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = u32::MAX;
+                cpu.reg.r[7] = u32::MAX;
+                cpu.reg.cpsr.carry = true;
+            },
+            0b010000_0101_000_111, // ADC R7,R0
+            [u32::MAX, 0, 0, 0, 0, 0, 0, -1 as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            carry | negative
         );
     }
 }
