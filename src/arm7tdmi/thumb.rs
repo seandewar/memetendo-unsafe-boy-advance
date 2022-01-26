@@ -314,12 +314,18 @@ mod tests {
         cpu.reg.cpsr.irq_disabled = false;
         cpu.reg.cpsr.fiq_disabled = false;
         cpu.execute_bx(&NullBus, 0);
-
         before(&mut cpu);
         cpu.execute_thumb(&NullBus, instr);
 
         assert_eq!(cpu.reg.r, *expected_rs);
-        assert_eq!(cpu.reg.cpsr, expected_cspr);
+
+        // only check condition and interrupt flags
+        assert_eq!(cpu.reg.cpsr.negative, expected_cspr.negative);
+        assert_eq!(cpu.reg.cpsr.zero, expected_cspr.zero);
+        assert_eq!(cpu.reg.cpsr.carry, expected_cspr.carry);
+        assert_eq!(cpu.reg.cpsr.overflow, expected_cspr.overflow);
+        assert_eq!(cpu.reg.cpsr.irq_disabled, expected_cspr.irq_disabled);
+        assert_eq!(cpu.reg.cpsr.fiq_disabled, expected_cspr.fiq_disabled);
     }
 
     macro_rules! test_instr {
@@ -1173,6 +1179,30 @@ mod tests {
             0b010001_01_1_1_010_111, // CMP PC,R10
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 10],
             zero | carry
+        );
+
+        // MOV Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[1] = 15,
+            0b010001_10_1_0_001_101, // MOV R13,R1
+            [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 0, 4],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[8] = 15,
+            0b010001_10_1_1_001_001, // MOV R8,R8
+            [0, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 4],
+        );
+
+        // BX Rs
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[1] = 0b110,
+            0b010001_11_1_0_001_101, // BX R1
+            [0, 0b110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0b110 + 4],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[13] = 0b111,
+            0b010001_11_0_1_101_000, // BX R13
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0b111, 0, 0b100 + 8],
         );
     }
 }

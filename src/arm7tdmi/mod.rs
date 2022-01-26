@@ -47,40 +47,59 @@ impl Cpu {
             return;
         }
 
+        let instr = self.flush_pipeline(bus);
         match self.reg.cpsr.state {
-            OperationState::Arm => (), // TODO: do something!
+            OperationState::Arm => {
+                // TODO: ARM instruction set is unimplemented rn so just do THUMB
+                self.execute_bx(bus, self.reg.r[Pc].wrapping_sub(8));
+            }
             OperationState::Thumb => {
-                self.execute_thumb(bus, (self.pipeline_instrs[0] & 0xffff) as _);
+                self.execute_thumb(bus, (instr & 0xffff) as _);
             }
         }
+    }
 
-        todo!();
+    fn flush_pipeline(&mut self, bus: &impl DataBus) -> u32 {
+        let instr_size = self.reg.cpsr.state.instr_size();
+        let instr = self.pipeline_instrs[0];
+
+        self.pipeline_instrs[0] = self.pipeline_instrs[1];
+        self.pipeline_instrs[1] = match self.reg.cpsr.state {
+            OperationState::Thumb => bus.read_hword(self.reg.r[Pc]).into(),
+            OperationState::Arm => bus.read_word(self.reg.r[Pc]),
+        };
+        self.reg.r[Pc] = self.reg.r[Pc].wrapping_add(instr_size);
+
+        instr
+    }
+
+    /// NOTE: also aligns PC.
+    fn reload_pipeline(&mut self, bus: &impl DataBus) {
+        let instr_size = self.reg.cpsr.state.instr_size();
+
+        self.reg.r[Pc] = match self.reg.cpsr.state {
+            OperationState::Thumb => {
+                let pc = self.reg.r[Pc] & !1;
+                self.pipeline_instrs[0] = bus.read_hword(pc).into();
+                self.pipeline_instrs[1] = bus.read_hword(pc.wrapping_add(instr_size)).into();
+
+                pc
+            }
+            OperationState::Arm => {
+                let pc = self.reg.r[Pc] & !0b11;
+                self.pipeline_instrs[0] = bus.read_word(pc);
+                self.pipeline_instrs[1] = bus.read_word(pc.wrapping_add(instr_size));
+
+                pc
+            }
+        }
+        .wrapping_add(instr_size * 2);
     }
 
     fn set_cpsr(&mut self, cpsr: u32) {
         if self.reg.set_cpsr(cpsr).is_err() {
             self.run_state = RunState::Hung;
         }
-    }
-
-    /// NOTE: also aligns PC.
-    fn reload_pipeline(&mut self, bus: &impl DataBus) {
-        self.reg.r[Pc] = match self.reg.cpsr.state {
-            OperationState::Thumb => {
-                let pc = self.reg.r[Pc] & !1;
-                self.pipeline_instrs[0] = bus.read_hword(pc).into();
-                self.pipeline_instrs[1] = bus.read_hword(pc.wrapping_add(2)).into();
-
-                pc.wrapping_add(4)
-            }
-            OperationState::Arm => {
-                let pc = self.reg.r[Pc] & !0b11;
-                self.pipeline_instrs[0] = bus.read_word(pc);
-                self.pipeline_instrs[1] = bus.read_word(pc.wrapping_add(4));
-
-                pc.wrapping_add(8)
-            }
-        };
     }
 }
 
@@ -140,7 +159,7 @@ impl Cpu {
 mod tests {
     use super::*;
 
-    use crate::bus::NullBus;
+    use crate::bus::{NullBus, VecBus};
 
     use strum::IntoEnumIterator;
 
@@ -172,7 +191,7 @@ mod tests {
             cpu.reg.cpsr.fiq_disabled
         );
 
-        // +8 in PC due to pipelining
+        // +8 in PC due to pipe-lining
         assert_eq!(exception.vector_addr().wrapping_add(8), cpu.reg.r[Pc]);
         assert_eq!(old_reg.r[Pc], cpu.reg.r[Lr]);
         assert_eq!(old_reg.cpsr, cpu.reg.spsr);
@@ -210,5 +229,32 @@ mod tests {
         for exception in Exception::iter() {
             test_exception(&mut cpu, exception);
         }
+    }
+
+    #[allow(clippy::unusual_byte_groupings)]
+    #[test]
+    fn step_works() {
+        let mut bus = VecBus(vec![0; 102]);
+        bus.write_hword(0, 0b001_00_101_01100100); // MOV R5,#100
+        bus.write_hword(2, 0b010001_11_0_0_101_000); // BX R5
+        bus.write_hword(100, 0b001_00_001_00100001); // MOV R1,#33
+
+        let mut cpu = Cpu::new();
+        cpu.reset(&bus);
+        cpu.execute_bx(&bus, 0); // act like the CPU started in THUMB mode
+        assert_eq!(4, cpu.reg.r[Pc]);
+        assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
+
+        cpu.step(&mut bus);
+        assert_eq!(6, cpu.reg.r[Pc]);
+        assert_eq!(100, cpu.reg.r[5]);
+
+        cpu.step(&mut bus);
+        assert_eq!(104, cpu.reg.r[Pc]);
+        assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
+
+        cpu.step(&mut bus);
+        assert_eq!(106, cpu.reg.r[Pc]);
+        assert_eq!(33, cpu.reg.r[1]);
     }
 }

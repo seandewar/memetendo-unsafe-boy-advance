@@ -170,6 +170,14 @@ impl OperationState {
     fn psr(self) -> u32 {
         self as _
     }
+
+    #[must_use]
+    pub(super) fn instr_size(self) -> u32 {
+        match self {
+            Self::Arm => 4,
+            Self::Thumb => 2,
+        }
+    }
 }
 
 #[allow(clippy::struct_excessive_bools)]

@@ -57,3 +57,22 @@ impl DataBus for NullBus {
 
     fn write_byte(&mut self, _addr: u32, _value: u8) {}
 }
+
+#[cfg(test)]
+pub(super) struct VecBus(pub Vec<u8>);
+
+#[cfg(test)]
+impl DataBus for VecBus {
+    fn read_byte(&self, addr: u32) -> u8 {
+        self.0
+            .get(usize::try_from(addr).unwrap())
+            .copied()
+            .unwrap_or(0xff)
+    }
+
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        if let Some(v) = self.0.get_mut(usize::try_from(addr).unwrap()) {
+            *v = value;
+        }
+    }
+}
