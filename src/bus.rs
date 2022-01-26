@@ -1,4 +1,5 @@
-#[allow(clippy::module_name_repetitions)]
+#![allow(clippy::module_name_repetitions)]
+
 pub trait DataBus {
     #[must_use]
     fn read_byte(&self, addr: u32) -> u8;
@@ -32,7 +33,6 @@ pub trait DataBus {
     }
 }
 
-#[allow(clippy::module_name_repetitions)]
 #[derive(Default, Debug)]
 pub struct GbaBus;
 

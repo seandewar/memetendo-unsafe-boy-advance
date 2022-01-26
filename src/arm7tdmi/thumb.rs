@@ -1,9 +1,6 @@
 use crate::{arm7tdmi::reg::OperationState, bus::DataBus};
 
-use super::{
-    reg::{NamedGeneralRegister::Pc, Registers},
-    Cpu, Exception,
-};
+use super::{reg::NamedGeneralRegister::Pc, Cpu, Exception};
 
 #[derive(Copy, Clone, Debug)]
 enum InstructionFormat {
@@ -62,13 +59,6 @@ fn decode_format(instr: u16) -> InstructionFormat {
         (0b001, _, _, _, _, _) => MoveCmpAddSubImm,
         (0b011, _, _, _, _, _) => LoadStoreImm,
         _ => Undefined,
-    }
-}
-
-impl Registers {
-    #[must_use]
-    fn pc_thumb_addr(self) -> u32 {
-        self.r[Pc].wrapping_add(2)
     }
 }
 
@@ -240,7 +230,8 @@ impl Cpu {
             // TODO: 1S cycle for ADD, MOV, CMP
             //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
             HiRegOpBranchExchange => {
-                let r_src = r_index(instr, 3) | usize::from(instr & 0b1000);
+                let r_src_msb = instr & (1 << 6) != 0;
+                let r_src = r_index(instr, 3) | (usize::from(r_src_msb) << 3);
                 let value = self.reg.r[r_src];
                 let op = (instr >> 8) & 0b11;
 
@@ -1118,5 +1109,36 @@ mod tests {
             [!0b1111_0000, 0, 0, 0b1111_0000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
             negative
         );
+    }
+
+    #[test]
+    fn execute_thumb_hi_reg_op_branch_exchange() {
+        // ADD Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[13] = 20;
+                cpu.reg.r[1] = 15;
+            },
+            0b010001_00_1_0_001_101, // ADD R13,R1
+            [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 35, 0, 4],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[8] = 5;
+                cpu.reg.r[14] = -10 as _;
+            },
+            0b010001_00_1_1_110_000, // ADD R8,R14
+            [0, 0, 0, 0, 0, 0, 0, 0, -5 as _, 0, 0, 0, 0, 0, -10 as _, 4],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[Pc] = 1;
+                cpu.reg.r[10] = 9;
+            },
+            0b010001_00_1_1_010_111, // ADD PC,R10
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 14],
+        );
+
+        // TODO: test the others
     }
 }
