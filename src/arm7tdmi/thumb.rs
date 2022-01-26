@@ -1145,6 +1145,33 @@ mod tests {
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 14],
         );
 
-        // TODO: test the others
+        // CMP Rd,Rs
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[13] = 20;
+                cpu.reg.r[1] = 15;
+            },
+            0b010001_01_1_0_001_101, // CMP R13,R1
+            [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 4],
+            carry
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[13] = 20;
+                cpu.reg.r[1] = 15;
+            },
+            0b010001_01_0_1_101_001, // CMP R1,R13
+            [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 4],
+            negative
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.r[Pc] = 10;
+                cpu.reg.r[10] = 10;
+            },
+            0b010001_01_1_1_010_111, // CMP PC,R10
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 10],
+            zero | carry
+        );
     }
 }
