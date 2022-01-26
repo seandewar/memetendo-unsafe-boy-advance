@@ -156,16 +156,14 @@ impl Cpu {
         result
     }
 
-    /// NOTE: reloads the pipeline.
+    /// NOTE: also reloads the pipeline.
     pub(super) fn execute_bx(&mut self, bus: &impl DataBus, pc: u32) {
         self.reg.cpsr.state = if pc & 1 == 0 {
-            self.reg.r[Pc] = pc; // already half-word aligned (bit 0 unset)
             OperationState::Thumb
         } else {
-            self.reg.r[Pc] = pc & !0b11;
             OperationState::Arm
         };
-
+        self.reg.r[Pc] = pc;
         self.reload_pipeline(bus);
     }
 }

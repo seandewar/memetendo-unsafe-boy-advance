@@ -54,22 +54,24 @@ impl Cpu {
         }
     }
 
+    /// NOTE: also aligns PC.
     fn reload_pipeline(&mut self, bus: &impl DataBus) {
-        let pc = self.reg.r[Pc];
-        let pc_offset = match self.reg.cpsr.state {
+        self.reg.r[Pc] = match self.reg.cpsr.state {
             OperationState::Thumb => {
+                let pc = self.reg.r[Pc] & !1;
                 self.pipeline_instrs[0] = bus.read_hword(pc).into();
                 self.pipeline_instrs[1] = bus.read_hword(pc.wrapping_add(2)).into();
-                4
+
+                pc.wrapping_add(4)
             }
             OperationState::Arm => {
+                let pc = self.reg.r[Pc] & !0b11;
                 self.pipeline_instrs[0] = bus.read_word(pc);
                 self.pipeline_instrs[1] = bus.read_word(pc.wrapping_add(4));
-                8
+
+                pc.wrapping_add(8)
             }
         };
-
-        self.reg.r[Pc] = pc.wrapping_add(pc_offset);
     }
 }
 
