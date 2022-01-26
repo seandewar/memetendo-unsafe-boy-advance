@@ -75,6 +75,7 @@ impl Cpu {
 
         assert!(self.reg.cpsr.state == OperationState::Thumb);
 
+        #[allow(clippy::match_same_arms)] // TODO
         match decode_format(instr) {
             // TODO: 1S cycle
             MoveShiftedReg => {

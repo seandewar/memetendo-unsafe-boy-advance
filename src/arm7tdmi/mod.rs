@@ -32,6 +32,7 @@ impl Default for RunState {
 }
 
 impl Cpu {
+    #[allow(unused)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -41,10 +42,18 @@ impl Cpu {
         self.enter_exception(bus, Exception::Reset);
     }
 
-    pub fn step(&mut self, _bus: &mut impl DataBus) {
+    pub fn step(&mut self, bus: &mut impl DataBus) {
         if self.run_state != RunState::Running {
             return;
         }
+
+        match self.reg.cpsr.state {
+            OperationState::Arm => (), // TODO: do something!
+            OperationState::Thumb => {
+                self.execute_thumb(bus, (self.pipeline_instrs[0] & 0xffff) as _);
+            }
+        }
+
         todo!();
     }
 

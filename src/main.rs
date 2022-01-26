@@ -4,6 +4,12 @@ mod arm7tdmi;
 mod bus;
 mod gba;
 
+use gba::Gba;
+
 fn main() {
-    println!("Hello, world!");
+    let mut gba = Gba::new();
+    gba.reset();
+
+    // TODO: do something
+    gba.step();
 }

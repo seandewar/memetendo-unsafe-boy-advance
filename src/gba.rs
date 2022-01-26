@@ -1,7 +1,7 @@
 use crate::{arm7tdmi::Cpu, bus::GbaBus};
 
 #[derive(Default, Debug)]
-struct Gba {
+pub struct Gba {
     cpu: Cpu,
     bus: GbaBus,
 }
