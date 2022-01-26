@@ -12,10 +12,10 @@ impl Gba {
     }
 
     pub fn reset(&mut self) {
-        self.cpu.reset();
+        self.cpu.reset(&self.bus);
     }
 
-    pub fn step(&mut self, cycles: usize) {
-        self.cpu.step(&mut self.bus, cycles);
+    pub fn step(&mut self) {
+        self.cpu.step(&mut self.bus);
     }
 }

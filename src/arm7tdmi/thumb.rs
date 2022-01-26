@@ -1,3 +1,5 @@
+use crate::{arm7tdmi::reg::OperationState, bus::DataBus};
+
 use super::{
     reg::{NamedGeneralRegister::Pc, Registers},
     Cpu, Exception,
@@ -32,8 +34,7 @@ fn decode_format(instr: u16) -> InstructionFormat {
     #[allow(clippy::enum_glob_use)]
     use InstructionFormat::*;
 
-    #[allow(clippy::cast_possible_truncation)]
-    let hi8 = (instr >> 8) as u8;
+    let hi8 = ((instr >> 8) & 0xff) as u8;
     let hi6 = hi8 >> 2;
     let hi5 = hi8 >> 3;
     let hi4 = hi8 >> 4;
@@ -66,28 +67,33 @@ fn decode_format(instr: u16) -> InstructionFormat {
 
 impl Registers {
     #[must_use]
-    pub(super) fn pc_thumb_addr(&self) -> u32 {
-        self.r[Pc] & !1
+    fn pc_thumb_addr(self) -> u32 {
+        self.r[Pc].wrapping_add(2)
     }
+}
+
+#[must_use]
+fn r_index(instr: u16, pos: u8) -> usize {
+    (usize::from(instr) >> usize::from(pos)) & 0b111
 }
 
 impl Cpu {
     #[allow(clippy::too_many_lines)]
-    pub(super) fn execute_thumb(&mut self, instr: u16) {
+    pub(super) fn execute_thumb(&mut self, bus: &impl DataBus, instr: u16) {
         #[allow(clippy::enum_glob_use)]
         use InstructionFormat::*;
 
-        // TODO: add to CPU cycle counts when implemented
+        assert!(self.reg.cpsr.state == OperationState::Thumb);
+
         match decode_format(instr) {
             // TODO: 1S cycle
-            #[allow(clippy::cast_possible_truncation)]
             MoveShiftedReg => {
                 // Rd,Rs,#Offset
-                let offset = (instr >> 6) as u8 & 0b1_1111;
-                let value = self.reg.r[(usize::from(instr) >> 3) & 0b111];
+                let offset = ((instr >> 6) & 0b1_1111) as u8;
+                let value = self.reg.r[r_index(instr, 3)];
                 let op = (instr >> 11) & 0b11;
 
-                self.reg.r[(usize::from(instr) & 0b111)] = match op {
+                self.reg.r[r_index(instr, 0)] = match op {
                     // LSL{S}
                     0 => self.execute_lsl(value, offset),
                     // LSR{S}
@@ -99,25 +105,26 @@ impl Cpu {
             }
 
             // TODO: 1S cycle
-            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             AddSub => {
-                let a = self.reg.r[(usize::from(instr) >> 3) & 0b111];
-                let r_or_value = (instr >> 6) & 0b111;
+                let a = self.reg.r[r_index(instr, 3)];
+                let r_or_value = r_index(instr, 6);
                 let op = (instr >> 9) & 0b11;
+
+                #[allow(clippy::cast_possible_truncation)]
                 let b = if op & 0b10 == 0 {
                     // Rd,Rs,Rn
-                    self.reg.r[usize::from(r_or_value)]
+                    self.reg.r[r_or_value]
                 } else {
                     // Rd,Rs,#nn
-                    r_or_value.into()
+                    r_or_value as _
                 };
 
-                self.reg.r[(usize::from(instr) & 0b111)] = if op & 1 == 0 {
+                self.reg.r[r_index(instr, 0)] = if op & 1 == 0 {
                     // ADD{S}
-                    self.execute_add_cmn(a, b)
+                    self.execute_add_cmn(true, a, b)
                 } else {
                     // SUB{S}
-                    self.execute_sub_cmp(a, b)
+                    self.execute_sub_cmp(true, a, b)
                 };
             }
 
@@ -125,24 +132,24 @@ impl Cpu {
             MoveCmpAddSubImm => {
                 // Rd,#nn
                 let value = u32::from(instr & 0b1111_1111);
-                let r_dst = (usize::from(instr) >> 8) & 0b111;
+                let r_dst = r_index(instr, 8);
 
                 match (instr >> 11) & 0b11 {
                     // MOV{S}
                     0 => {
-                        self.reg.r[r_dst] = self.execute_mov(value);
+                        self.reg.r[r_dst] = self.execute_mov(true, value);
                     }
                     // CMP{S}
                     1 => {
-                        self.execute_sub_cmp(self.reg.r[r_dst], value);
+                        self.execute_sub_cmp(true, self.reg.r[r_dst], value);
                     }
                     // ADD{S}
                     2 => {
-                        self.reg.r[r_dst] = self.execute_add_cmn(self.reg.r[r_dst], value);
+                        self.reg.r[r_dst] = self.execute_add_cmn(true, self.reg.r[r_dst], value);
                     }
                     // SUB{S}
                     3 => {
-                        self.reg.r[r_dst] = self.execute_sub_cmp(self.reg.r[r_dst], value);
+                        self.reg.r[r_dst] = self.execute_sub_cmp(true, self.reg.r[r_dst], value);
                     }
                     _ => unreachable!(),
                 }
@@ -153,8 +160,8 @@ impl Cpu {
             //       1S+mI: MUL (m=1..4; depending on MSBs of incoming Rd value)
             AluOp => {
                 // Rd,Rs
-                let r_dst = usize::from(instr) & 0b111;
-                let value = self.reg.r[(usize::from(instr) >> 3) & 0b111];
+                let r_dst = r_index(instr, 0);
+                let value = self.reg.r[r_index(instr, 3)];
                 let op = (instr >> 6) & 0b1111;
 
                 match op {
@@ -183,11 +190,11 @@ impl Cpu {
                     }
                     // ADC{S}
                     5 => {
-                        self.reg.r[r_dst] = self.execute_adc(self.reg.r[r_dst], value);
+                        self.reg.r[r_dst] = self.execute_adc(true, self.reg.r[r_dst], value);
                     }
                     // SBC{S}
                     6 => {
-                        self.reg.r[r_dst] = self.execute_sbc(self.reg.r[r_dst], value);
+                        self.reg.r[r_dst] = self.execute_sbc(true, self.reg.r[r_dst], value);
                     }
                     // ROR{S}
                     #[allow(clippy::cast_possible_truncation)]
@@ -200,15 +207,15 @@ impl Cpu {
                     }
                     // NEG{S}
                     9 => {
-                        self.reg.r[r_dst] = self.execute_sub_cmp(0, value);
+                        self.reg.r[r_dst] = self.execute_sub_cmp(true, 0, value);
                     }
                     // CMP
                     10 => {
-                        self.execute_sub_cmp(self.reg.r[r_dst], value);
+                        self.execute_sub_cmp(true, self.reg.r[r_dst], value);
                     }
                     // CMN
                     11 => {
-                        self.execute_add_cmn(self.reg.r[r_dst], value);
+                        self.execute_add_cmn(true, self.reg.r[r_dst], value);
                     }
                     // ORR{S}
                     12 => {
@@ -233,10 +240,39 @@ impl Cpu {
             // TODO: 1S cycle for ADD, MOV, CMP
             //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
             HiRegOpBranchExchange => {
-                let r_dst_no_msb = usize::from(instr) & 0b111;
-                let r_src = (usize::from(instr) >> 3) & 0b1111;
-                let r_dst_msb_or_bl = instr & (1 << 7) != 0;
-                let op = todo!();
+                let r_src = r_index(instr, 3) | usize::from(instr & 0b1000);
+                let value = self.reg.r[r_src];
+                let op = (instr >> 8) & 0b11;
+
+                if op < 3 {
+                    // Rd,Rs
+                    let r_dst_msb = instr & (1 << 7) != 0;
+                    let r_dst = r_index(instr, 0) | (usize::from(r_dst_msb) << 3);
+
+                    match op {
+                        // ADD
+                        0 => {
+                            self.reg.r[r_dst] =
+                                self.execute_add_cmn(false, self.reg.r[r_dst], value);
+                        }
+                        // CMP
+                        1 => {
+                            self.execute_sub_cmp(true, self.reg.r[r_dst], value);
+                        }
+                        // MOV or NOP (MOV R8,R8)
+                        2 => {
+                            self.reg.r[r_dst] = self.execute_mov(false, value);
+                        }
+                        _ => unreachable!(),
+                    }
+
+                    if op != 1 && r_dst == Pc as _ {
+                        self.reload_pipeline(bus);
+                    }
+                } else {
+                    // BX Rs (jump)
+                    self.execute_bx(bus, value);
+                }
             }
 
             LoadPcRel => todo!(),
@@ -250,10 +286,10 @@ impl Cpu {
             PushPopReg => todo!(),
             MultiLoadStore => todo!(),
             CondBranch => todo!(),
-            SoftwareInterrupt => self.enter_exception(Exception::SoftwareInterrupt),
+            SoftwareInterrupt => self.enter_exception(bus, Exception::SoftwareInterrupt),
             UncondBranch => todo!(),
             LongBranchWithLink => todo!(),
-            Undefined => self.enter_exception(Exception::UndefinedInstr),
+            Undefined => self.enter_exception(bus, Exception::UndefinedInstr),
         }
     }
 }
@@ -267,7 +303,11 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arm7tdmi::reg::{GeneralRegisters, StatusRegister};
+
+    use crate::{
+        arm7tdmi::reg::{GeneralRegisters, StatusRegister},
+        bus::NullBus,
+    };
 
     fn test_instr(
         before: impl Fn(&mut Cpu),
@@ -276,11 +316,12 @@ mod tests {
         expected_cspr: StatusRegister,
     ) {
         let mut cpu = Cpu::new();
-        cpu.reset();
+        cpu.reset(&NullBus);
+        cpu.reg.cpsr.state = OperationState::Thumb;
         cpu.reg.cpsr.irq_disabled = false;
         cpu.reg.cpsr.fiq_disabled = false;
         before(&mut cpu);
-        cpu.execute_thumb(instr);
+        cpu.execute_thumb(&NullBus, instr);
 
         assert_eq!(cpu.reg.r, *expected_rs);
         assert_eq!(cpu.reg.cpsr, expected_cspr);
@@ -290,6 +331,7 @@ mod tests {
         ($before:expr, $instr:expr, $expected_rs:expr, $($expected_cspr_flags:ident)|*) => {
             #[allow(unused_mut)]
             let mut expected_cspr = StatusRegister::default();
+            expected_cspr.state = OperationState::Thumb;
             $(
                 test_instr!(@expand &mut expected_cspr, $expected_cspr_flags);
             )*
@@ -312,28 +354,28 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[1] = 0b10,
             0b000_00_00011_001_100, // LSL R4,R1,#3
-            [0, 0b10, 0, 0, 0b10_000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0b10, 0, 0, 0b10_000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 1,
             0b000_00_01111_111_000, // LSL R0,R7,#15
-            [1 << 15, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [1 << 15, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
             0b000_00_00001_111_000, // LSL R0,R7,#1
-            [0, 0, 0, 0, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | zero
         );
         test_instr!(
             0b000_00_01010_111_000, // LSL R0,R7,#10
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[0] = u32::MAX,
             0b000_00_00000_000_000, // LSL R0,R0,#0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
 
@@ -341,24 +383,24 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[1] = 0b100,
             0b000_01_00011_001_100, // LSR R4,R1,#2
-            [0, 0b100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0b100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero | carry
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[1] = 0b10,
             0b000_01_00011_001_100, // LSR R4,R1,#2
-            [0, 0b10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0b10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
             0b000_01_11111_111_111, // LSR R7,R7,#31
-            [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
             0b000_01_00000_111_111, // LSR R7,R7,#32
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero | carry
         );
 
@@ -366,20 +408,20 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
             0b000_10_11111_111_111, // ASR R7,R7,#31
-            [0, 0, 0, 0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
         #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[5] = !(1 << 31),
             0b000_10_00001_101_000, // ASR R0,R5,#1
-            [!(0b11 << 30), 0, 0, 0, 0, !(1 << 31), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [!(0b11 << 30), 0, 0, 0, 0, !(1 << 31), 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
             0b000_10_00000_111_111, // RSR R7,R7,#32
-            [0, 0, 0, 0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 8],
             negative | carry
         );
     }
@@ -393,14 +435,14 @@ mod tests {
                 cpu.reg.r[7] = 7;
             },
             0b00011_00_111_001_100, // ADD R4,R1,R7
-            [0, 13, 0, 0, 20, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 13, 0, 0, 20, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[7] = 1;
             },
             0b00011_00_111_111_111, // ADD R7,R7,R7
-            [0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
@@ -408,7 +450,7 @@ mod tests {
                 cpu.reg.r[7] = 1;
             },
             0b00011_00_111_110_000, // ADD R0,R6,R7
-            [0, 0, 0, 0, 0, 0, u32::MAX, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, u32::MAX, 1, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | zero
         );
         test_instr!(
@@ -417,7 +459,7 @@ mod tests {
                 cpu.reg.r[1] = -10 as _;
             },
             0b00011_00_000_001_010, // ADD R2,R1,R0
-            [-5 as _, -10 as _, -15 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [-5 as _, -10 as _, -15 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative | carry
         );
         #[rustfmt::skip]
@@ -427,7 +469,7 @@ mod tests {
                 cpu.reg.r[1] = -1 as _;
             },
             0b00011_00_000_001_010, // ADD R2,R1,R0
-            [i32::MIN as _, -1 as _, i32::MIN.wrapping_sub(1) as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [i32::MIN as _, -1 as _, i32::MIN.wrapping_sub(1) as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | overflow
         );
 
@@ -439,13 +481,13 @@ mod tests {
                 cpu.reg.r[6] = i32::MAX as _;
             },
             0b00011_01_110_011_000, // SUB R0,R3,R6
-            [1, 0, 0, i32::MIN as _, 0, 0, i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [1, 0, 0, i32::MIN as _, 0, 0, i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | overflow
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[0] = -5 as _,
             0b00011_01_000_000_010, // SUB R2,R0,R0
-            [-5 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [-5 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | zero
         );
         test_instr!(
@@ -454,7 +496,7 @@ mod tests {
                 cpu.reg.r[1] = -10 as _;
             },
             0b00011_01_000_001_010, // SUB R2,R1,R0
-            [5, -10 as _, -15 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [5, -10 as _, -15 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative | carry
         );
         #[rustfmt::skip]
@@ -464,7 +506,7 @@ mod tests {
                 cpu.reg.r[1] = i32::MIN as u32 + 1;
             },
             0b00011_01_000_001_010, // SUB R2,R1,R0
-            [1, i32::MIN as u32 + 1, i32::MIN as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [1, i32::MIN as u32 + 1, i32::MIN as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative | carry
         );
 
@@ -472,14 +514,14 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[0] = 10,
             0b00011_10_101_000_000, // ADD R0,R0,#5
-            [15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
 
         // SUB{S} Rd,Rs,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[0] = 10,
             0b00011_11_010_000_000, // SUB R0,R0,#2
-            [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry
         );
     }
@@ -490,12 +532,12 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.cpsr.negative = true,
             0b001_00_101_11111111, // MOV R5,#255
-            [0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[1] = 1337,
             0b001_00_001_00000000, // MOV R1,#0
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
 
@@ -503,27 +545,27 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[6] = 255,
             0b001_01_110_11111111, // CMP R6,#255
-            [0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero | carry
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[2] = 13,
             0b001_01_010_00000000, // CMP R2,#0
-            [0, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
 
         // ADD{S} Rd,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = 3,
             0b001_10_111_10101010, // ADD R7,#170
-            [0, 0, 0, 0, 0, 0, 0, 173, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 173, 0, 0, 0, 0, 0, 0, 0, 8],
         );
 
         // SUB{S} Rd,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[3] = 10,
             0b001_11_011_00001111, // SUB R3,#15
-            [0, 0, 0, -5 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, -5 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
     }
@@ -537,14 +579,14 @@ mod tests {
                 cpu.reg.r[1] = 0b1010;
             },
             0b010000_0000_001_000, // AND R0,R1
-            [0b0010, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0b0010, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[1] = 0b1010;
             },
             0b010000_0000_001_000, // AND R0,R1
-            [0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         #[rustfmt::skip]
@@ -554,7 +596,7 @@ mod tests {
                 cpu.reg.r[5] = 1 << 31;
             },
             0b010000_0000_101_001, // AND R1,R5
-            [0, i32::MIN as _, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, i32::MIN as _, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
 
@@ -565,7 +607,7 @@ mod tests {
                 cpu.reg.r[1] = 0b1110;
             },
             0b010000_0001_001_000, // EOR R0,R1
-            [0b1101, 0b1110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0b1101, 0b1110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
@@ -573,7 +615,7 @@ mod tests {
                 cpu.reg.r[1] = 0b1100;
             },
             0b010000_0001_000_001, // EOR R1,R0
-            [0b1100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0b1100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
@@ -582,7 +624,7 @@ mod tests {
                 cpu.reg.r[7] = u32::MAX >> 1;
             },
             0b010000_0001_001_111, // EOR R7,R1
-            [0, u32::MAX, 0, 0, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, u32::MAX, 0, 0, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
 
@@ -594,7 +636,7 @@ mod tests {
                 cpu.reg.r[7] = 1;
             },
             0b010000_0010_001_111, // LSL R7,R1
-            [0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero | carry
         );
         test_instr!(
@@ -603,7 +645,7 @@ mod tests {
                 cpu.reg.r[7] = 1;
             },
             0b010000_0010_001_111, // LSL R7,R1
-            [0, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
@@ -612,7 +654,7 @@ mod tests {
                 cpu.reg.r[7] = 1;
             },
             0b010000_0010_001_111, // LSL R7,R1
-            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
 
@@ -624,7 +666,7 @@ mod tests {
                 cpu.reg.r[1] = 1 << 31;
             },
             0b010000_0011_000_001, // LSR R1,R0
-            [32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero | carry
         );
         test_instr!(
@@ -633,7 +675,7 @@ mod tests {
                 cpu.reg.r[1] = 1 << 31;
             },
             0b010000_0011_000_001, // LSR R1,R0
-            [33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
@@ -642,7 +684,7 @@ mod tests {
                 cpu.reg.r[1] = 1;
             },
             0b010000_0011_000_001, // LSR R1,R0
-            [u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
@@ -651,7 +693,7 @@ mod tests {
                 cpu.reg.r[1] = 0b1000;
             },
             0b010000_0011_000_001, // LSR R1,R0
-            [3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
 
         // ASR{S} Rd,Rs
@@ -662,7 +704,7 @@ mod tests {
                 cpu.reg.r[1] = 32;
             },
             0b010000_0100_001_000, // ASR R0,R1
-            [u32::MAX, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative | carry
         );
         test_instr!(
@@ -671,7 +713,7 @@ mod tests {
                 cpu.reg.r[1] = 33;
             },
             0b010000_0100_001_000, // ASR R0,R1
-            [u32::MAX, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative | carry
         );
         #[rustfmt::skip]
@@ -681,7 +723,7 @@ mod tests {
                 cpu.reg.r[1] = u8::MAX.into();
             },
             0b010000_0100_001_000, // ASR R0,R1
-            [u32::MAX, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative | carry
         );
         test_instr!(
@@ -690,7 +732,7 @@ mod tests {
                 cpu.reg.r[1] = u8::MAX.into();
             },
             0b010000_0100_001_000, // ASR R0,R1
-            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
 
@@ -701,7 +743,7 @@ mod tests {
                 cpu.reg.r[1] = 32;
             },
             0b010000_0101_000_001, // ADC R1,R0
-            [5, 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [5, 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
@@ -710,7 +752,7 @@ mod tests {
                 cpu.reg.cpsr.carry = true;
             },
             0b010000_0101_000_001, // ADC R1,R0
-            [5, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [5, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
@@ -718,7 +760,7 @@ mod tests {
                 cpu.reg.r[7] = 1;
             },
             0b010000_0101_000_111, // ADC R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | zero
         );
         test_instr!(
@@ -728,7 +770,7 @@ mod tests {
                 cpu.reg.cpsr.carry = true;
             },
             0b010000_0101_000_111, // ADC R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 8],
             carry
         );
         test_instr!(
@@ -737,7 +779,7 @@ mod tests {
                 cpu.reg.r[7] = u32::MAX;
             },
             0b010000_0101_000_111, // ADC R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, -2 as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 0, 0, 0, 0, 0, 0, -2 as _, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | negative
         );
         test_instr!(
@@ -747,7 +789,7 @@ mod tests {
                 cpu.reg.cpsr.carry = true;
             },
             0b010000_0101_000_111, // ADC R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, -1 as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 0, 0, 0, 0, 0, 0, -1 as _, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | negative
         );
         test_instr!(
@@ -757,7 +799,7 @@ mod tests {
                 cpu.reg.cpsr.carry = true;
             },
             0b010000_0101_000_111, // ADC R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, -1 as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 0, 0, 0, 0, 0, 0, -1 as _, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | negative
         );
         test_instr!(
@@ -766,7 +808,7 @@ mod tests {
                 cpu.reg.cpsr.carry = true;
             },
             0b010000_0101_000_111, // ADC R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | zero
         );
 
@@ -777,7 +819,7 @@ mod tests {
                 cpu.reg.r[1] = 32;
             },
             0b010000_0110_000_001, // SBC R1,R0
-            [5, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [5, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry
         );
         test_instr!(
@@ -787,7 +829,7 @@ mod tests {
                 cpu.reg.cpsr.carry = true;
             },
             0b010000_0110_000_001, // SBC R1,R0
-            [5, 27, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [5, 27, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry
         );
         test_instr!(
@@ -796,7 +838,7 @@ mod tests {
                 cpu.reg.r[7] = 1;
             },
             0b010000_0110_000_111, // SBC R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 8],
             carry
         );
         test_instr!(
@@ -806,12 +848,12 @@ mod tests {
                 cpu.reg.cpsr.carry = true;
             },
             0b010000_0110_000_111, // SBC R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0],
+            [u32::MAX, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[7] = i32::MIN as _,
             0b010000_0110_000_111, // SBC R7,R0
-            [0, 0, 0, 0, 0, 0, 0, i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 8],
             overflow | carry
         );
         test_instr!(
@@ -820,7 +862,7 @@ mod tests {
                 cpu.reg.r[7] = i32::MIN as _;
             },
             0b010000_0110_000_111, // SBC R7,R0
-            [i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             overflow | carry | zero
         );
 
@@ -832,13 +874,13 @@ mod tests {
                 cpu.reg.r[1] = 0b1111;
             },
             0b010000_0111_000_001, // ROR R1,R0
-            [2, (0b11 << 30) | 0b11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [2, (0b11 << 30) | 0b11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry | negative
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[1] = 0b1111,
             0b010000_0111_000_001, // ROR R1,R0
-            [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
@@ -846,12 +888,12 @@ mod tests {
                 cpu.reg.r[3] = 0b1111;
             },
             0b010000_0111_010_011, // ROR R3,R2
-            [0, 0, 255, 0b11110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 255, 0b11110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[2] = 255,
             0b010000_0111_010_011, // ROR R3,R2
-            [0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
 
@@ -859,7 +901,7 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[1] = 0b1111,
             0b010000_1000_000_001, // TST R1,R0
-            [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
@@ -868,7 +910,7 @@ mod tests {
                 cpu.reg.r[1] = 0b01111;
             },
             0b010000_1000_000_001, // TST R1,R0
-            [0b10000, 0b01111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0b10000, 0b01111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
@@ -877,7 +919,7 @@ mod tests {
                 cpu.reg.r[1] = 1;
             },
             0b010000_1000_000_001, // TST R1,R0
-            [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
@@ -885,7 +927,7 @@ mod tests {
                 cpu.reg.r[1] = u32::MAX;
             },
             0b010000_1000_000_001, // TST R1,R0
-            [1 << 31, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [1 << 31, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
 
@@ -893,26 +935,26 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[3] = 30,
             0b010000_1001_011_111, // NEG R7,R3
-            [0, 0, 0, 30, 0, 0, 0, -30 as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 30, 0, 0, 0, -30 as _, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[3] = 0,
             0b010000_1001_011_111, // NEG R7,R3
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[3] = -10 as _,
             0b010000_1001_011_111, // NEG R7,R3
-            [0, 0, 0, -10 as _, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, -10 as _, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         // negating i32::MIN isn't possible, and it should also set the overflow flag
         #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[3] = i32::MIN as _,
             0b010000_1001_011_111, // NEG R7,R3
-            [0, 0, 0, i32::MIN as _, 0, 0, 0, i32::MIN as _, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, i32::MIN as _, 0, 0, 0, i32::MIN as _, 0, 0, 0, 0, 0, 0, 0, 8],
             negative | overflow
         );
 
@@ -923,7 +965,7 @@ mod tests {
                 cpu.reg.r[4] = 30;
             },
             0b010000_1010_011_100, // CMP R4,R3
-            [0, 0, 0, 30, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 30, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero | carry
         );
         test_instr!(
@@ -932,7 +974,7 @@ mod tests {
                 cpu.reg.r[4] = 20;
             },
             0b010000_1010_011_100, // CMP R4,R3
-            [0, 0, 0, 30, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 30, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
         test_instr!(
@@ -941,7 +983,7 @@ mod tests {
                 cpu.reg.r[4] = 30;
             },
             0b010000_1010_011_100, // CMP R4,R3
-            [0, 0, 0, 20, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 20, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry
         );
 
@@ -952,7 +994,7 @@ mod tests {
                 cpu.reg.r[4] = 30;
             },
             0b010000_1011_011_100, // CMN R4,R3
-            [0, 0, 0, -30 as _, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, -30 as _, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero | carry
         );
         test_instr!(
@@ -961,7 +1003,7 @@ mod tests {
                 cpu.reg.r[4] = 20;
             },
             0b010000_1011_011_100, // CMN R4,R3
-            [0, 0, 0, -30 as _, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, -30 as _, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
         test_instr!(
@@ -970,7 +1012,7 @@ mod tests {
                 cpu.reg.r[4] = 30;
             },
             0b010000_1011_011_100, // CMN R4,R3
-            [0, 0, 0, -20 as _, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, -20 as _, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             carry
         );
 
@@ -981,17 +1023,17 @@ mod tests {
                 cpu.reg.r[0] = 0b0101;
             },
             0b010000_1100_101_000, // ORR R0,R5
-            [0b1111, 0, 0, 0, 0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0b1111, 0, 0, 0, 0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             0b010000_1100_101_000, // ORR R0,R5
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[4] = u32::MAX,
             0b010000_1100_100_100, // ORR R4,R4
-            [0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
 
@@ -1002,7 +1044,7 @@ mod tests {
                 cpu.reg.r[1] = 3;
             },
             0b010000_1101_001_000, // MUL R0,R1
-            [33, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [33, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
@@ -1010,7 +1052,7 @@ mod tests {
                 cpu.reg.r[1] = 5;
             },
             0b010000_1101_001_000, // MUL R0,R1
-            [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         test_instr!(
@@ -1019,7 +1061,7 @@ mod tests {
                 cpu.reg.r[1] = 14;
             },
             0b010000_1101_001_000, // MUL R0,R1
-            [-112 as _, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [-112 as _, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
         test_instr!(
@@ -1028,7 +1070,7 @@ mod tests {
                 cpu.reg.r[1] = -4 as _;
             },
             0b010000_1101_001_000, // MUL R0,R1
-            [16, -4 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [16, -4 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
 
         // BIC{S} Rd,Rs
@@ -1038,7 +1080,7 @@ mod tests {
                 cpu.reg.r[1] = 0b10101;
             },
             0b010000_1110_001_000, // BIC R0,R1
-            [0b01010, 0b10101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0b01010, 0b10101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
         );
         test_instr!(
             |cpu: &mut Cpu| {
@@ -1046,7 +1088,7 @@ mod tests {
                 cpu.reg.r[1] = u32::MAX;
             },
             0b010000_1110_001_000, // BIC R0,R1
-            [0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         #[rustfmt::skip]
@@ -1056,7 +1098,7 @@ mod tests {
                 cpu.reg.r[1] = u32::MAX >> 1;
             },
             0b010000_1110_001_000, // BIC R0,R1
-            [1 << 31, u32::MAX >> 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [1 << 31, u32::MAX >> 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
 
@@ -1064,14 +1106,14 @@ mod tests {
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[0] = u32::MAX,
             0b010000_1111_000_000, // MVN R0,R0
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             zero
         );
         #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[3] = 0b1111_0000,
             0b010000_1111_011_000, // MVN R0,R3
-            [!0b1111_0000, 0, 0, 0b1111_0000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [!0b1111_0000, 0, 0, 0b1111_0000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
             negative
         );
     }

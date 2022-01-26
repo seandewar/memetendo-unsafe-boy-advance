@@ -15,6 +15,7 @@ use crate::bus::DataBus;
 pub struct Cpu {
     run_state: RunState,
     reg: Registers,
+    pipeline_instrs: [u32; 2],
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -35,12 +36,12 @@ impl Cpu {
         Self::default()
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self, bus: &impl DataBus) {
         self.run_state = RunState::Running;
-        self.enter_exception(Exception::Reset);
+        self.enter_exception(bus, Exception::Reset);
     }
 
-    pub fn step(&mut self, _bus: &mut impl DataBus, _cycles: usize) {
+    pub fn step(&mut self, _bus: &mut impl DataBus) {
         if self.run_state != RunState::Running {
             return;
         }
@@ -51,6 +52,24 @@ impl Cpu {
         if self.reg.set_cpsr(cpsr).is_err() {
             self.run_state = RunState::Hung;
         }
+    }
+
+    fn reload_pipeline(&mut self, bus: &impl DataBus) {
+        let pc = self.reg.r[Pc];
+        let pc_offset = match self.reg.cpsr.state {
+            OperationState::Thumb => {
+                self.pipeline_instrs[0] = bus.read_hword(pc).into();
+                self.pipeline_instrs[1] = bus.read_hword(pc.wrapping_add(2)).into();
+                4
+            }
+            OperationState::Arm => {
+                self.pipeline_instrs[0] = bus.read_word(pc);
+                self.pipeline_instrs[1] = bus.read_word(pc.wrapping_add(4));
+                8
+            }
+        };
+
+        self.reg.r[Pc] = pc.wrapping_add(pc_offset);
     }
 }
 
@@ -90,7 +109,7 @@ impl Exception {
 }
 
 impl Cpu {
-    fn enter_exception(&mut self, exception: Exception) {
+    fn enter_exception(&mut self, bus: &impl DataBus, exception: Exception) {
         let old_cpsr = self.reg.cpsr;
 
         self.reg.set_mode(exception.entry_mode());
@@ -99,21 +118,25 @@ impl Cpu {
         self.reg.cpsr.state = OperationState::Arm;
 
         self.reg.spsr = old_cpsr;
-        self.reg.r[Lr] = self.reg.r[Pc]; // TODO: PC+nn?
+        self.reg.r[Lr] = self.reg.r[Pc];
         self.reg.r[Pc] = exception.vector_addr();
+
+        self.reload_pipeline(bus);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use strum::IntoEnumIterator;
-
     use super::*;
+
+    use crate::bus::NullBus;
+
+    use strum::IntoEnumIterator;
 
     #[test]
     fn set_cpsr_works() {
         let mut cpu = Cpu::new();
-        cpu.reset();
+        cpu.reset(&NullBus);
 
         cpu.set_cpsr(OperationMode::Abort.psr() | (1 << 5));
         assert_eq!(RunState::Running, cpu.run_state);
@@ -137,7 +160,9 @@ mod tests {
             exception.disables_fiq() || old_reg.cpsr.fiq_disabled,
             cpu.reg.cpsr.fiq_disabled
         );
-        assert_eq!(exception.vector_addr(), cpu.reg.r[Pc]);
+
+        // +8 in PC due to pipelining
+        assert_eq!(exception.vector_addr().wrapping_add(8), cpu.reg.r[Pc]);
         assert_eq!(old_reg.r[Pc], cpu.reg.r[Lr]);
         assert_eq!(old_reg.cpsr, cpu.reg.spsr);
         assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
@@ -146,7 +171,7 @@ mod tests {
 
     fn test_exception(cpu: &mut Cpu, exception: Exception) {
         let old_reg = cpu.reg;
-        cpu.enter_exception(exception);
+        cpu.enter_exception(&NullBus, exception);
         assert_exception_result(cpu, exception, old_reg);
     }
 
@@ -157,7 +182,7 @@ mod tests {
         cpu.reg.r[Pc] = 0xbeef;
         let old_reg = cpu.reg;
 
-        cpu.reset();
+        cpu.reset(&NullBus);
         assert_exception_result(&mut cpu, Exception::Reset, old_reg);
 
         // condition flags should be preserved by reset
@@ -170,7 +195,7 @@ mod tests {
     #[test]
     fn enter_exception_works() {
         let mut cpu = Cpu::new();
-        cpu.reset();
+        cpu.reset(&NullBus);
         for exception in Exception::iter() {
             test_exception(&mut cpu, exception);
         }
