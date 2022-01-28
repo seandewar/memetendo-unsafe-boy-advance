@@ -28,7 +28,7 @@ pub trait DataBus {
     }
 
     fn write_word(&mut self, addr: u32, value: u32) {
-        self.write_hword(addr, (value & 0xff) as _);
+        self.write_hword(addr, (value & 0xffff) as _);
         self.write_hword(addr.wrapping_add(2), (value >> 16) as _);
     }
 }
@@ -59,6 +59,7 @@ impl DataBus for NullBus {
 }
 
 #[cfg(test)]
+#[derive(Debug)]
 pub(super) struct VecBus(pub Vec<u8>);
 
 #[cfg(test)]

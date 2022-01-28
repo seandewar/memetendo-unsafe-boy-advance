@@ -267,7 +267,15 @@ impl Cpu {
                 }
             }
 
-            LoadPcRel => todo!(),
+            // TODO: 1S + 1N + 1I
+            LoadPcRel => {
+                let r_dst = r_index(instr, 8);
+                let offset = instr & 0b1111_1111;
+                let addr = (self.reg.r[Pc] & !0b10).wrapping_add(u32::from(offset) * 4);
+
+                self.reg.r[r_dst] = bus.read_word(addr);
+            }
+
             LoadStoreRel => todo!(),
             LoadStoreSignExtend => todo!(),
             LoadStoreImm => todo!(),
@@ -298,24 +306,25 @@ mod tests {
 
     use crate::{
         arm7tdmi::reg::{GeneralRegisters, StatusRegister},
-        bus::NullBus,
+        bus::{NullBus, VecBus},
     };
 
     fn test_instr(
+        bus: &impl DataBus,
         before: impl Fn(&mut Cpu),
         instr: u16,
         expected_rs: &GeneralRegisters,
         expected_cspr: StatusRegister,
     ) {
         let mut cpu = Cpu::new();
-        cpu.reset(&NullBus);
+        cpu.reset(bus);
 
         // act like the CPU started in THUMB mode with interrupts enabled
         cpu.reg.cpsr.irq_disabled = false;
         cpu.reg.cpsr.fiq_disabled = false;
-        cpu.execute_bx(&NullBus, 0);
+        cpu.execute_bx(bus, 0);
         before(&mut cpu);
-        cpu.execute_thumb(&NullBus, instr);
+        cpu.execute_thumb(bus, instr);
 
         assert_eq!(cpu.reg.r, *expected_rs);
 
@@ -329,18 +338,28 @@ mod tests {
     }
 
     macro_rules! test_instr {
-        ($before:expr, $instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
+        (
+            $bus:expr,
+            $before:expr,
+            $instr:expr,
+            $expected_rs:expr,
+            $($expected_cspr_flag:ident)|*
+        ) => {
             let mut expected_cpsr = StatusRegister::default();
             expected_cpsr.state = OperationState::Thumb;
             $(
                 test_instr!(@expand &mut expected_cpsr, $expected_cspr_flag);
             )*
 
-            test_instr($before, $instr, &GeneralRegisters($expected_rs), expected_cpsr);
+            test_instr($bus, $before, $instr, &GeneralRegisters($expected_rs), expected_cpsr);
+        };
+
+        ($before:expr, $instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
+            test_instr!(&NullBus, $before, $instr, $expected_rs, $($expected_cspr_flag)|*);
         };
 
         ($instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
-            test_instr!(|_| {}, $instr, $expected_rs, $($expected_cspr_flag)|*);
+            test_instr!(&NullBus, |_| {}, $instr, $expected_rs, $($expected_cspr_flag)|*);
         };
 
         (@expand $expected_cspr:expr, $flag:ident) => (
@@ -1203,6 +1222,27 @@ mod tests {
             |cpu: &mut Cpu| cpu.reg.r[13] = 0b111,
             0b010001_11_0_1_101_000, // BX R13
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0b111, 0, 0b100 + 8],
+        );
+    }
+
+    #[test]
+    fn execute_thumb_load_pc_rel() {
+        let mut bus = VecBus(vec![0; 88]);
+        bus.write_word(52, 0xdead_beef);
+        bus.write_word(84, 0xbead_feed);
+
+        // LDR Rd,[PC,#nn]
+        test_instr!(
+            &bus,
+            |_| {},
+            0b01001_101_00001100, // LDR R5,[PC,#48]
+            [0, 0, 0, 0, 0, 0xdead_beef, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        test_instr!(
+            &bus,
+            |cpu: &mut Cpu| cpu.reg.r[Pc] = 20,
+            0b01001_000_00010000, // LDR R0,[PC,#64]
+            [0xbead_feed, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20],
         );
     }
 }
