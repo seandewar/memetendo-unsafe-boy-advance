@@ -69,7 +69,7 @@ fn r_index(instr: u16, pos: u8) -> usize {
 
 impl Cpu {
     #[allow(clippy::too_many_lines)]
-    pub(super) fn execute_thumb(&mut self, bus: &impl DataBus, instr: u16) {
+    pub(super) fn execute_thumb(&mut self, bus: &mut impl DataBus, instr: u16) {
         #[allow(clippy::enum_glob_use)]
         use InstructionFormat::*;
 
@@ -269,14 +269,36 @@ impl Cpu {
 
             // TODO: 1S + 1N + 1I
             LoadPcRel => {
+                // LDR Rd,[PC,#nn]
                 let r_dst = r_index(instr, 8);
                 let offset = instr & 0b1111_1111;
-                let addr = (self.reg.r[Pc] & !0b10).wrapping_add(u32::from(offset) * 4);
+                let addr = (self.reg.r[Pc] & !0b11).wrapping_add(u32::from(offset) * 4);
 
                 self.reg.r[r_dst] = bus.read_word(addr);
             }
 
-            LoadStoreRel => todo!(),
+            // TODO: 1S + 1N + 1I for LDR, 2N for STR
+            LoadStoreRel => {
+                // Rd,[Rb,Ro]
+                let r = r_index(instr, 0);
+                let base_addr = self.reg.r[r_index(instr, 3)];
+                let offset = self.reg.r[r_index(instr, 6)];
+                let addr = base_addr.wrapping_add(offset);
+                let op = (instr >> 10) & 0b11;
+
+                match op {
+                    // STR
+                    0 => bus.write_word(addr & !0b11, self.reg.r[r]),
+                    // STRB
+                    1 => bus.write_byte(addr, (self.reg.r[r] & 0xff) as _),
+                    // LDR
+                    2 => self.reg.r[r] = bus.read_word(addr & !0b11),
+                    // LDRB
+                    3 => self.reg.r[r] = bus.read_byte(addr).into(),
+                    _ => unreachable!(),
+                }
+            }
+
             LoadStoreSignExtend => todo!(),
             LoadStoreImm => todo!(),
             LoadStoreHword => todo!(),
@@ -310,7 +332,7 @@ mod tests {
     };
 
     fn test_instr(
-        bus: &impl DataBus,
+        bus: &mut impl DataBus,
         before: impl Fn(&mut Cpu),
         instr: u16,
         expected_rs: &GeneralRegisters,
@@ -329,12 +351,24 @@ mod tests {
         assert_eq!(cpu.reg.r, *expected_rs);
 
         // only check condition and interrupt flags
-        assert_eq!(cpu.reg.cpsr.negative, expected_cspr.negative);
-        assert_eq!(cpu.reg.cpsr.zero, expected_cspr.zero);
-        assert_eq!(cpu.reg.cpsr.carry, expected_cspr.carry);
-        assert_eq!(cpu.reg.cpsr.overflow, expected_cspr.overflow);
-        assert_eq!(cpu.reg.cpsr.irq_disabled, expected_cspr.irq_disabled);
-        assert_eq!(cpu.reg.cpsr.fiq_disabled, expected_cspr.fiq_disabled);
+        assert_eq!(
+            cpu.reg.cpsr.negative, expected_cspr.negative,
+            "negative flag"
+        );
+        assert_eq!(cpu.reg.cpsr.zero, expected_cspr.zero, "zero flag");
+        assert_eq!(cpu.reg.cpsr.carry, expected_cspr.carry, "carry flag");
+        assert_eq!(
+            cpu.reg.cpsr.overflow, expected_cspr.overflow,
+            "overflow flag"
+        );
+        assert_eq!(
+            cpu.reg.cpsr.irq_disabled, expected_cspr.irq_disabled,
+            "irq_disabled flag"
+        );
+        assert_eq!(
+            cpu.reg.cpsr.fiq_disabled, expected_cspr.fiq_disabled,
+            "fiq_disabled flag"
+        );
     }
 
     macro_rules! test_instr {
@@ -355,11 +389,11 @@ mod tests {
         };
 
         ($before:expr, $instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
-            test_instr!(&NullBus, $before, $instr, $expected_rs, $($expected_cspr_flag)|*);
+            test_instr!(&mut NullBus, $before, $instr, $expected_rs, $($expected_cspr_flag)|*);
         };
 
         ($instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
-            test_instr!(&NullBus, |_| {}, $instr, $expected_rs, $($expected_cspr_flag)|*);
+            test_instr!(&mut NullBus, |_| {}, $instr, $expected_rs, $($expected_cspr_flag)|*);
         };
 
         (@expand $expected_cspr:expr, $flag:ident) => (
@@ -1233,16 +1267,82 @@ mod tests {
 
         // LDR Rd,[PC,#nn]
         test_instr!(
-            &bus,
+            &mut bus,
             |_| {},
             0b01001_101_00001100, // LDR R5,[PC,#48]
             [0, 0, 0, 0, 0, 0xdead_beef, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
         test_instr!(
-            &bus,
+            &mut bus,
             |cpu: &mut Cpu| cpu.reg.r[Pc] = 20,
             0b01001_000_00010000, // LDR R0,[PC,#64]
             [0xbead_feed, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20],
+        );
+    }
+
+    #[test]
+    fn execute_thumb_load_store_rel() {
+        let mut bus = VecBus(vec![0; 88]);
+
+        // STR Rd,[Rb,Ro]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0xabcd_ef01;
+                cpu.reg.r[1] = 10;
+                cpu.reg.r[2] = 5;
+            },
+            0b0101_00_0_010_001_000, // STR R0,[R1,R2]
+            [0xabcd_ef01, 10, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        assert_eq!(0xabcd_ef01, bus.read_word(12));
+
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0x0102_abbc;
+                cpu.reg.r[1] = 12;
+                cpu.reg.r[2] = 4;
+            },
+            0b0101_00_0_010_001_000, // STR R0,[R1,R2]
+            [0x0102_abbc, 12, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        assert_eq!(0x0102_abbc, bus.read_word(16));
+
+        // STRB Rd,[Rb,Ro]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0xabab;
+                cpu.reg.r[1] = 10;
+                cpu.reg.r[2] = 9;
+            },
+            0b0101_01_0_010_001_000, // STRB R0,[R1,R2]
+            [0xabab, 10, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        assert_eq!(0xab, bus.read_byte(19));
+        assert_eq!(0x00, bus.read_byte(20));
+
+        // LDR Rd,[Rb,Ro]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = 7;
+                cpu.reg.r[2] = 8;
+            },
+            0b0101_10_0_010_001_000, // LDR R0,[R1,R2]
+            [0xabcd_ef01, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+
+        // LDRB Rd,[Rb,Ro]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = 2;
+                cpu.reg.r[6] = 17;
+            },
+            0b0101_11_0_110_001_000, // LDRB R0,[R1,R6]
+            [0xab, 2, 0, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
     }
 }
