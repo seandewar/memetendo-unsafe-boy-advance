@@ -284,7 +284,6 @@ impl Cpu {
                 let base_addr = self.reg.r[r_index(instr, 3)];
                 let offset = self.reg.r[r_index(instr, 6)];
                 let addr = base_addr.wrapping_add(offset);
-
                 let format8 = format == LoadStoreSignExtHword;
                 let op = (instr >> 10) & 0b11;
 
@@ -304,11 +303,34 @@ impl Cpu {
                     2 => self.reg.r[r] = Self::execute_ldr(bus, addr),
                     // LDRB
                     3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
+
                     _ => unreachable!(),
                 }
             }
 
-            LoadStoreImm => todo!(),
+            // TODO: 1S+1N+1I for LDR, or 2N for STR
+            LoadStoreImm => {
+                // Rd,[Rb,#nn]
+                let r = r_index(instr, 0);
+                let base_addr = self.reg.r[r_index(instr, 3)];
+                let offset = (instr >> 6) & 0b1_1111;
+                let addr = base_addr.wrapping_add(offset.into());
+                let word_addr = base_addr.wrapping_add(u32::from(offset) * 4);
+                let op = (instr >> 11) & 0b11;
+
+                match op {
+                    // STR
+                    0 => Self::execute_str(bus, word_addr, self.reg.r[r]),
+                    // LDR
+                    1 => self.reg.r[r] = Self::execute_ldr(bus, word_addr),
+                    // STRB
+                    2 => Self::execute_strb(bus, addr, (self.reg.r[r] & 0xff) as _),
+                    // LDRB
+                    3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
+                    _ => unreachable!(),
+                }
+            }
+
             LoadStoreHword => todo!(),
             LoadStoreSpRel => todo!(),
             LoadAddr => todo!(),
@@ -1329,7 +1351,7 @@ mod tests {
             [0xabab, 10, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
         assert_eq!(0xab, bus.read_byte(19));
-        assert_eq!(0x00, bus.read_byte(20));
+        assert_eq!(0, bus.read_byte(20));
 
         // LDR Rd,[Rb,Ro]
         test_instr!(
@@ -1356,7 +1378,7 @@ mod tests {
 
     #[test]
     fn execute_thumb_load_store_sign_ext_hword() {
-        let mut bus = VecBus(vec![0; 88]);
+        let mut bus = VecBus(vec![0; 22]);
         bus.write_byte(0, 0b0111_1110);
         bus.write_byte(18, 1 << 7);
         bus.write_byte(21, !1);
@@ -1373,7 +1395,7 @@ mod tests {
             [0xabcd_ef01, 10, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
         assert_eq!(0xef01, bus.read_hword(14));
-        assert_eq!(0x0000, bus.read_hword(16));
+        assert_eq!(0, bus.read_hword(16));
 
         // LDSB Rd,[Rb,Ro]
         #[rustfmt::skip]
@@ -1414,6 +1436,51 @@ mod tests {
             },
             0b0101_11_1_010_001_000, // LDSH R0,[R1,R2]
             [i32::from(1 << 7) as _, 2, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+    }
+
+    #[test]
+    fn execute_thumb_load_store_imm() {
+        let mut bus = VecBus(vec![0; 40]);
+
+        // STR Rd,[Rb,#nn]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0xabcd_ef01;
+                cpu.reg.r[1] = 10;
+            },
+            0b011_00_00110_001_000, // STR R0,[R1,#nn]
+            [0xabcd_ef01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        assert_eq!(0xabcd_ef01, bus.read_word(32));
+
+        // LDR Rd,[Rb,#nn]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| cpu.reg.r[1] = 8,
+            0b011_01_00110_001_000, // LDR R0,[R1,#nn]
+            [0xabcd_ef01, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+
+        // STRB Rd,[Rb,#nn]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0xabcd_ef01;
+                cpu.reg.r[1] = 10;
+            },
+            0b011_10_00110_001_000, // STRB R0,[R1,#nn]
+            [0xabcd_ef01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        assert_eq!(0x01, bus.read_byte(16));
+
+        // LDRB Rd,[Rb,#nn]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| cpu.reg.r[1] = 10,
+            0b011_11_00110_001_000, // LDRB R0,[R1,#nn]
+            [0x01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
     }
 }
