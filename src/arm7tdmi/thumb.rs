@@ -2,7 +2,7 @@ use crate::{arm7tdmi::reg::OperationState, bus::DataBus};
 
 use super::{reg::NamedGeneralRegister::Pc, Cpu, Exception};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum InstructionFormat {
     MoveShiftedReg = 1,
     AddSub,
@@ -11,7 +11,7 @@ enum InstructionFormat {
     HiRegOpBranchExchange,
     LoadPcRel,
     LoadStoreRel,
-    LoadStoreSignExtend,
+    LoadStoreSignExtHword,
     LoadStoreImm,
     LoadStoreHword,
     LoadStoreSpRel,
@@ -38,26 +38,26 @@ fn decode_format(instr: u16) -> InstructionFormat {
     let hi3 = hi8 >> 5;
     let bit9 = hi8 & 0b10 != 0;
 
-    match (hi3, hi4, hi5, hi6, hi8, bit9) {
-        (_, _, _, _, 0b1011_0000, _) => AddSp,
-        (_, _, _, _, 0b1011_1111, _) => SoftwareInterrupt,
-        (_, _, _, 0b01_0000, _, _) => AluOp,
-        (_, _, _, 0b01_0001, _, _) => HiRegOpBranchExchange,
-        (_, _, 0b0_0011, _, _, _) => AddSub,
-        (_, _, 0b0_1001, _, _, _) => LoadPcRel,
-        (_, _, 0b1_1100, _, _, _) => UncondBranch,
-        (_, 0b0101, _, _, _, true) => LoadStoreSignExtend,
-        (_, 0b0101, _, _, _, false) => LoadStoreRel,
-        (_, 0b1000, _, _, _, _) => LoadStoreHword,
-        (_, 0b1001, _, _, _, _) => LoadStoreSpRel,
-        (_, 0b1010, _, _, _, _) => LoadAddr,
-        (_, 0b1011, _, _, _, _) => PushPopReg,
-        (_, 0b1100, _, _, _, _) => MultiLoadStore,
-        (_, 0b1101, _, _, _, _) => CondBranch,
-        (_, 0b1111, _, _, _, _) => LongBranchWithLink,
-        (0b000, _, _, _, _, _) => MoveShiftedReg,
-        (0b001, _, _, _, _, _) => MoveCmpAddSubImm,
-        (0b011, _, _, _, _, _) => LoadStoreImm,
+    match (hi3, hi4, hi5, hi6, hi8) {
+        (_, _, _, _, 0b1011_0000) => AddSp,
+        (_, _, _, _, 0b1011_1111) => SoftwareInterrupt,
+        (_, _, _, 0b01_0000, _) => AluOp,
+        (_, _, _, 0b01_0001, _) => HiRegOpBranchExchange,
+        (_, _, 0b0_0011, _, _) => AddSub,
+        (_, _, 0b0_1001, _, _) => LoadPcRel,
+        (_, _, 0b1_1100, _, _) => UncondBranch,
+        (_, 0b0101, _, _, _) if bit9 => LoadStoreSignExtHword,
+        (_, 0b0101, _, _, _) => LoadStoreRel,
+        (_, 0b1000, _, _, _) => LoadStoreHword,
+        (_, 0b1001, _, _, _) => LoadStoreSpRel,
+        (_, 0b1010, _, _, _) => LoadAddr,
+        (_, 0b1011, _, _, _) => PushPopReg,
+        (_, 0b1100, _, _, _) => MultiLoadStore,
+        (_, 0b1101, _, _, _) => CondBranch,
+        (_, 0b1111, _, _, _) => LongBranchWithLink,
+        (0b000, _, _, _, _) => MoveShiftedReg,
+        (0b001, _, _, _, _) => MoveCmpAddSubImm,
+        (0b011, _, _, _, _) => LoadStoreImm,
         _ => Undefined,
     }
 }
@@ -272,34 +272,42 @@ impl Cpu {
                 // LDR Rd,[PC,#nn]
                 let r_dst = r_index(instr, 8);
                 let offset = instr & 0b1111_1111;
-                let addr = (self.reg.r[Pc] & !0b11).wrapping_add(u32::from(offset) * 4);
+                let addr = self.reg.r[Pc].wrapping_add(u32::from(offset) * 4);
 
-                self.reg.r[r_dst] = bus.read_word(addr);
+                self.reg.r[r_dst] = Self::execute_ldr(bus, addr);
             }
 
             // TODO: 1S + 1N + 1I for LDR, 2N for STR
-            LoadStoreRel => {
+            format @ (LoadStoreRel | LoadStoreSignExtHword) => {
                 // Rd,[Rb,Ro]
                 let r = r_index(instr, 0);
                 let base_addr = self.reg.r[r_index(instr, 3)];
                 let offset = self.reg.r[r_index(instr, 6)];
                 let addr = base_addr.wrapping_add(offset);
+
+                let format8 = format == LoadStoreSignExtHword;
                 let op = (instr >> 10) & 0b11;
 
                 match op {
+                    // STRH
+                    0 if format8 => Self::execute_strh(bus, addr, (self.reg.r[r] & 0xffff) as _),
+                    // LDSB
+                    1 if format8 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, true),
+                    // LDRH, LDSH
+                    2 | 3 if format8 => self.reg.r[r] = Self::execute_ldrh_ldsh(bus, addr, op == 3),
+
                     // STR
-                    0 => bus.write_word(addr & !0b11, self.reg.r[r]),
+                    0 => Self::execute_str(bus, addr, self.reg.r[r]),
                     // STRB
-                    1 => bus.write_byte(addr, (self.reg.r[r] & 0xff) as _),
+                    1 => Self::execute_strb(bus, addr, (self.reg.r[r] & 0xff) as _),
                     // LDR
-                    2 => self.reg.r[r] = bus.read_word(addr & !0b11),
+                    2 => self.reg.r[r] = Self::execute_ldr(bus, addr),
                     // LDRB
-                    3 => self.reg.r[r] = bus.read_byte(addr).into(),
+                    3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
                     _ => unreachable!(),
                 }
             }
 
-            LoadStoreSignExtend => todo!(),
             LoadStoreImm => todo!(),
             LoadStoreHword => todo!(),
             LoadStoreSpRel => todo!(),
@@ -1343,6 +1351,69 @@ mod tests {
             },
             0b0101_11_0_110_001_000, // LDRB R0,[R1,R6]
             [0xab, 2, 0, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+    }
+
+    #[test]
+    fn execute_thumb_load_store_sign_ext_hword() {
+        let mut bus = VecBus(vec![0; 88]);
+        bus.write_byte(0, 0b0111_1110);
+        bus.write_byte(18, 1 << 7);
+        bus.write_byte(21, !1);
+
+        // STRH Rd,[Rb,Ro]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0xabcd_ef01;
+                cpu.reg.r[1] = 10;
+                cpu.reg.r[2] = 5;
+            },
+            0b0101_00_1_010_001_000, // STRH R0,[R1,R2]
+            [0xabcd_ef01, 10, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        assert_eq!(0xef01, bus.read_hword(14));
+        assert_eq!(0x0000, bus.read_hword(16));
+
+        // LDSB Rd,[Rb,Ro]
+        #[rustfmt::skip]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = 20;
+                cpu.reg.r[2] = 1;
+            },
+            0b0101_01_1_010_001_000, // LDSB R0,[R1,R2]
+            [i32::from(!1u8) as _, 20, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        test_instr!(
+            &mut bus,
+            |_| {},
+            0b0101_01_1_010_001_000, // LDSB R0,[R1,R2]
+            [0b0111_1110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+
+        // LDRH Rd,[Rb,Ro]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = 13;
+                cpu.reg.r[2] = 1;
+            },
+            0b0101_10_1_010_001_000, // LDRH R0,[R1,R2]
+            [0xef01, 13, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+
+        // LDSH Rd,[Rb,Ro]
+        #[rustfmt::skip]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[1] = 2;
+                cpu.reg.r[2] = 17;
+            },
+            0b0101_11_1_010_001_000, // LDSH R0,[R1,R2]
+            [i32::from(1 << 7) as _, 2, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
     }
 }

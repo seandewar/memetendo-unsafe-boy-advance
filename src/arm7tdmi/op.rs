@@ -166,4 +166,40 @@ impl Cpu {
         self.reg.r[Pc] = pc;
         self.reload_pipeline(bus);
     }
+
+    pub(super) fn execute_str(bus: &mut impl DataBus, addr: u32, value: u32) {
+        bus.write_word(addr & !0b11, value);
+    }
+
+    pub(super) fn execute_strh(bus: &mut impl DataBus, addr: u32, value: u16) {
+        bus.write_hword(addr & !1, value);
+    }
+
+    pub(super) fn execute_strb(bus: &mut impl DataBus, addr: u32, value: u8) {
+        bus.write_byte(addr, value);
+    }
+
+    pub(super) fn execute_ldr(bus: &impl DataBus, addr: u32) -> u32 {
+        bus.read_word(addr & !0b11)
+    }
+
+    #[allow(clippy::cast_sign_loss)]
+    pub(super) fn execute_ldrh_ldsh(bus: &impl DataBus, addr: u32, sign_extend: bool) -> u32 {
+        let result = bus.read_hword(addr & !1);
+        if sign_extend {
+            i32::from(result) as _
+        } else {
+            result.into()
+        }
+    }
+
+    #[allow(clippy::cast_sign_loss)]
+    pub(super) fn execute_ldrb_ldsb(bus: &impl DataBus, addr: u32, sign_extend: bool) -> u32 {
+        let result = bus.read_byte(addr);
+        if sign_extend {
+            i32::from(result) as _
+        } else {
+            result.into()
+        }
+    }
 }
