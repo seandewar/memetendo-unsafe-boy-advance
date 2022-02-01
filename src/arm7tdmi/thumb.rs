@@ -381,7 +381,21 @@ impl Cpu {
                 self.reg.r[r_dst] = self.execute_add_cmn(false, base_addr, offset.into());
             }
 
-            AddSp => todo!(),
+            // TODO: 1S
+            AddSp => {
+                // SP,#nn
+                let offset = (instr & 0b111_1111) * 4;
+                let op = (instr >> 7) & 1;
+
+                self.reg.r[Sp] = if op == 0 {
+                    // ADD
+                    self.execute_add_cmn(false, self.reg.r[Sp], offset.into())
+                } else {
+                    // SUB
+                    self.execute_sub_cmp(false, self.reg.r[Sp], offset.into())
+                };
+            }
+
             PushPopReg => todo!(),
             MultiLoadStore => todo!(),
             CondBranch => todo!(),
@@ -1604,6 +1618,32 @@ mod tests {
         test_instr!(
             0b1010_1_000_00000000, // ADD R0,[SP,#0]
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+    }
+
+    #[test]
+    fn execute_thumb_add_sp() {
+        // ADD SP,#nn
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[Sp] = 1,
+            0b10110000_0_0110010, // ADD SP,#200
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 201, 0, 4],
+        );
+        test_instr!(
+            0b10110000_0_0000000, // ADD SP,#0
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+
+        // SUB SP,#nn
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[Sp] = 200,
+            0b10110000_1_0110010, // SUB SP,#200
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[Sp] = 50,
+            0b10110000_1_0110010, // SUB SP,#200
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, u32::MAX - 149, 0, 4],
         );
     }
 }
