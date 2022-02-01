@@ -331,7 +331,24 @@ impl Cpu {
                 }
             }
 
-            LoadStoreHword => todo!(),
+            // 1S+1N+1I for LDR, or 2N for STR
+            LoadStoreHword => {
+                // Rd,[Rb,#nn]
+                let r = r_index(instr, 0);
+                let base_addr = self.reg.r[r_index(instr, 3)];
+                let offset = (instr >> 6) & 0b1_1111;
+                let addr = base_addr.wrapping_add(u32::from(offset) * 2);
+                let op = (instr >> 11) & 1;
+
+                match op {
+                    // STRH
+                    0 => Self::execute_strh(bus, addr, (self.reg.r[r] & 0xffff) as _),
+                    // LDRH
+                    1 => self.reg.r[r] = Self::execute_ldrh_ldsh(bus, addr, false),
+                    _ => unreachable!(),
+                }
+            }
+
             LoadStoreSpRel => todo!(),
             LoadAddr => todo!(),
             AddSp => todo!(),
@@ -1481,6 +1498,31 @@ mod tests {
             |cpu: &mut Cpu| cpu.reg.r[1] = 10,
             0b011_11_00110_001_000, // LDRB R0,[R1,#nn]
             [0x01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+    }
+
+    #[test]
+    fn execute_thumb_load_store_hword() {
+        let mut bus = VecBus(vec![0; 40]);
+
+        // STRH Rd,[Rb,#nn]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0xabcd_ef01;
+                cpu.reg.r[1] = 10;
+            },
+            0b1000_0_00101_001_000, // STRH R0,[R1,#nn]
+            [0xabcd_ef01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        assert_eq!(0xef01, bus.read_hword(20));
+
+        // LDRH Rd,[Rb,#nn]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| cpu.reg.r[1] = 9,
+            0b1000_1_00110_001_000, // LDRH R0,[R1,#nn]
+            [0xef01, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
     }
 }
