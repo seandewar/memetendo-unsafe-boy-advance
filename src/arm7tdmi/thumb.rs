@@ -1,6 +1,9 @@
 use crate::{arm7tdmi::reg::OperationState, bus::DataBus};
 
-use super::{reg::NamedGeneralRegister::Pc, Cpu, Exception};
+use super::{
+    reg::NamedGeneralRegister::{Pc, Sp},
+    Cpu, Exception,
+};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum InstructionFormat {
@@ -349,7 +352,23 @@ impl Cpu {
                 }
             }
 
-            LoadStoreSpRel => todo!(),
+            // 1S+1N+1I for LDR, or 2N for STR
+            LoadStoreSpRel => {
+                // Rd,[SP,#nn]
+                let offset = instr & 0b1111_1111;
+                let r = r_index(instr, 8);
+                let addr = self.reg.r[Sp].wrapping_add(u32::from(offset) * 4);
+                let op = (instr >> 11) & 1;
+
+                match op {
+                    // STR
+                    0 => Self::execute_str(bus, addr, self.reg.r[r]),
+                    // LDR
+                    1 => self.reg.r[r] = Self::execute_ldr(bus, addr),
+                    _ => unreachable!(),
+                }
+            }
+
             LoadAddr => todo!(),
             AddSp => todo!(),
             PushPopReg => todo!(),
@@ -1523,6 +1542,31 @@ mod tests {
             |cpu: &mut Cpu| cpu.reg.r[1] = 9,
             0b1000_1_00110_001_000, // LDRH R0,[R1,#nn]
             [0xef01, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+    }
+
+    #[test]
+    fn execute_thumb_load_store_sp_rel() {
+        let mut bus = VecBus(vec![0; 40]);
+
+        // STR Rd,[SP,#nn]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[Sp] = 8;
+                cpu.reg.r[0] = 0xabcd_ef01;
+            },
+            0b1001_0_000_00000010, // STR R0,[SP,#nn]
+            [0xabcd_ef01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 4],
+        );
+        assert_eq!(0xabcd_ef01, bus.read_word(16));
+
+        // LDR Rd,[SP,#nn]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| cpu.reg.r[Sp] = 1,
+            0b1001_1_000_00000100, // LDR R0,[SP,#nn]
+            [0xabcd_ef01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4],
         );
     }
 }
