@@ -77,9 +77,10 @@ impl Cpu {
         use InstructionFormat::*;
 
         assert!(self.reg.cpsr.state == OperationState::Thumb);
+        let format = decode_format(instr);
 
         #[allow(clippy::match_same_arms)] // TODO
-        match decode_format(instr) {
+        match format {
             // TODO: 1S cycle
             MoveShiftedReg => {
                 // Rd,Rs,#Offset
@@ -281,7 +282,7 @@ impl Cpu {
             }
 
             // TODO: 1S + 1N + 1I for LDR, 2N for STR
-            format @ (LoadStoreRel | LoadStoreSignExtHword) => {
+            LoadStoreRel | LoadStoreSignExtHword => {
                 // Rd,[Rb,Ro]
                 let r = r_index(instr, 0);
                 let base_addr = self.reg.r[r_index(instr, 3)];
@@ -356,8 +357,8 @@ impl Cpu {
             LoadStoreSpRel => {
                 // Rd,[SP,#nn]
                 let offset = instr & 0b1111_1111;
-                let r = r_index(instr, 8);
                 let addr = self.reg.r[Sp].wrapping_add(u32::from(offset) * 4);
+                let r = r_index(instr, 8);
                 let op = (instr >> 11) & 1;
 
                 match op {
@@ -369,7 +370,17 @@ impl Cpu {
                 }
             }
 
-            LoadAddr => todo!(),
+            // TODO: 1S
+            LoadAddr => {
+                // ADD Rd,(PC/SP),#nn
+                let offset = instr & 0b1111_1111;
+                let r_dst = r_index(instr, 8);
+                let op = (instr >> 11) & 1;
+                let base_addr = self.reg.r[if op == 0 { Pc } else { Sp }];
+
+                self.reg.r[r_dst] = self.execute_add_cmn(false, base_addr, offset.into());
+            }
+
             AddSp => todo!(),
             PushPopReg => todo!(),
             MultiLoadStore => todo!(),
@@ -1567,6 +1578,32 @@ mod tests {
             |cpu: &mut Cpu| cpu.reg.r[Sp] = 1,
             0b1001_1_000_00000100, // LDR R0,[SP,#nn]
             [0xabcd_ef01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4],
+        );
+    }
+
+    #[test]
+    fn execute_thumb_load_addr() {
+        // ADD Rd,[PC,#nn]
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[Pc] = 20,
+            0b1010_0_000_11001000, // ADD R0,[PC,#200]
+            [220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[Pc] = 0,
+            0b1010_0_000_00000000, // ADD R0,[PC,#0]
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+
+        // ADD Rd,[SP,#nn]
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[Sp] = 40,
+            0b1010_1_000_11001000, // ADD R0,[SP,#200]
+            [240, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40, 0, 4],
+        );
+        test_instr!(
+            0b1010_1_000_00000000, // ADD R0,[SP,#0]
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
     }
 }
