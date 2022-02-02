@@ -105,21 +105,18 @@ impl Cpu {
                 let r_or_value = r_index(instr, 6);
                 let op = (instr >> 9) & 0b11;
 
-                #[allow(clippy::cast_possible_truncation)]
-                let b = if op & 0b10 == 0 {
-                    // Rd,Rs,Rn
-                    self.reg.r[r_or_value]
-                } else {
-                    // Rd,Rs,#nn
-                    r_or_value as _
-                };
-
-                self.reg.r[r_index(instr, 0)] = if op & 1 == 0 {
-                    // ADD{S}
-                    self.execute_add_cmn(true, a, b)
-                } else {
-                    // SUB{S}
-                    self.execute_sub_cmp(true, a, b)
+                self.reg.r[r_index(instr, 0)] = match op {
+                    // ADD{S} Rd,Rs,Rn
+                    0 => self.execute_add_cmn(true, a, self.reg.r[r_or_value]),
+                    // SUB{S} Rd,Rs,Rn
+                    1 => self.execute_sub_cmp(true, a, self.reg.r[r_or_value]),
+                    // ADD{S} Rd,Rs,#nn
+                    #[warn(clippy::cast_possible_truncation)]
+                    2 => self.execute_add_cmn(true, a, r_or_value as _),
+                    // SUB{S} Rd,Rs,#nn
+                    #[warn(clippy::cast_possible_truncation)]
+                    3 => self.execute_sub_cmp(true, a, r_or_value as _),
+                    _ => unreachable!(),
                 };
             }
 
@@ -131,21 +128,15 @@ impl Cpu {
 
                 match (instr >> 11) & 0b11 {
                     // MOV{S}
-                    0 => {
-                        self.reg.r[r_dst] = self.execute_mov(true, value);
-                    }
+                    0 => self.reg.r[r_dst] = self.execute_mov(true, value),
                     // CMP{S}
                     1 => {
                         self.execute_sub_cmp(true, self.reg.r[r_dst], value);
                     }
                     // ADD{S}
-                    2 => {
-                        self.reg.r[r_dst] = self.execute_add_cmn(true, self.reg.r[r_dst], value);
-                    }
+                    2 => self.reg.r[r_dst] = self.execute_add_cmn(true, self.reg.r[r_dst], value),
                     // SUB{S}
-                    3 => {
-                        self.reg.r[r_dst] = self.execute_sub_cmp(true, self.reg.r[r_dst], value);
-                    }
+                    3 => self.reg.r[r_dst] = self.execute_sub_cmp(true, self.reg.r[r_dst], value),
                     _ => unreachable!(),
                 }
             }
@@ -161,49 +152,31 @@ impl Cpu {
 
                 match op {
                     // AND{S}
-                    0 => {
-                        self.reg.r[r_dst] = self.execute_and_tst(self.reg.r[r_dst], value);
-                    }
+                    0 => self.reg.r[r_dst] = self.execute_and_tst(self.reg.r[r_dst], value),
                     // EOR{S} (XOR)
-                    1 => {
-                        self.reg.r[r_dst] = self.execute_eor(self.reg.r[r_dst], value);
-                    }
+                    1 => self.reg.r[r_dst] = self.execute_eor(self.reg.r[r_dst], value),
                     // LSL{S}
                     #[allow(clippy::cast_possible_truncation)]
-                    2 => {
-                        self.reg.r[r_dst] = self.execute_lsl(self.reg.r[r_dst], value as _);
-                    }
+                    2 => self.reg.r[r_dst] = self.execute_lsl(self.reg.r[r_dst], value as _),
                     // LSR{S}
                     #[allow(clippy::cast_possible_truncation)]
-                    3 => {
-                        self.reg.r[r_dst] = self.execute_lsr(self.reg.r[r_dst], value as _);
-                    }
+                    3 => self.reg.r[r_dst] = self.execute_lsr(self.reg.r[r_dst], value as _),
                     // ASR{S}
                     #[allow(clippy::cast_possible_truncation)]
-                    4 => {
-                        self.reg.r[r_dst] = self.execute_asr(self.reg.r[r_dst], value as _);
-                    }
+                    4 => self.reg.r[r_dst] = self.execute_asr(self.reg.r[r_dst], value as _),
                     // ADC{S}
-                    5 => {
-                        self.reg.r[r_dst] = self.execute_adc(true, self.reg.r[r_dst], value);
-                    }
+                    5 => self.reg.r[r_dst] = self.execute_adc(true, self.reg.r[r_dst], value),
                     // SBC{S}
-                    6 => {
-                        self.reg.r[r_dst] = self.execute_sbc(true, self.reg.r[r_dst], value);
-                    }
+                    6 => self.reg.r[r_dst] = self.execute_sbc(true, self.reg.r[r_dst], value),
                     // ROR{S}
                     #[allow(clippy::cast_possible_truncation)]
-                    7 => {
-                        self.reg.r[r_dst] = self.execute_ror(self.reg.r[r_dst], value as _);
-                    }
+                    7 => self.reg.r[r_dst] = self.execute_ror(self.reg.r[r_dst], value as _),
                     // TST
                     8 => {
                         self.execute_and_tst(self.reg.r[r_dst], value);
                     }
                     // NEG{S}
-                    9 => {
-                        self.reg.r[r_dst] = self.execute_sub_cmp(true, 0, value);
-                    }
+                    9 => self.reg.r[r_dst] = self.execute_sub_cmp(true, 0, value),
                     // CMP
                     10 => {
                         self.execute_sub_cmp(true, self.reg.r[r_dst], value);
@@ -213,21 +186,13 @@ impl Cpu {
                         self.execute_add_cmn(true, self.reg.r[r_dst], value);
                     }
                     // ORR{S}
-                    12 => {
-                        self.reg.r[r_dst] = self.execute_orr(self.reg.r[r_dst], value);
-                    }
+                    12 => self.reg.r[r_dst] = self.execute_orr(self.reg.r[r_dst], value),
                     // MUL{S}
-                    13 => {
-                        self.reg.r[r_dst] = self.execute_mul(self.reg.r[r_dst], value);
-                    }
+                    13 => self.reg.r[r_dst] = self.execute_mul(self.reg.r[r_dst], value),
                     // BIC{S}
-                    14 => {
-                        self.reg.r[r_dst] = self.execute_bic(self.reg.r[r_dst], value);
-                    }
+                    14 => self.reg.r[r_dst] = self.execute_bic(self.reg.r[r_dst], value),
                     // MVN{S} (NOT)
-                    15 => {
-                        self.reg.r[r_dst] = self.execute_mvn(value);
-                    }
+                    15 => self.reg.r[r_dst] = self.execute_mvn(value),
                     _ => unreachable!(),
                 }
             }
@@ -240,34 +205,30 @@ impl Cpu {
                 let value = self.reg.r[r_src];
                 let op = (instr >> 8) & 0b11;
 
-                if op < 3 {
-                    // Rd,Rs
-                    let r_dst_msb = instr & (1 << 7) != 0;
-                    let r_dst = r_index(instr, 0) | (usize::from(r_dst_msb) << 3);
-
-                    match op {
-                        // ADD
-                        0 => {
-                            self.reg.r[r_dst] =
-                                self.execute_add_cmn(false, self.reg.r[r_dst], value);
-                        }
-                        // CMP
-                        1 => {
-                            self.execute_sub_cmp(true, self.reg.r[r_dst], value);
-                        }
-                        // MOV or NOP (MOV R8,R8)
-                        2 => {
-                            self.reg.r[r_dst] = self.execute_mov(false, value);
-                        }
-                        _ => unreachable!(),
-                    }
-
-                    if op != 1 && r_dst == Pc as _ {
-                        self.reload_pipeline(bus);
-                    }
-                } else {
+                if op == 3 {
                     // BX Rs (jump)
                     self.execute_bx(bus, value);
+                    return;
+                }
+
+                // Rd,Rs
+                let r_dst_msb = instr & (1 << 7) != 0;
+                let r_dst = r_index(instr, 0) | (usize::from(r_dst_msb) << 3);
+
+                match op {
+                    // ADD
+                    0 => self.reg.r[r_dst] = self.execute_add_cmn(false, self.reg.r[r_dst], value),
+                    // CMP
+                    1 => {
+                        self.execute_sub_cmp(true, self.reg.r[r_dst], value);
+                    }
+                    // MOV or NOP (MOV R8,R8)
+                    2 => self.reg.r[r_dst] = self.execute_mov(false, value),
+                    _ => unreachable!(),
+                }
+
+                if op != 1 && r_dst == Pc as _ {
+                    self.reload_pipeline(bus);
                 }
             }
 
@@ -387,16 +348,30 @@ impl Cpu {
                 let offset = (instr & 0b111_1111) * 4;
                 let op = (instr >> 7) & 1;
 
-                self.reg.r[Sp] = if op == 0 {
+                self.reg.r[Sp] = match op {
                     // ADD
-                    self.execute_add_cmn(false, self.reg.r[Sp], offset.into())
-                } else {
+                    0 => self.execute_add_cmn(false, self.reg.r[Sp], offset.into()),
                     // SUB
-                    self.execute_sub_cmp(false, self.reg.r[Sp], offset.into())
+                    1 => self.execute_sub_cmp(false, self.reg.r[Sp], offset.into()),
+                    _ => unreachable!(),
                 };
             }
 
-            PushPopReg => todo!(),
+            // TODO: nS+1N+1I (POP), (n+1)S+2N+1I (POP PC), or (n-1)S+2N (PUSH)
+            PushPopReg => {
+                let r_list = (instr & 0b1111_1111) as _;
+                let push_lr_pop_pc = instr & (1 << 8) != 0;
+                let op = (instr >> 11) & 1;
+
+                match op {
+                    // PUSH {Rlist}{LR}
+                    0 => self.execute_push(bus, r_list, push_lr_pop_pc),
+                    // POP {Rlist}{PC}
+                    1 => self.execute_pop(bus, r_list, push_lr_pop_pc),
+                    _ => unreachable!(),
+                }
+            }
+
             MultiLoadStore => todo!(),
             CondBranch => todo!(),
             SoftwareInterrupt => self.enter_exception(bus, Exception::SoftwareInterrupt),
@@ -1645,5 +1620,10 @@ mod tests {
             0b10110000_1_0110010, // SUB SP,#200
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, u32::MAX - 149, 0, 4],
         );
+    }
+
+    #[test]
+    fn execute_thumb_push_pop_reg() {
+        todo!()
     }
 }

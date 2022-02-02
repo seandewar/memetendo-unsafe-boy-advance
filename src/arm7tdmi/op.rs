@@ -1,6 +1,9 @@
 use crate::bus::DataBus;
 
-use super::{reg::NamedGeneralRegister::Pc, Cpu, OperationState};
+use super::{
+    reg::NamedGeneralRegister::{Lr, Pc, Sp},
+    Cpu, OperationState,
+};
 
 #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 fn execute_add_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) -> u32 {
@@ -200,6 +203,43 @@ impl Cpu {
             i32::from(result) as _
         } else {
             result.into()
+        }
+    }
+
+    pub(super) fn execute_push(&mut self, bus: &mut impl DataBus, mut r_list: u8, push_lr: bool) {
+        if push_lr {
+            self.reg.r[Sp] = self.reg.r[Sp].wrapping_add(4);
+            bus.write_word(self.reg.r[Sp], self.reg.r[Lr]);
+        }
+
+        let mut r = 7;
+        while r_list != 0 {
+            if r_list & (1 << 7) != 0 {
+                self.reg.r[Sp] = self.reg.r[Sp].wrapping_add(4);
+                bus.write_word(self.reg.r[Sp], self.reg.r[r]);
+            }
+
+            r_list <<= 1;
+            r -= 1;
+        }
+    }
+
+    pub(super) fn execute_pop(&mut self, bus: &impl DataBus, mut r_list: u8, pop_pc: bool) {
+        if pop_pc {
+            self.reg.r[Pc] = bus.read_word(self.reg.r[Sp]);
+            self.reg.r[Sp] = self.reg.r[Sp].wrapping_sub(4);
+            self.reload_pipeline(bus);
+        }
+
+        let mut r = 0;
+        while r_list != 0 {
+            if r_list & 1 != 0 {
+                self.reg.r[r] = bus.read_word(self.reg.r[Sp]);
+                self.reg.r[Sp] = self.reg.r[Sp].wrapping_sub(4);
+            }
+
+            r_list >>= 1;
+            r += 1;
         }
     }
 }
