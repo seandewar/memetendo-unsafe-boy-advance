@@ -393,7 +393,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        arm7tdmi::reg::{GeneralRegisters, StatusRegister},
+        arm7tdmi::reg::{GeneralRegisters, NamedGeneralRegister::Lr, StatusRegister},
         bus::{NullBus, VecBus},
     };
 
@@ -1486,7 +1486,7 @@ mod tests {
                 cpu.reg.r[0] = 0xabcd_ef01;
                 cpu.reg.r[1] = 10;
             },
-            0b011_00_00110_001_000, // STR R0,[R1,#nn]
+            0b011_00_00110_001_000, // STR R0,[R1,#24]
             [0xabcd_ef01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
         assert_eq!(0xabcd_ef01, bus.read_word(32));
@@ -1495,7 +1495,7 @@ mod tests {
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| cpu.reg.r[1] = 8,
-            0b011_01_00110_001_000, // LDR R0,[R1,#nn]
+            0b011_01_00110_001_000, // LDR R0,[R1,#24]
             [0xabcd_ef01, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
 
@@ -1506,7 +1506,7 @@ mod tests {
                 cpu.reg.r[0] = 0xabcd_ef01;
                 cpu.reg.r[1] = 10;
             },
-            0b011_10_00110_001_000, // STRB R0,[R1,#nn]
+            0b011_10_00110_001_000, // STRB R0,[R1,#6]
             [0xabcd_ef01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
         assert_eq!(0x01, bus.read_byte(16));
@@ -1515,7 +1515,7 @@ mod tests {
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| cpu.reg.r[1] = 10,
-            0b011_11_00110_001_000, // LDRB R0,[R1,#nn]
+            0b011_11_00110_001_000, // LDRB R0,[R1,#6]
             [0x01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
     }
@@ -1531,7 +1531,7 @@ mod tests {
                 cpu.reg.r[0] = 0xabcd_ef01;
                 cpu.reg.r[1] = 10;
             },
-            0b1000_0_00101_001_000, // STRH R0,[R1,#nn]
+            0b1000_0_00101_001_000, // STRH R0,[R1,#10]
             [0xabcd_ef01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
         assert_eq!(0xef01, bus.read_hword(20));
@@ -1540,7 +1540,7 @@ mod tests {
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| cpu.reg.r[1] = 9,
-            0b1000_1_00110_001_000, // LDRH R0,[R1,#nn]
+            0b1000_1_00110_001_000, // LDRH R0,[R1,#12]
             [0xef01, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
     }
@@ -1556,7 +1556,7 @@ mod tests {
                 cpu.reg.r[Sp] = 8;
                 cpu.reg.r[0] = 0xabcd_ef01;
             },
-            0b1001_0_000_00000010, // STR R0,[SP,#nn]
+            0b1001_0_000_00000010, // STR R0,[SP,#8]
             [0xabcd_ef01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 4],
         );
         assert_eq!(0xabcd_ef01, bus.read_word(16));
@@ -1565,7 +1565,7 @@ mod tests {
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| cpu.reg.r[Sp] = 1,
-            0b1001_1_000_00000100, // LDR R0,[SP,#nn]
+            0b1001_1_000_00000100, // LDR R0,[SP,#16]
             [0xabcd_ef01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4],
         );
     }
@@ -1624,6 +1624,53 @@ mod tests {
 
     #[test]
     fn execute_thumb_push_pop_reg() {
-        todo!()
+        let mut bus = VecBus(vec![0; 40]);
+
+        // PUSH {Rlist}{LR}
+        #[rustfmt::skip]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[Sp] = 40;
+                cpu.reg.r[0] = 0xabcd;
+                cpu.reg.r[3] = 0xfefe_0001;
+                cpu.reg.r[7] = 42;
+            },
+            0b1011_0_10_0_10001001, // PUSH {R0,R3,R7}
+            [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 28, 0, 4],
+        );
+        assert_eq!(42, bus.read_word(36));
+        assert_eq!(0xfefe_0001, bus.read_word(32));
+        assert_eq!(0xabcd, bus.read_word(28));
+
+        #[rustfmt::skip]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[Sp] = 28;
+                cpu.reg.r[1] = 0b1010;
+                cpu.reg.r[Lr] = 40;
+            },
+            0b1011_0_10_1_00000010, // PUSH {R1,LR}
+            [0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 40, 4],
+        );
+        assert_eq!(40, bus.read_word(24));
+        assert_eq!(0b1010, bus.read_word(20));
+
+        // POP {Rlist}{PC}
+        #[rustfmt::skip]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| cpu.reg.r[Sp] = 20,
+            0b1011_1_10_1_00000001, // POP {R1,PC}
+            [0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 0, 44],
+        );
+        #[rustfmt::skip]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| cpu.reg.r[Sp] = 28,
+            0b1011_1_10_0_10001001, // POP {R0,R3,R7}
+            [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 40, 0, 4],
+        );
     }
 }

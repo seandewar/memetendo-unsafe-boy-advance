@@ -207,39 +207,37 @@ impl Cpu {
     }
 
     pub(super) fn execute_push(&mut self, bus: &mut impl DataBus, mut r_list: u8, push_lr: bool) {
+        // TODO: what about SP alignment? and should we emulate weird r_list behaviour when its 0?
         if push_lr {
-            self.reg.r[Sp] = self.reg.r[Sp].wrapping_add(4);
+            self.reg.r[Sp] = self.reg.r[Sp].wrapping_sub(4);
             bus.write_word(self.reg.r[Sp], self.reg.r[Lr]);
         }
 
-        let mut r = 7;
-        while r_list != 0 {
+        for r in (0..8).rev() {
             if r_list & (1 << 7) != 0 {
-                self.reg.r[Sp] = self.reg.r[Sp].wrapping_add(4);
+                self.reg.r[Sp] = self.reg.r[Sp].wrapping_sub(4);
                 bus.write_word(self.reg.r[Sp], self.reg.r[r]);
             }
 
             r_list <<= 1;
-            r -= 1;
         }
     }
 
     pub(super) fn execute_pop(&mut self, bus: &impl DataBus, mut r_list: u8, pop_pc: bool) {
-        if pop_pc {
-            self.reg.r[Pc] = bus.read_word(self.reg.r[Sp]);
-            self.reg.r[Sp] = self.reg.r[Sp].wrapping_sub(4);
-            self.reload_pipeline(bus);
-        }
-
-        let mut r = 0;
-        while r_list != 0 {
+        // TODO: what about SP alignment? and should we emulate weird r_list behaviour when its 0?
+        for r in 0..8 {
             if r_list & 1 != 0 {
                 self.reg.r[r] = bus.read_word(self.reg.r[Sp]);
-                self.reg.r[Sp] = self.reg.r[Sp].wrapping_sub(4);
+                self.reg.r[Sp] = self.reg.r[Sp].wrapping_add(4);
             }
 
             r_list >>= 1;
-            r += 1;
+        }
+
+        if pop_pc {
+            self.reg.r[Pc] = bus.read_word(self.reg.r[Sp]);
+            self.reg.r[Sp] = self.reg.r[Sp].wrapping_add(4);
+            self.reload_pipeline(bus);
         }
     }
 }
