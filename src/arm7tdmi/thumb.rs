@@ -5,379 +5,361 @@ use super::{
     Cpu, Exception,
 };
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum InstructionFormat {
-    MoveShiftedReg = 1,
-    AddSub,
-    MoveCmpAddSubImm,
-    AluOp,
-    HiRegOpBranchExchange,
-    LoadPcRel,
-    LoadStoreRel,
-    LoadStoreSignExtHword,
-    LoadStoreImm,
-    LoadStoreHword,
-    LoadStoreSpRel,
-    LoadAddr,
-    AddSp,
-    PushPopReg,
-    MultiLoadStore,
-    CondBranch,
-    SoftwareInterrupt,
-    UncondBranch,
-    LongBranchWithLink,
-    Undefined = 0,
-}
-
-#[must_use]
-fn decode_format(instr: u16) -> InstructionFormat {
-    #[allow(clippy::enum_glob_use)]
-    use InstructionFormat::*;
-
-    let hi8 = ((instr >> 8) & 0xff) as u8;
-    let hi6 = hi8 >> 2;
-    let hi5 = hi8 >> 3;
-    let hi4 = hi8 >> 4;
-    let hi3 = hi8 >> 5;
-    let bit9 = hi8 & 0b10 != 0;
-
-    match (hi3, hi4, hi5, hi6, hi8) {
-        (_, _, _, _, 0b1011_0000) => AddSp,
-        (_, _, _, _, 0b1011_1111) => SoftwareInterrupt,
-        (_, _, _, 0b01_0000, _) => AluOp,
-        (_, _, _, 0b01_0001, _) => HiRegOpBranchExchange,
-        (_, _, 0b0_0011, _, _) => AddSub,
-        (_, _, 0b0_1001, _, _) => LoadPcRel,
-        (_, _, 0b1_1100, _, _) => UncondBranch,
-        (_, 0b0101, _, _, _) if bit9 => LoadStoreSignExtHword,
-        (_, 0b0101, _, _, _) => LoadStoreRel,
-        (_, 0b1000, _, _, _) => LoadStoreHword,
-        (_, 0b1001, _, _, _) => LoadStoreSpRel,
-        (_, 0b1010, _, _, _) => LoadAddr,
-        (_, 0b1011, _, _, _) => PushPopReg,
-        (_, 0b1100, _, _, _) => MultiLoadStore,
-        (_, 0b1101, _, _, _) => CondBranch,
-        (_, 0b1111, _, _, _) => LongBranchWithLink,
-        (0b000, _, _, _, _) => MoveShiftedReg,
-        (0b001, _, _, _, _) => MoveCmpAddSubImm,
-        (0b011, _, _, _, _) => LoadStoreImm,
-        _ => Undefined,
-    }
-}
-
 #[must_use]
 fn r_index(instr: u16, pos: u8) -> usize {
     (usize::from(instr) >> usize::from(pos)) & 0b111
 }
 
 impl Cpu {
-    #[allow(clippy::too_many_lines)]
     pub(super) fn execute_thumb(&mut self, bus: &mut impl DataBus, instr: u16) {
-        #[allow(clippy::enum_glob_use)]
-        use InstructionFormat::*;
-
         assert!(self.reg.cpsr.state == OperationState::Thumb);
-        let format = decode_format(instr);
 
-        #[allow(clippy::match_same_arms)] // TODO
-        match format {
-            // TODO: 1S cycle
-            MoveShiftedReg => {
-                // Rd,Rs,#Offset
-                let offset = ((instr >> 6) & 0b1_1111) as u8;
-                let value = self.reg.r[r_index(instr, 3)];
-                let op = (instr >> 11) & 0b11;
+        #[allow(clippy::cast_possible_truncation)]
+        let hi8 = (instr >> 8) as u8;
 
-                self.reg.r[r_index(instr, 0)] = match op {
-                    // LSL{S}
-                    0 => self.execute_lsl(value, offset),
-                    // LSR{S}
-                    1 => self.execute_lsr(value, offset),
-                    // ASR{S}
-                    2 => self.execute_asr(value, offset),
-                    _ => unreachable!("format should be AddSub"),
-                };
+        let hi6 = hi8 >> 2;
+        let hi5 = hi8 >> 3;
+        let hi4 = hi8 >> 4;
+        let hi3 = hi8 >> 5;
+
+        match (hi3, hi4, hi5, hi6, hi8) {
+            (_, _, _, _, 0b1011_0000) => self.execute_thumb13(instr),
+            (_, _, _, _, 0b1011_1111) => self.enter_exception(bus, Exception::SoftwareInterrupt),
+            (_, _, _, 0b01_0000, _) => self.execute_thumb4(instr),
+            (_, _, _, 0b01_0001, _) => self.execute_thumb5(bus, instr),
+            (_, _, 0b0_0011, _, _) => self.execute_thumb2(instr),
+            (_, _, 0b0_1001, _, _) => self.execute_thumb6(bus, instr),
+            (_, _, 0b1_1100, _, _) => todo!("unconditional branch"),
+            (_, 0b0101, _, _, _) => self.execute_thumb7_thumb8(bus, instr),
+            (_, 0b1000, _, _, _) => self.execute_thumb10(bus, instr),
+            (_, 0b1001, _, _, _) => self.execute_thumb11(bus, instr),
+            (_, 0b1010, _, _, _) => self.execute_thumb12(instr),
+            (_, 0b1011, _, _, _) => self.execute_thumb14(bus, instr),
+            (_, 0b1100, _, _, _) => todo!("multiple load/store"),
+            (_, 0b1101, _, _, _) => todo!("conditional branch"),
+            (_, 0b1111, _, _, _) => todo!("long branch with link"),
+            (0b000, _, _, _, _) => self.execute_thumb1(instr),
+            (0b001, _, _, _, _) => self.execute_thumb3(instr),
+            (0b011, _, _, _, _) => self.execute_thumb9(bus, instr),
+            _ => self.enter_exception(bus, Exception::UndefinedInstr),
+        }
+    }
+
+    /// Thumb.1: Move shifted register.
+    fn execute_thumb1(&mut self, instr: u16) {
+        // TODO: 1S cycle
+        // Rd,Rs,#Offset
+        let value = self.reg.r[r_index(instr, 3)];
+        let offset = ((instr >> 6) & 0b1_1111) as _;
+        let op = (instr >> 11) & 0b11;
+
+        self.reg.r[r_index(instr, 0)] = match op {
+            // LSL{S}
+            0 => self.execute_lsl(value, offset),
+            // LSR{S}
+            1 => self.execute_lsr(value, offset),
+            // ASR{S}
+            2 => self.execute_asr(value, offset),
+            _ => unreachable!(),
+        };
+    }
+
+    /// Thumb.2: Add or subtract.
+    fn execute_thumb2(&mut self, instr: u16) {
+        // TODO: 1S cycle
+        let a = self.reg.r[r_index(instr, 3)];
+        let r = r_index(instr, 6);
+        let op = (instr >> 9) & 0b11;
+
+        #[allow(clippy::cast_possible_truncation)]
+        let b = r as _;
+
+        self.reg.r[r_index(instr, 0)] = match op {
+            // ADD{S} Rd,Rs,Rn
+            0 => self.execute_add_cmn(true, a, self.reg.r[r]),
+            // SUB{S} Rd,Rs,Rn
+            1 => self.execute_sub_cmp(true, a, self.reg.r[r]),
+            // ADD{S} Rd,Rs,#nn
+            2 => self.execute_add_cmn(true, a, b),
+            // SUB{S} Rd,Rs,#nn
+            3 => self.execute_sub_cmp(true, a, b),
+            _ => unreachable!(),
+        };
+    }
+
+    /// Thumb.3: Move, compare, add or subtract immediate.
+    fn execute_thumb3(&mut self, instr: u16) {
+        // TODO: 1S cycle
+        // Rd,#nn
+        let value = (instr & 0b1111_1111).into();
+        let r_dst = r_index(instr, 8);
+        let op = (instr >> 11) & 0b11;
+
+        match op {
+            // MOV{S}
+            0 => self.reg.r[r_dst] = self.execute_mov(true, value),
+            // CMP{S}
+            1 => {
+                self.execute_sub_cmp(true, self.reg.r[r_dst], value);
             }
+            // ADD{S}
+            2 => self.reg.r[r_dst] = self.execute_add_cmn(true, self.reg.r[r_dst], value),
+            // SUB{S}
+            3 => self.reg.r[r_dst] = self.execute_sub_cmp(true, self.reg.r[r_dst], value),
+            _ => unreachable!(),
+        }
+    }
 
-            // TODO: 1S cycle
-            AddSub => {
-                let a = self.reg.r[r_index(instr, 3)];
-                let r_or_value = r_index(instr, 6);
-                let op = (instr >> 9) & 0b11;
+    /// Thumb.4: ALU operations.
+    fn execute_thumb4(&mut self, instr: u16) {
+        // TODO: 1S: AND, EOR, ADC, SBC, TST, NEG, CMP, CMN, ORR, BIC, MVN
+        //       1S+1I: LSL, LSR, ASR, ROR
+        //       1S+mI: MUL (m=1..4; depending on MSBs of incoming Rd value)
+        // Rd,Rs
+        let r_dst = r_index(instr, 0);
+        let value = self.reg.r[r_index(instr, 3)];
+        let op = (instr >> 6) & 0b1111;
 
-                self.reg.r[r_index(instr, 0)] = match op {
-                    // ADD{S} Rd,Rs,Rn
-                    0 => self.execute_add_cmn(true, a, self.reg.r[r_or_value]),
-                    // SUB{S} Rd,Rs,Rn
-                    1 => self.execute_sub_cmp(true, a, self.reg.r[r_or_value]),
-                    // ADD{S} Rd,Rs,#nn
-                    #[warn(clippy::cast_possible_truncation)]
-                    2 => self.execute_add_cmn(true, a, r_or_value as _),
-                    // SUB{S} Rd,Rs,#nn
-                    #[warn(clippy::cast_possible_truncation)]
-                    3 => self.execute_sub_cmp(true, a, r_or_value as _),
-                    _ => unreachable!(),
-                };
+        #[allow(clippy::cast_possible_truncation)]
+        let offset = value as _;
+
+        match op {
+            // AND{S}
+            0 => self.reg.r[r_dst] = self.execute_and_tst(self.reg.r[r_dst], value),
+            // EOR{S} (XOR)
+            1 => self.reg.r[r_dst] = self.execute_eor(self.reg.r[r_dst], value),
+            // LSL{S}
+            2 => self.reg.r[r_dst] = self.execute_lsl(self.reg.r[r_dst], offset),
+            // LSR{S}
+            3 => self.reg.r[r_dst] = self.execute_lsr(self.reg.r[r_dst], offset),
+            // ASR{S}
+            4 => self.reg.r[r_dst] = self.execute_asr(self.reg.r[r_dst], offset),
+            // ADC{S}
+            5 => self.reg.r[r_dst] = self.execute_adc(true, self.reg.r[r_dst], value),
+            // SBC{S}
+            6 => self.reg.r[r_dst] = self.execute_sbc(true, self.reg.r[r_dst], value),
+            // ROR{S}
+            7 => self.reg.r[r_dst] = self.execute_ror(self.reg.r[r_dst], offset),
+            // TST
+            8 => {
+                self.execute_and_tst(self.reg.r[r_dst], value);
             }
-
-            // TODO: 1S cycle
-            MoveCmpAddSubImm => {
-                // Rd,#nn
-                let value = u32::from(instr & 0b1111_1111);
-                let r_dst = r_index(instr, 8);
-
-                match (instr >> 11) & 0b11 {
-                    // MOV{S}
-                    0 => self.reg.r[r_dst] = self.execute_mov(true, value),
-                    // CMP{S}
-                    1 => {
-                        self.execute_sub_cmp(true, self.reg.r[r_dst], value);
-                    }
-                    // ADD{S}
-                    2 => self.reg.r[r_dst] = self.execute_add_cmn(true, self.reg.r[r_dst], value),
-                    // SUB{S}
-                    3 => self.reg.r[r_dst] = self.execute_sub_cmp(true, self.reg.r[r_dst], value),
-                    _ => unreachable!(),
-                }
+            // NEG{S}
+            9 => self.reg.r[r_dst] = self.execute_sub_cmp(true, 0, value),
+            // CMP
+            10 => {
+                self.execute_sub_cmp(true, self.reg.r[r_dst], value);
             }
-
-            // TODO: 1S: AND, EOR, ADC, SBC, TST, NEG, CMP, CMN, ORR, BIC, MVN
-            //       1S+1I: LSL, LSR, ASR, ROR
-            //       1S+mI: MUL (m=1..4; depending on MSBs of incoming Rd value)
-            AluOp => {
-                // Rd,Rs
-                let r_dst = r_index(instr, 0);
-                let value = self.reg.r[r_index(instr, 3)];
-                let op = (instr >> 6) & 0b1111;
-
-                match op {
-                    // AND{S}
-                    0 => self.reg.r[r_dst] = self.execute_and_tst(self.reg.r[r_dst], value),
-                    // EOR{S} (XOR)
-                    1 => self.reg.r[r_dst] = self.execute_eor(self.reg.r[r_dst], value),
-                    // LSL{S}
-                    #[allow(clippy::cast_possible_truncation)]
-                    2 => self.reg.r[r_dst] = self.execute_lsl(self.reg.r[r_dst], value as _),
-                    // LSR{S}
-                    #[allow(clippy::cast_possible_truncation)]
-                    3 => self.reg.r[r_dst] = self.execute_lsr(self.reg.r[r_dst], value as _),
-                    // ASR{S}
-                    #[allow(clippy::cast_possible_truncation)]
-                    4 => self.reg.r[r_dst] = self.execute_asr(self.reg.r[r_dst], value as _),
-                    // ADC{S}
-                    5 => self.reg.r[r_dst] = self.execute_adc(true, self.reg.r[r_dst], value),
-                    // SBC{S}
-                    6 => self.reg.r[r_dst] = self.execute_sbc(true, self.reg.r[r_dst], value),
-                    // ROR{S}
-                    #[allow(clippy::cast_possible_truncation)]
-                    7 => self.reg.r[r_dst] = self.execute_ror(self.reg.r[r_dst], value as _),
-                    // TST
-                    8 => {
-                        self.execute_and_tst(self.reg.r[r_dst], value);
-                    }
-                    // NEG{S}
-                    9 => self.reg.r[r_dst] = self.execute_sub_cmp(true, 0, value),
-                    // CMP
-                    10 => {
-                        self.execute_sub_cmp(true, self.reg.r[r_dst], value);
-                    }
-                    // CMN
-                    11 => {
-                        self.execute_add_cmn(true, self.reg.r[r_dst], value);
-                    }
-                    // ORR{S}
-                    12 => self.reg.r[r_dst] = self.execute_orr(self.reg.r[r_dst], value),
-                    // MUL{S}
-                    13 => self.reg.r[r_dst] = self.execute_mul(self.reg.r[r_dst], value),
-                    // BIC{S}
-                    14 => self.reg.r[r_dst] = self.execute_bic(self.reg.r[r_dst], value),
-                    // MVN{S} (NOT)
-                    15 => self.reg.r[r_dst] = self.execute_mvn(value),
-                    _ => unreachable!(),
-                }
+            // CMN
+            11 => {
+                self.execute_add_cmn(true, self.reg.r[r_dst], value);
             }
+            // ORR{S}
+            12 => self.reg.r[r_dst] = self.execute_orr(self.reg.r[r_dst], value),
+            // MUL{S}
+            13 => self.reg.r[r_dst] = self.execute_mul(self.reg.r[r_dst], value),
+            // BIC{S}
+            14 => self.reg.r[r_dst] = self.execute_bic(self.reg.r[r_dst], value),
+            // MVN{S} (NOT)
+            15 => self.reg.r[r_dst] = self.execute_mvn(value),
+            _ => unreachable!(),
+        }
+    }
 
-            // TODO: 1S cycle for ADD, MOV, CMP
-            //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
-            HiRegOpBranchExchange => {
-                let r_src_msb = instr & (1 << 6) != 0;
-                let r_src = r_index(instr, 3) | (usize::from(r_src_msb) << 3);
-                let value = self.reg.r[r_src];
-                let op = (instr >> 8) & 0b11;
+    /// Thumb.5: Hi register operations or branch exchange.
+    fn execute_thumb5(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // TODO: 1S cycle for ADD, MOV, CMP
+        //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
+        let r_src_msb = instr & (1 << 6) != 0;
+        let r_src = r_index(instr, 3) | (usize::from(r_src_msb) << 3);
 
-                if op == 3 {
-                    // BX Rs (jump)
-                    self.execute_bx(bus, value);
-                    return;
-                }
+        let value = self.reg.r[r_src];
+        let op = (instr >> 8) & 0b11;
 
-                // Rd,Rs
-                let r_dst_msb = instr & (1 << 7) != 0;
-                let r_dst = r_index(instr, 0) | (usize::from(r_dst_msb) << 3);
+        if op == 3 {
+            // BX Rs (jump)
+            self.execute_bx(bus, value);
+            return;
+        }
 
-                match op {
-                    // ADD
-                    0 => self.reg.r[r_dst] = self.execute_add_cmn(false, self.reg.r[r_dst], value),
-                    // CMP
-                    1 => {
-                        self.execute_sub_cmp(true, self.reg.r[r_dst], value);
-                    }
-                    // MOV or NOP (MOV R8,R8)
-                    2 => self.reg.r[r_dst] = self.execute_mov(false, value),
-                    _ => unreachable!(),
-                }
+        // Rd,Rs
+        let r_dst_msb = instr & (1 << 7) != 0;
+        let r_dst = r_index(instr, 0) | (usize::from(r_dst_msb) << 3);
 
-                if op != 1 && r_dst == Pc as _ {
-                    self.reload_pipeline(bus);
-                }
+        match op {
+            // ADD
+            0 => self.reg.r[r_dst] = self.execute_add_cmn(false, self.reg.r[r_dst], value),
+            // CMP
+            1 => {
+                self.execute_sub_cmp(true, self.reg.r[r_dst], value);
             }
+            // MOV or NOP (MOV R8,R8)
+            2 => self.reg.r[r_dst] = self.execute_mov(false, value),
+            _ => unreachable!(),
+        }
 
-            // TODO: 1S + 1N + 1I
-            LoadPcRel => {
-                // LDR Rd,[PC,#nn]
-                let r_dst = r_index(instr, 8);
-                let offset = instr & 0b1111_1111;
-                let addr = self.reg.r[Pc].wrapping_add(u32::from(offset) * 4);
+        if op != 1 && r_dst == Pc as _ {
+            self.reload_pipeline(bus);
+        }
+    }
 
-                self.reg.r[r_dst] = Self::execute_ldr(bus, addr);
+    /// Thumb.6: Load PC relative.
+    fn execute_thumb6(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // TODO: 1S + 1N + 1I
+        // LDR Rd,[PC,#nn]
+        let r_dst = r_index(instr, 8);
+        let offset = u32::from(instr & 0b1111_1111);
+        let addr = self.reg.r[Pc].wrapping_add(offset * 4);
+
+        self.reg.r[r_dst] = Self::execute_ldr(bus, addr);
+    }
+
+    /// Thumb.7: Load or store with register offset, OR
+    /// Thumb.8: Load or store sign-extended byte or half-word (if bit 9 is set in `instr`).
+    fn execute_thumb7_thumb8(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // TODO: 1S + 1N + 1I for LDR, 2N for STR
+        // Rd,[Rb,Ro]
+        let r = r_index(instr, 0);
+
+        let base_addr = self.reg.r[r_index(instr, 3)];
+        let offset = self.reg.r[r_index(instr, 6)];
+        let addr = base_addr.wrapping_add(offset);
+
+        let thumb7 = instr & (1 << 9) == 0;
+        let op = (instr >> 10) & 0b11;
+
+        if thumb7 {
+            match op {
+                // STR
+                0 => Self::execute_str(bus, addr, self.reg.r[r]),
+                // STRB
+                1 => Self::execute_strb(bus, addr, (self.reg.r[r] & 0xff) as _),
+                // LDR
+                2 => self.reg.r[r] = Self::execute_ldr(bus, addr),
+                // LDRB
+                3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
+                _ => unreachable!(),
             }
-
-            // TODO: 1S + 1N + 1I for LDR, 2N for STR
-            LoadStoreRel | LoadStoreSignExtHword => {
-                // Rd,[Rb,Ro]
-                let r = r_index(instr, 0);
-                let base_addr = self.reg.r[r_index(instr, 3)];
-                let offset = self.reg.r[r_index(instr, 6)];
-                let addr = base_addr.wrapping_add(offset);
-                let format8 = format == LoadStoreSignExtHword;
-                let op = (instr >> 10) & 0b11;
-
-                match op {
-                    // STRH
-                    0 if format8 => Self::execute_strh(bus, addr, (self.reg.r[r] & 0xffff) as _),
-                    // LDSB
-                    1 if format8 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, true),
-                    // LDRH, LDSH
-                    2 | 3 if format8 => self.reg.r[r] = Self::execute_ldrh_ldsh(bus, addr, op == 3),
-
-                    // STR
-                    0 => Self::execute_str(bus, addr, self.reg.r[r]),
-                    // STRB
-                    1 => Self::execute_strb(bus, addr, (self.reg.r[r] & 0xff) as _),
-                    // LDR
-                    2 => self.reg.r[r] = Self::execute_ldr(bus, addr),
-                    // LDRB
-                    3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
-
-                    _ => unreachable!(),
-                }
+        } else {
+            match op {
+                // STRH
+                0 => Self::execute_strh(bus, addr, (self.reg.r[r] & 0xffff) as _),
+                // LDSB
+                1 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, true),
+                // LDRH, LDSH
+                2 | 3 => self.reg.r[r] = Self::execute_ldrh_ldsh(bus, addr, op == 3),
+                _ => unreachable!(),
             }
+        }
+    }
 
-            // TODO: 1S+1N+1I for LDR, or 2N for STR
-            LoadStoreImm => {
-                // Rd,[Rb,#nn]
-                let r = r_index(instr, 0);
-                let base_addr = self.reg.r[r_index(instr, 3)];
-                let offset = (instr >> 6) & 0b1_1111;
-                let addr = base_addr.wrapping_add(offset.into());
-                let word_addr = base_addr.wrapping_add(u32::from(offset) * 4);
-                let op = (instr >> 11) & 0b11;
+    /// Thumb.9: Load or store with immediate offset.
+    fn execute_thumb9(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // TODO: 1S+1N+1I for LDR, or 2N for STR
+        // Rd,[Rb,#nn]
+        let r = r_index(instr, 0);
 
-                match op {
-                    // STR
-                    0 => Self::execute_str(bus, word_addr, self.reg.r[r]),
-                    // LDR
-                    1 => self.reg.r[r] = Self::execute_ldr(bus, word_addr),
-                    // STRB
-                    2 => Self::execute_strb(bus, addr, (self.reg.r[r] & 0xff) as _),
-                    // LDRB
-                    3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
-                    _ => unreachable!(),
-                }
-            }
+        let base_addr = self.reg.r[r_index(instr, 3)];
+        let offset = u32::from((instr >> 6) & 0b1_1111);
+        let addr = base_addr.wrapping_add(offset);
+        let word_addr = base_addr.wrapping_add(offset * 4);
 
-            // 1S+1N+1I for LDR, or 2N for STR
-            LoadStoreHword => {
-                // Rd,[Rb,#nn]
-                let r = r_index(instr, 0);
-                let base_addr = self.reg.r[r_index(instr, 3)];
-                let offset = (instr >> 6) & 0b1_1111;
-                let addr = base_addr.wrapping_add(u32::from(offset) * 2);
-                let op = (instr >> 11) & 1;
+        let op = (instr >> 11) & 0b11;
 
-                match op {
-                    // STRH
-                    0 => Self::execute_strh(bus, addr, (self.reg.r[r] & 0xffff) as _),
-                    // LDRH
-                    1 => self.reg.r[r] = Self::execute_ldrh_ldsh(bus, addr, false),
-                    _ => unreachable!(),
-                }
-            }
+        match op {
+            // STR
+            0 => Self::execute_str(bus, word_addr, self.reg.r[r]),
+            // LDR
+            1 => self.reg.r[r] = Self::execute_ldr(bus, word_addr),
+            // STRB
+            2 => Self::execute_strb(bus, addr, (self.reg.r[r] & 0xff) as _),
+            // LDRB
+            3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
+            _ => unreachable!(),
+        }
+    }
 
-            // 1S+1N+1I for LDR, or 2N for STR
-            LoadStoreSpRel => {
-                // Rd,[SP,#nn]
-                let offset = instr & 0b1111_1111;
-                let addr = self.reg.r[Sp].wrapping_add(u32::from(offset) * 4);
-                let r = r_index(instr, 8);
-                let op = (instr >> 11) & 1;
+    /// Thumb.10: Load or store half-word.
+    fn execute_thumb10(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // 1S+1N+1I for LDR, or 2N for STR
+        // Rd,[Rb,#nn]
+        let r = r_index(instr, 0);
 
-                match op {
-                    // STR
-                    0 => Self::execute_str(bus, addr, self.reg.r[r]),
-                    // LDR
-                    1 => self.reg.r[r] = Self::execute_ldr(bus, addr),
-                    _ => unreachable!(),
-                }
-            }
+        let base_addr = self.reg.r[r_index(instr, 3)];
+        let offset = u32::from((instr >> 6) & 0b1_1111);
+        let addr = base_addr.wrapping_add(offset * 2);
 
-            // TODO: 1S
-            LoadAddr => {
-                // ADD Rd,(PC/SP),#nn
-                let offset = instr & 0b1111_1111;
-                let r_dst = r_index(instr, 8);
-                let op = (instr >> 11) & 1;
-                let base_addr = self.reg.r[if op == 0 { Pc } else { Sp }];
+        let op = (instr >> 11) & 1;
 
-                self.reg.r[r_dst] = self.execute_add_cmn(false, base_addr, offset.into());
-            }
+        match op {
+            // STRH
+            0 => Self::execute_strh(bus, addr, (self.reg.r[r] & 0xffff) as _),
+            // LDRH
+            1 => self.reg.r[r] = Self::execute_ldrh_ldsh(bus, addr, false),
+            _ => unreachable!(),
+        }
+    }
 
-            // TODO: 1S
-            AddSp => {
-                // SP,#nn
-                let offset = (instr & 0b111_1111) * 4;
-                let op = (instr >> 7) & 1;
+    /// Thumb.11: Load or store SP relative.
+    fn execute_thumb11(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // 1S+1N+1I for LDR, or 2N for STR
+        // Rd,[SP,#nn]
+        let offset = u32::from(instr & 0b1111_1111);
+        let addr = self.reg.r[Sp].wrapping_add(offset * 4);
 
-                self.reg.r[Sp] = match op {
-                    // ADD
-                    0 => self.execute_add_cmn(false, self.reg.r[Sp], offset.into()),
-                    // SUB
-                    1 => self.execute_sub_cmp(false, self.reg.r[Sp], offset.into()),
-                    _ => unreachable!(),
-                };
-            }
+        let r = r_index(instr, 8);
+        let op = (instr >> 11) & 1;
 
-            // TODO: nS+1N+1I (POP), (n+1)S+2N+1I (POP PC), or (n-1)S+2N (PUSH)
-            PushPopReg => {
-                let r_list = (instr & 0b1111_1111) as _;
-                let push_lr_pop_pc = instr & (1 << 8) != 0;
-                let op = (instr >> 11) & 1;
+        match op {
+            // STR
+            0 => Self::execute_str(bus, addr, self.reg.r[r]),
+            // LDR
+            1 => self.reg.r[r] = Self::execute_ldr(bus, addr),
+            _ => unreachable!(),
+        }
+    }
 
-                match op {
-                    // PUSH {Rlist}{LR}
-                    0 => self.execute_push(bus, r_list, push_lr_pop_pc),
-                    // POP {Rlist}{PC}
-                    1 => self.execute_pop(bus, r_list, push_lr_pop_pc),
-                    _ => unreachable!(),
-                }
-            }
+    /// Thumb.12: Get relative address.
+    fn execute_thumb12(&mut self, instr: u16) {
+        // TODO: 1S
+        // ADD Rd,(PC/SP),#nn
+        let offset = (instr & 0b1111_1111).into();
+        let r_dst = r_index(instr, 8);
+        let op = (instr >> 11) & 1;
+        let base_addr = self.reg.r[if op == 0 { Pc } else { Sp }];
 
-            MultiLoadStore => todo!(),
-            CondBranch => todo!(),
-            SoftwareInterrupt => self.enter_exception(bus, Exception::SoftwareInterrupt),
-            UncondBranch => todo!(),
-            LongBranchWithLink => todo!(),
-            Undefined => self.enter_exception(bus, Exception::UndefinedInstr),
+        self.reg.r[r_dst] = self.execute_add_cmn(false, base_addr, offset);
+    }
+
+    /// Thumb.13: Add offset to SP.
+    fn execute_thumb13(&mut self, instr: u16) {
+        // TODO: 1S
+        // SP,#nn
+        let offset = ((instr & 0b111_1111) * 4).into();
+        let op = (instr >> 7) & 1;
+
+        self.reg.r[Sp] = match op {
+            // ADD
+            0 => self.execute_add_cmn(false, self.reg.r[Sp], offset),
+            // SUB
+            1 => self.execute_sub_cmp(false, self.reg.r[Sp], offset),
+            _ => unreachable!(),
+        };
+    }
+
+    /// Thumb.14: Push or pop registers.
+    fn execute_thumb14(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // TODO: nS+1N+1I (POP), (n+1)S+2N+1I (POP PC), or (n-1)S+2N (PUSH)
+        let r_list = (instr & 0b1111_1111) as _;
+        let push_lr_pop_pc = instr & (1 << 8) != 0;
+        let op = (instr >> 11) & 1;
+
+        match op {
+            // PUSH {Rlist}{LR}
+            0 => self.execute_push(bus, r_list, push_lr_pop_pc),
+            // POP {Rlist}{PC}
+            1 => self.execute_pop(bus, r_list, push_lr_pop_pc),
+            _ => unreachable!(),
         }
     }
 }
@@ -468,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_move_shifted_reg() {
+    fn execute_thumb1() {
         // LSL{S} Rd,Rs,#Offset
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[1] = 0b10,
@@ -546,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_add_sub() {
+    fn execute_thumb2() {
         // ADD{S} Rd,Rs,Rn
         test_instr!(
             |cpu: &mut Cpu| {
@@ -646,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_mov_cmp_add_sub_imm() {
+    fn execute_thumb3() {
         // MOV{S} Rd,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.cpsr.negative = true,
@@ -690,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_alu_op() {
+    fn execute_thumb4() {
         // AND{S} Rd,Rs
         test_instr!(
             |cpu: &mut Cpu| {
@@ -1236,7 +1218,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_hi_reg_op_branch_exchange() {
+    fn execute_thumb5() {
         // ADD Rd,Rs
         test_instr!(
             |cpu: &mut Cpu| {
@@ -1326,7 +1308,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_load_pc_rel() {
+    fn execute_thumb6() {
         let mut bus = VecBus(vec![0; 88]);
         bus.write_word(52, 0xdead_beef);
         bus.write_word(84, 0xbead_feed);
@@ -1347,7 +1329,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_load_store_rel() {
+    fn execute_thumb7() {
         let mut bus = VecBus(vec![0; 88]);
 
         // STR Rd,[Rb,Ro]
@@ -1413,7 +1395,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_load_store_sign_ext_hword() {
+    fn execute_thumb8() {
         let mut bus = VecBus(vec![0; 22]);
         bus.write_byte(0, 0b0111_1110);
         bus.write_byte(18, 1 << 7);
@@ -1476,7 +1458,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_load_store_imm() {
+    fn execute_thumb9() {
         let mut bus = VecBus(vec![0; 40]);
 
         // STR Rd,[Rb,#nn]
@@ -1521,7 +1503,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_load_store_hword() {
+    fn execute_thumb10() {
         let mut bus = VecBus(vec![0; 40]);
 
         // STRH Rd,[Rb,#nn]
@@ -1546,7 +1528,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_load_store_sp_rel() {
+    fn execute_thumb11() {
         let mut bus = VecBus(vec![0; 40]);
 
         // STR Rd,[SP,#nn]
@@ -1571,7 +1553,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_load_addr() {
+    fn execute_thumb12() {
         // ADD Rd,[PC,#nn]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[Pc] = 20,
@@ -1597,7 +1579,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_add_sp() {
+    fn execute_thumb13() {
         // ADD SP,#nn
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[Sp] = 1,
@@ -1623,7 +1605,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_thumb_push_pop_reg() {
+    fn execute_thumb14() {
         let mut bus = VecBus(vec![0; 40]);
 
         // PUSH {Rlist}{LR}

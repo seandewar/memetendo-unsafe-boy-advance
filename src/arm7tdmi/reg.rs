@@ -226,7 +226,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bank_index_usr_and_sys_mode_same_index() {
+    fn usr_and_sys_mode_same_bank_index() {
         assert_eq!(
             OperationMode::User.bank_index(),
             OperationMode::System.bank_index()

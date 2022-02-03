@@ -22,7 +22,7 @@ fn execute_add_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) ->
 
 #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 fn execute_sub_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) -> u32 {
-    // using overflowing_neg(), check if b == i32::MIN. if it is, we'll overflow negating it here
+    // Using overflowing_neg(), check if b == i32::MIN. If it is, we'll overflow negating it here
     // (-i32::MIN == i32::MIN in 2s complement!), so make sure the overflow flag is set after.
     // c is our implementation detail, so an overflow in c is our fault and isn't handled here.
     let (b_neg, overflow) = (b as i32).overflowing_neg();
@@ -130,7 +130,7 @@ impl Cpu {
         // LSR/ASR #0 is a special case that works like LSR/ASR #32
         let offset = if offset == 0 { 32 } else { offset.into() };
 
-        // a value shifted 32 or more times is either 0 or has all bits set depending on the
+        // A value shifted 32 or more times is either 0 or has all bits set depending on the
         // initial value of the sign bit (due to sign extension)
         let mut result = value as i32;
         let overflow_result = if result.is_negative() {
