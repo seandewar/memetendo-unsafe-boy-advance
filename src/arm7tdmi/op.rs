@@ -1,7 +1,7 @@
 use crate::bus::DataBus;
 
 use super::{
-    reg::NamedGeneralRegister::{Lr, Pc, Sp},
+    reg::{LR_INDEX, PC_INDEX, SP_INDEX},
     Cpu, OperationState,
 };
 
@@ -166,7 +166,7 @@ impl Cpu {
         } else {
             OperationState::Arm
         };
-        self.reg.r[Pc] = pc;
+        self.reg.r[PC_INDEX] = pc;
         self.reload_pipeline(bus);
     }
 
@@ -209,14 +209,14 @@ impl Cpu {
     pub(super) fn execute_push(&mut self, bus: &mut impl DataBus, mut r_list: u8, push_lr: bool) {
         // TODO: what about SP alignment? and should we emulate weird r_list behaviour when its 0?
         if push_lr {
-            self.reg.r[Sp] = self.reg.r[Sp].wrapping_sub(4);
-            bus.write_word(self.reg.r[Sp], self.reg.r[Lr]);
+            self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
+            bus.write_word(self.reg.r[SP_INDEX], self.reg.r[LR_INDEX]);
         }
 
         for r in (0..8).rev() {
             if r_list & (1 << 7) != 0 {
-                self.reg.r[Sp] = self.reg.r[Sp].wrapping_sub(4);
-                bus.write_word(self.reg.r[Sp], self.reg.r[r]);
+                self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
+                bus.write_word(self.reg.r[SP_INDEX], self.reg.r[r]);
             }
 
             r_list <<= 1;
@@ -227,16 +227,16 @@ impl Cpu {
         // TODO: what about SP alignment? and should we emulate weird r_list behaviour when its 0?
         for r in 0..8 {
             if r_list & 1 != 0 {
-                self.reg.r[r] = bus.read_word(self.reg.r[Sp]);
-                self.reg.r[Sp] = self.reg.r[Sp].wrapping_add(4);
+                self.reg.r[r] = bus.read_word(self.reg.r[SP_INDEX]);
+                self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
             }
 
             r_list >>= 1;
         }
 
         if pop_pc {
-            self.reg.r[Pc] = bus.read_word(self.reg.r[Sp]);
-            self.reg.r[Sp] = self.reg.r[Sp].wrapping_add(4);
+            self.reg.r[PC_INDEX] = bus.read_word(self.reg.r[SP_INDEX]);
+            self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
             self.reload_pipeline(bus);
         }
     }

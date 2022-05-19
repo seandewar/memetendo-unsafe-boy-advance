@@ -1,7 +1,7 @@
 use crate::{arm7tdmi::reg::OperationState, bus::DataBus};
 
 use super::{
-    reg::NamedGeneralRegister::{Pc, Sp},
+    reg::{PC_INDEX, SP_INDEX},
     Cpu, Exception,
 };
 
@@ -198,7 +198,7 @@ impl Cpu {
             _ => unreachable!(),
         }
 
-        if op != 1 && r_dst == Pc as _ {
+        if op != 1 && r_dst == PC_INDEX {
             self.reload_pipeline(bus);
         }
     }
@@ -209,7 +209,7 @@ impl Cpu {
         // LDR Rd,[PC,#nn]
         let r_dst = r_index(instr, 8);
         let offset = u32::from(instr & 0b1111_1111);
-        let addr = self.reg.r[Pc].wrapping_add(offset * 4);
+        let addr = self.reg.r[PC_INDEX].wrapping_add(offset * 4);
 
         self.reg.r[r_dst] = Self::execute_ldr(bus, addr);
     }
@@ -305,7 +305,7 @@ impl Cpu {
         // 1S+1N+1I for LDR, or 2N for STR
         // Rd,[SP,#nn]
         let offset = u32::from(instr & 0b1111_1111);
-        let addr = self.reg.r[Sp].wrapping_add(offset * 4);
+        let addr = self.reg.r[SP_INDEX].wrapping_add(offset * 4);
 
         let r = r_index(instr, 8);
         let op = (instr >> 11) & 1;
@@ -326,7 +326,7 @@ impl Cpu {
         let offset = (instr & 0b1111_1111).into();
         let r_dst = r_index(instr, 8);
         let op = (instr >> 11) & 1;
-        let base_addr = self.reg.r[if op == 0 { Pc } else { Sp }];
+        let base_addr = self.reg.r[if op == 0 { PC_INDEX } else { SP_INDEX }];
 
         self.reg.r[r_dst] = self.execute_add_cmn(false, base_addr, offset);
     }
@@ -338,11 +338,11 @@ impl Cpu {
         let offset = ((instr & 0b111_1111) * 4).into();
         let op = (instr >> 7) & 1;
 
-        self.reg.r[Sp] = match op {
+        self.reg.r[SP_INDEX] = match op {
             // ADD
-            0 => self.execute_add_cmn(false, self.reg.r[Sp], offset),
+            0 => self.execute_add_cmn(false, self.reg.r[SP_INDEX], offset),
             // SUB
-            1 => self.execute_sub_cmp(false, self.reg.r[Sp], offset),
+            1 => self.execute_sub_cmp(false, self.reg.r[SP_INDEX], offset),
             _ => unreachable!(),
         };
     }
@@ -375,7 +375,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        arm7tdmi::reg::{GeneralRegisters, NamedGeneralRegister::Lr, StatusRegister},
+        arm7tdmi::reg::{GeneralRegisters, StatusRegister, LR_INDEX},
         bus::{NullBus, VecBus},
     };
 
@@ -1238,7 +1238,7 @@ mod tests {
         );
         test_instr!(
             |cpu: &mut Cpu| {
-                cpu.reg.r[Pc] = 1;
+                cpu.reg.r[PC_INDEX] = 1;
                 cpu.reg.r[10] = 10;
             },
             0b010001_00_1_1_010_111, // ADD PC,R10
@@ -1246,7 +1246,7 @@ mod tests {
         );
         test_instr!(
             |cpu: &mut Cpu| {
-                cpu.reg.r[Pc] = 0;
+                cpu.reg.r[PC_INDEX] = 0;
                 cpu.reg.r[10] = 10;
             },
             0b010001_00_1_1_010_111, // ADD PC,R10
@@ -1274,7 +1274,7 @@ mod tests {
         );
         test_instr!(
             |cpu: &mut Cpu| {
-                cpu.reg.r[Pc] = 10;
+                cpu.reg.r[PC_INDEX] = 10;
                 cpu.reg.r[10] = 10;
             },
             0b010001_01_1_1_010_111, // CMP PC,R10
@@ -1322,7 +1322,7 @@ mod tests {
         );
         test_instr!(
             &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[Pc] = 20,
+            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 20,
             0b01001_000_00010000, // LDR R0,[PC,#64]
             [0xbead_feed, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20],
         );
@@ -1535,7 +1535,7 @@ mod tests {
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| {
-                cpu.reg.r[Sp] = 8;
+                cpu.reg.r[SP_INDEX] = 8;
                 cpu.reg.r[0] = 0xabcd_ef01;
             },
             0b1001_0_000_00000010, // STR R0,[SP,#8]
@@ -1546,7 +1546,7 @@ mod tests {
         // LDR Rd,[SP,#nn]
         test_instr!(
             &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[Sp] = 1,
+            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 1,
             0b1001_1_000_00000100, // LDR R0,[SP,#16]
             [0xabcd_ef01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4],
         );
@@ -1556,19 +1556,19 @@ mod tests {
     fn execute_thumb12() {
         // ADD Rd,[PC,#nn]
         test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[Pc] = 20,
+            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 20,
             0b1010_0_000_11001000, // ADD R0,[PC,#200]
             [220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20],
         );
         test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[Pc] = 0,
+            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 0,
             0b1010_0_000_00000000, // ADD R0,[PC,#0]
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         );
 
         // ADD Rd,[SP,#nn]
         test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[Sp] = 40,
+            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 40,
             0b1010_1_000_11001000, // ADD R0,[SP,#200]
             [240, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40, 0, 4],
         );
@@ -1582,7 +1582,7 @@ mod tests {
     fn execute_thumb13() {
         // ADD SP,#nn
         test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[Sp] = 1,
+            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 1,
             0b10110000_0_0110010, // ADD SP,#200
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 201, 0, 4],
         );
@@ -1593,12 +1593,12 @@ mod tests {
 
         // SUB SP,#nn
         test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[Sp] = 200,
+            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 200,
             0b10110000_1_0110010, // SUB SP,#200
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
         test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[Sp] = 50,
+            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 50,
             0b10110000_1_0110010, // SUB SP,#200
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, u32::MAX - 149, 0, 4],
         );
@@ -1613,7 +1613,7 @@ mod tests {
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| {
-                cpu.reg.r[Sp] = 40;
+                cpu.reg.r[SP_INDEX] = 40;
                 cpu.reg.r[0] = 0xabcd;
                 cpu.reg.r[3] = 0xfefe_0001;
                 cpu.reg.r[7] = 42;
@@ -1629,9 +1629,9 @@ mod tests {
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| {
-                cpu.reg.r[Sp] = 28;
+                cpu.reg.r[SP_INDEX] = 28;
                 cpu.reg.r[1] = 0b1010;
-                cpu.reg.r[Lr] = 40;
+                cpu.reg.r[LR_INDEX] = 40;
             },
             0b1011_0_10_1_00000010, // PUSH {R1,LR}
             [0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 40, 4],
@@ -1643,14 +1643,14 @@ mod tests {
         #[rustfmt::skip]
         test_instr!(
             &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[Sp] = 20,
+            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 20,
             0b1011_1_10_1_00000001, // POP {R1,PC}
             [0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 0, 44],
         );
         #[rustfmt::skip]
         test_instr!(
             &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[Sp] = 28,
+            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 28,
             0b1011_1_10_0_10001001, // POP {R0,R3,R7}
             [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 40, 0, 4],
         );

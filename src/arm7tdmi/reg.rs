@@ -30,16 +30,12 @@ impl OperationMode {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-#[repr(usize)]
-pub(super) enum NamedGeneralRegister {
-    Sp = 13,
-    Lr = 14,
-    Pc = 15,
-}
-
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct GeneralRegisters(pub(crate) [u32; 16]);
+
+pub(super) const SP_INDEX: usize = 13;
+pub(super) const LR_INDEX: usize = 14;
+pub(super) const PC_INDEX: usize = 15;
 
 impl Deref for GeneralRegisters {
     type Target = [u32; 16];
@@ -66,20 +62,6 @@ impl<I: SliceIndex<[u32]>> Index<I> for GeneralRegisters {
 impl<I: SliceIndex<[u32]>> IndexMut<I> for GeneralRegisters {
     fn index_mut(&mut self, index: I) -> &mut Self::Output {
         IndexMut::index_mut(&mut self.0, index)
-    }
-}
-
-impl Index<NamedGeneralRegister> for GeneralRegisters {
-    type Output = u32;
-
-    fn index(&self, index: NamedGeneralRegister) -> &Self::Output {
-        &self.0[index as usize]
-    }
-}
-
-impl IndexMut<NamedGeneralRegister> for GeneralRegisters {
-    fn index_mut(&mut self, index: NamedGeneralRegister) -> &mut Self::Output {
-        &mut self.0[index as usize]
     }
 }
 

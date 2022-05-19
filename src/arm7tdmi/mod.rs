@@ -2,10 +2,7 @@ mod op;
 mod reg;
 mod thumb;
 
-use self::reg::{
-    NamedGeneralRegister::{Lr, Pc},
-    OperationMode, OperationState, Registers,
-};
+use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX};
 
 use strum_macros::EnumIter;
 
@@ -51,7 +48,7 @@ impl Cpu {
         match self.reg.cpsr.state {
             OperationState::Arm => {
                 // TODO: ARM instruction set is unimplemented rn so just do THUMB
-                self.execute_bx(bus, self.reg.r[Pc].wrapping_sub(8));
+                self.execute_bx(bus, self.reg.r[PC_INDEX].wrapping_sub(8));
             }
             OperationState::Thumb => {
                 self.execute_thumb(bus, (instr & 0xffff) as _);
@@ -65,10 +62,10 @@ impl Cpu {
 
         self.pipeline_instrs[0] = self.pipeline_instrs[1];
         self.pipeline_instrs[1] = match self.reg.cpsr.state {
-            OperationState::Thumb => bus.read_hword(self.reg.r[Pc]).into(),
-            OperationState::Arm => bus.read_word(self.reg.r[Pc]),
+            OperationState::Thumb => bus.read_hword(self.reg.r[PC_INDEX]).into(),
+            OperationState::Arm => bus.read_word(self.reg.r[PC_INDEX]),
         };
-        self.reg.r[Pc] = self.reg.r[Pc].wrapping_add(instr_size);
+        self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(instr_size);
 
         instr
     }
@@ -77,16 +74,16 @@ impl Cpu {
     fn reload_pipeline(&mut self, bus: &impl DataBus) {
         let instr_size = self.reg.cpsr.state.instr_size();
 
-        self.reg.r[Pc] = match self.reg.cpsr.state {
+        self.reg.r[PC_INDEX] = match self.reg.cpsr.state {
             OperationState::Thumb => {
-                let pc = self.reg.r[Pc] & !1;
+                let pc = self.reg.r[PC_INDEX] & !1;
                 self.pipeline_instrs[0] = bus.read_hword(pc).into();
                 self.pipeline_instrs[1] = bus.read_hword(pc.wrapping_add(instr_size)).into();
 
                 pc
             }
             OperationState::Arm => {
-                let pc = self.reg.r[Pc] & !0b11;
+                let pc = self.reg.r[PC_INDEX] & !0b11;
                 self.pipeline_instrs[0] = bus.read_word(pc);
                 self.pipeline_instrs[1] = bus.read_word(pc.wrapping_add(instr_size));
 
@@ -148,8 +145,8 @@ impl Cpu {
         self.reg.cpsr.state = OperationState::Arm;
 
         self.reg.spsr = old_cpsr;
-        self.reg.r[Lr] = self.reg.r[Pc];
-        self.reg.r[Pc] = exception.vector_addr();
+        self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX];
+        self.reg.r[PC_INDEX] = exception.vector_addr();
 
         self.reload_pipeline(bus);
     }
@@ -192,8 +189,8 @@ mod tests {
         );
 
         // +8 in PC due to pipe-lining
-        assert_eq!(exception.vector_addr().wrapping_add(8), cpu.reg.r[Pc]);
-        assert_eq!(old_reg.r[Pc], cpu.reg.r[Lr]);
+        assert_eq!(exception.vector_addr().wrapping_add(8), cpu.reg.r[PC_INDEX]);
+        assert_eq!(old_reg.r[PC_INDEX], cpu.reg.r[LR_INDEX]);
         assert_eq!(old_reg.cpsr, cpu.reg.spsr);
         assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
         assert!(cpu.reg.cpsr.irq_disabled);
@@ -209,7 +206,7 @@ mod tests {
     fn reset_works() {
         let mut cpu = Cpu::new();
         cpu.set_cpsr((0b1111 << 28) | 0b1111_1111);
-        cpu.reg.r[Pc] = 0xbeef;
+        cpu.reg.r[PC_INDEX] = 0xbeef;
         let old_reg = cpu.reg;
 
         cpu.reset(&NullBus);
@@ -242,19 +239,19 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.reset(&bus);
         cpu.execute_bx(&bus, 0); // act like the CPU started in THUMB mode
-        assert_eq!(4, cpu.reg.r[Pc]);
+        assert_eq!(4, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
 
         cpu.step(&mut bus);
-        assert_eq!(6, cpu.reg.r[Pc]);
+        assert_eq!(6, cpu.reg.r[PC_INDEX]);
         assert_eq!(100, cpu.reg.r[5]);
 
         cpu.step(&mut bus);
-        assert_eq!(104, cpu.reg.r[Pc]);
+        assert_eq!(104, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
 
         cpu.step(&mut bus);
-        assert_eq!(106, cpu.reg.r[Pc]);
+        assert_eq!(106, cpu.reg.r[PC_INDEX]);
         assert_eq!(33, cpu.reg.r[1]);
     }
 }
