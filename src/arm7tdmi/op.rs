@@ -206,6 +206,35 @@ impl Cpu {
         }
     }
 
+    pub(super) fn execute_stmia(
+        &mut self,
+        bus: &mut impl DataBus,
+        r_base_addr: usize,
+        mut r_list: u8,
+    ) {
+        // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
+        for r in 0..8 {
+            if r_list & 1 != 0 {
+                bus.write_word(self.reg.r[r_base_addr], self.reg.r[r]);
+                self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
+            }
+
+            r_list >>= 1;
+        }
+    }
+
+    pub(super) fn execute_ldmia(&mut self, bus: &impl DataBus, r_base_addr: usize, mut r_list: u8) {
+        // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
+        for r in 0..8 {
+            if r_list & 1 != 0 {
+                self.reg.r[r] = bus.read_word(self.reg.r[r_base_addr]);
+                self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
+            }
+
+            r_list >>= 1;
+        }
+    }
+
     pub(super) fn execute_push(&mut self, bus: &mut impl DataBus, mut r_list: u8, push_lr: bool) {
         // TODO: what about SP alignment? and should we emulate weird r_list behaviour when its 0?
         if push_lr {

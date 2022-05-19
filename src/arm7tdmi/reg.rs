@@ -95,8 +95,8 @@ impl OperationMode {
 
 impl Registers {
     pub(super) fn set_cpsr(&mut self, cpsr: u32) -> Result<(), ()> {
-        self.set_mode(OperationMode::from_repr((cpsr & 0b11111) as u8).ok_or(())?);
-        self.cpsr.state = OperationState::from_repr((cpsr & (1 << 5)) as u8).unwrap();
+        self.set_mode(OperationMode::from_repr((cpsr & 0b11111) as _).ok_or(())?);
+        self.cpsr.state = OperationState::from_repr((cpsr & (1 << 5)) as _).unwrap();
         self.cpsr.negative = cpsr & (1 << 31) != 0;
         self.cpsr.zero = cpsr & (1 << 30) != 0;
         self.cpsr.carry = cpsr & (1 << 29) != 0;

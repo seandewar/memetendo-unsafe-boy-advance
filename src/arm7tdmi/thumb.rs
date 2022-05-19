@@ -32,7 +32,7 @@ impl Cpu {
             (_, 0b1001, _, _, _) => self.execute_thumb11(bus, instr),
             (_, 0b1010, _, _, _) => self.execute_thumb12(instr),
             (_, 0b1011, _, _, _) => self.execute_thumb14(bus, instr),
-            (_, 0b1100, _, _, _) => todo!("multiple load/store"),
+            (_, 0b1100, _, _, _) => self.execute_thumb15(bus, instr),
             (_, 0b1101, _, _, _) => todo!("conditional branch"),
             (_, 0b1111, _, _, _) => todo!("long branch with link"),
             (0b000, _, _, _, _) => self.execute_thumb1(instr),
@@ -170,7 +170,6 @@ impl Cpu {
         let value = self.reg.r[r_src];
 
         let op = (instr >> 8) & 0b11;
-
         if op == 3 {
             // BX Rs (jump)
             self.execute_bx(bus, value);
@@ -354,6 +353,23 @@ impl Cpu {
             0 => self.execute_push(bus, r_list, push_lr_pop_pc),
             // POP {Rlist}{PC}
             1 => self.execute_pop(bus, r_list, push_lr_pop_pc),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Thumb.15: Multiple load or store.
+    fn execute_thumb15(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // TODO: nS+1N+1I for LDM, or (n-1)S+2N for STM
+        // Rb!,{Rlist}
+        let r_list = (instr & 0b1111_1111) as _;
+        let r_base = r_index(instr, 8);
+        let op = (instr >> 11) & 1;
+
+        match op {
+            // STMIA
+            0 => self.execute_stmia(bus, r_base, r_list),
+            // LDMIA
+            1 => self.execute_ldmia(bus, r_base, r_list),
             _ => unreachable!(),
         }
     }
@@ -1440,7 +1456,6 @@ mod tests {
         );
 
         // LDSH Rd,[Rb,Ro]
-        #[rustfmt::skip]
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| {
@@ -1448,7 +1463,7 @@ mod tests {
                 cpu.reg.r[2] = 17;
             },
             0b0101_11_1_010_001_000, // LDSH R0,[R1,R2]
-            [i32::from(1 << 7) as _, 2, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+            [1 << 7, 2, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
         );
     }
 
@@ -1648,6 +1663,37 @@ mod tests {
             |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 28,
             0b1011_1_10_0_10001001, // POP {R0,R3,R7}
             [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 40, 0, 4],
+        );
+    }
+
+    #[test]
+    fn execute_thumb15() {
+        let mut bus = VecBus(vec![0; 40]);
+
+        // STMIA Rb!,{Rlist}
+        #[rustfmt::skip]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0xabcd;
+                cpu.reg.r[3] = 0xfefe_0001;
+                cpu.reg.r[5] = 20;
+                cpu.reg.r[7] = 42;
+            },
+            0b1100_0_101_10001001, // STMIA R5!,{R0,R3,R7}
+            [0xabcd, 0, 0, 0xfefe_0001, 0, 32, 0, 42, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        assert_eq!(0xabcd, bus.read_word(20));
+        assert_eq!(0xfefe_0001, bus.read_word(24));
+        assert_eq!(42, bus.read_word(28));
+
+        // LDMIA Rb!,{Rlist}
+        #[rustfmt::skip]
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| cpu.reg.r[5] = 20,
+            0b1100_1_101_10001001, // LDMIA R5!,{R0,R3,R7}
+            [0xabcd, 0, 0, 0xfefe_0001, 0, 32, 0, 42, 0, 0, 0, 0, 0, 0, 0, 4],
         );
     }
 }
