@@ -13,9 +13,7 @@ impl Cpu {
     pub(super) fn execute_thumb(&mut self, bus: &mut impl DataBus, instr: u16) {
         assert!(self.reg.cpsr.state == OperationState::Thumb);
 
-        #[allow(clippy::cast_possible_truncation)]
-        let hi8 = (instr >> 8) as u8;
-
+        let hi8 = ((instr >> 8) & 0xff) as u8;
         let hi6 = hi8 >> 2;
         let hi5 = hi8 >> 3;
         let hi4 = hi8 >> 4;
@@ -117,10 +115,8 @@ impl Cpu {
         // Rd,Rs
         let r_dst = r_index(instr, 0);
         let value = self.reg.r[r_index(instr, 3)];
+        let offset = (value & 0xff) as _;
         let op = (instr >> 6) & 0b1111;
-
-        #[allow(clippy::cast_possible_truncation)]
-        let offset = value as _;
 
         match op {
             // AND{S}
@@ -171,8 +167,8 @@ impl Cpu {
         //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
         let r_src_msb = instr & (1 << 6) != 0;
         let r_src = r_index(instr, 3) | (usize::from(r_src_msb) << 3);
-
         let value = self.reg.r[r_src];
+
         let op = (instr >> 8) & 0b11;
 
         if op == 3 {
