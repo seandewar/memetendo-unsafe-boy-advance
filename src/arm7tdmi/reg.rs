@@ -24,7 +24,6 @@ impl Default for OperationMode {
 }
 
 impl OperationMode {
-    #[must_use]
     pub(super) fn psr(self) -> u32 {
         self as _
     }
@@ -82,7 +81,6 @@ struct Bank {
 }
 
 impl OperationMode {
-    #[must_use]
     fn bank_index(self) -> usize {
         match self {
             Self::User | Self::System => 0,
@@ -148,12 +146,10 @@ impl Default for OperationState {
 }
 
 impl OperationState {
-    #[must_use]
     fn psr(self) -> u32 {
         self as _
     }
 
-    #[must_use]
     pub(super) fn instr_size(self) -> u32 {
         match self {
             Self::Arm => 4,
@@ -176,7 +172,6 @@ pub(super) struct StatusRegister {
 }
 
 impl StatusRegister {
-    #[must_use]
     pub(super) fn psr(self) -> u32 {
         let mut psr = 0;
         psr |= self.state.psr();
@@ -191,7 +186,6 @@ impl StatusRegister {
         psr
     }
 
-    #[must_use]
     pub(super) fn mode(self) -> OperationMode {
         self.mode
     }

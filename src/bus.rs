@@ -1,12 +1,10 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub trait DataBus {
-    #[must_use]
     fn read_byte(&self, addr: u32) -> u8;
 
     fn write_byte(&mut self, addr: u32, value: u8);
 
-    #[must_use]
     fn read_hword(&self, addr: u32) -> u16 {
         let lo = self.read_byte(addr);
         let hi = self.read_byte(addr.wrapping_add(1));
@@ -19,7 +17,6 @@ pub trait DataBus {
         self.write_byte(addr.wrapping_add(1), (value >> 8) as _);
     }
 
-    #[must_use]
     fn read_word(&self, addr: u32) -> u32 {
         let lo = self.read_hword(addr);
         let hi = self.read_hword(addr.wrapping_add(2));

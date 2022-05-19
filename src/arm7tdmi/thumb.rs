@@ -5,7 +5,6 @@ use super::{
     Cpu, Exception,
 };
 
-#[must_use]
 fn r_index(instr: u16, pos: u8) -> usize {
     (usize::from(instr) >> usize::from(pos)) & 0b111
 }

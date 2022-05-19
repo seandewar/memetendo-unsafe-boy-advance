@@ -113,12 +113,10 @@ enum Exception {
 }
 
 impl Exception {
-    #[must_use]
     fn vector_addr(self) -> u32 {
         self as _
     }
 
-    #[must_use]
     fn entry_mode(self) -> OperationMode {
         match self {
             Self::Reset | Self::SoftwareInterrupt => OperationMode::Supervisor,
@@ -129,7 +127,6 @@ impl Exception {
         }
     }
 
-    #[must_use]
     fn disables_fiq(self) -> bool {
         matches!(self, Self::Reset | Self::FastInterrupt)
     }
