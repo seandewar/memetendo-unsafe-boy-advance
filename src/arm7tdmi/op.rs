@@ -269,10 +269,10 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_cond_branch(&mut self, bus: &impl DataBus, offset: i16, cond: bool) {
+    pub(super) fn execute_cond_branch(&mut self, bus: &impl DataBus, addr_offset: i16, cond: bool) {
         if cond {
             #[allow(clippy::cast_sign_loss)]
-            let uoffset = i32::from(offset) as _;
+            let uoffset = i32::from(addr_offset) as _;
 
             self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(uoffset);
             self.reload_pipeline(bus);

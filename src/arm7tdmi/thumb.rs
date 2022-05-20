@@ -26,7 +26,7 @@ impl Cpu {
             (_, _, _, 0b01_0001, _) => self.execute_thumb5(bus, instr),
             (_, _, 0b0_0011, _, _) => self.execute_thumb2(instr),
             (_, _, 0b0_1001, _, _) => self.execute_thumb6(bus, instr),
-            (_, _, 0b1_1100, _, _) => todo!("unconditional branch"),
+            (_, _, 0b1_1100, _, _) => self.execute_thumb18(bus, instr),
             (_, 0b0101, _, _, _) => self.execute_thumb7_thumb8(bus, instr),
             (_, 0b1000, _, _, _) => self.execute_thumb10(bus, instr),
             (_, 0b1001, _, _, _) => self.execute_thumb11(bus, instr),
@@ -416,6 +416,22 @@ impl Cpu {
         };
 
         self.execute_cond_branch(bus, offset, cond);
+    }
+
+    /// Thumb.18: Unconditional branch.
+    fn execute_thumb18(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // TODO: 2S+1N cycle
+        // B label; operand is 11 bits, so we need to manually sign-extend it.
+        #[allow(clippy::unusual_byte_groupings)]
+        let sign_extended = if instr & (1 << 10) == 0 {
+            instr & 0b111_1111_1111
+        } else {
+            (0b1111_1 << 11) | (instr & 0b111_1111_1111)
+        };
+
+        #[allow(clippy::cast_possible_wrap)]
+        let offset = (sign_extended as i16).wrapping_mul(2);
+        self.execute_cond_branch(bus, offset, true);
     }
 }
 
@@ -1970,6 +1986,33 @@ mod tests {
         test_instr!(
             0b1101_1101_00000011, // #6
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+    }
+
+    #[test]
+    fn execute_thumb18() {
+        // B label
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.cpsr.zero = true,
+            0b11100_00000010100, // #40
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 40 + 4],
+            zero
+        );
+        #[rustfmt::skip]
+        test_instr!(
+            0b11100_11111111111, // #(-2)
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 2 + 4) as _],
+        );
+        test_instr!(
+            |cpu: &mut Cpu| {
+                cpu.reg.cpsr.negative = true;
+                cpu.reg.cpsr.zero = true;
+                cpu.reg.cpsr.carry = true;
+                cpu.reg.cpsr.overflow = true;
+            },
+            0b11100_01111111111, // #2046
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 2046 + 4],
+            negative | zero | carry | overflow
         );
     }
 }
