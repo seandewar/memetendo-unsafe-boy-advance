@@ -159,7 +159,6 @@ impl Cpu {
         result
     }
 
-    /// NOTE: also reloads the pipeline.
     pub(super) fn execute_bx(&mut self, bus: &impl DataBus, pc: u32) {
         self.reg.cpsr.state = if pc & 1 == 0 {
             OperationState::Thumb
@@ -266,6 +265,16 @@ impl Cpu {
         if pop_pc {
             self.reg.r[PC_INDEX] = bus.read_word(self.reg.r[SP_INDEX]);
             self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
+            self.reload_pipeline(bus);
+        }
+    }
+
+    pub(super) fn execute_cond_branch(&mut self, bus: &impl DataBus, offset: i16, cond: bool) {
+        if cond {
+            #[allow(clippy::cast_sign_loss)]
+            let uoffset = i32::from(offset) as _;
+
+            self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(uoffset);
             self.reload_pipeline(bus);
         }
     }

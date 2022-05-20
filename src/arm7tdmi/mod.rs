@@ -144,7 +144,6 @@ impl Cpu {
         self.reg.spsr = old_cpsr;
         self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX];
         self.reg.r[PC_INDEX] = exception.vector_addr();
-
         self.reload_pipeline(bus);
     }
 }
