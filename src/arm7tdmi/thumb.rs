@@ -162,7 +162,7 @@ impl Cpu {
     }
 
     /// Thumb.5: Hi register operations or branch exchange.
-    fn execute_thumb5(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb5(&mut self, bus: &impl DataBus, instr: u16) {
         // TODO: 1S cycle for ADD, MOV, CMP
         //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
         let r_src_msb = instr & (1 << 6) != 0;
@@ -198,7 +198,7 @@ impl Cpu {
     }
 
     /// Thumb.6: Load PC relative.
-    fn execute_thumb6(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb6(&mut self, bus: &impl DataBus, instr: u16) {
         // TODO: 1S + 1N + 1I
         // LDR Rd,[PC,#nn]
         let r_dst = r_index(instr, 8);
@@ -375,7 +375,7 @@ impl Cpu {
     }
 
     /// Thumb.16: Conditional branch.
-    fn execute_thumb16(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb16(&mut self, bus: &impl DataBus, instr: u16) {
         // TODO: 2S+1N if true (jumped) or 1S if false
         // label
         let offset = i16::from((instr & 0b1111_1111) as i8).wrapping_mul(2);
@@ -419,7 +419,7 @@ impl Cpu {
     }
 
     /// Thumb.18: Unconditional branch.
-    fn execute_thumb18(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb18(&mut self, bus: &impl DataBus, instr: u16) {
         // TODO: 2S+1N
         // B label; operand is 11 bits, so we need to manually sign-extend it.
         #[allow(clippy::unusual_byte_groupings)]
@@ -436,7 +436,7 @@ impl Cpu {
     }
 
     /// Thumb.19: Long branch with link.
-    fn execute_thumb19(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb19(&mut self, bus: &impl DataBus, instr: u16) {
         // TODO: 3S+1N (first opcode 1S, second opcode 2S+1N)
         // BL label
         let offset_part = instr & 0b111_1111_1111;
