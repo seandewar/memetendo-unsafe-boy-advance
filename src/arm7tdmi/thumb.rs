@@ -34,7 +34,7 @@ impl Cpu {
             (_, 0b1011, _, _, _) => self.execute_thumb14(bus, instr),
             (_, 0b1100, _, _, _) => self.execute_thumb15(bus, instr),
             (_, 0b1101, _, _, _) => self.execute_thumb16(bus, instr),
-            (_, 0b1111, _, _, _) => todo!("long branch with link"),
+            (_, 0b1111, _, _, _) => self.execute_thumb19(bus, instr),
             (0b000, _, _, _, _) => self.execute_thumb1(instr),
             (0b001, _, _, _, _) => self.execute_thumb3(instr),
             (0b011, _, _, _, _) => self.execute_thumb9(bus, instr),
@@ -415,12 +415,12 @@ impl Cpu {
             _ => unreachable!(),
         };
 
-        self.execute_cond_branch(bus, offset, cond);
+        self.execute_branch(bus, offset, cond);
     }
 
     /// Thumb.18: Unconditional branch.
     fn execute_thumb18(&mut self, bus: &mut impl DataBus, instr: u16) {
-        // TODO: 2S+1N cycle
+        // TODO: 2S+1N
         // B label; operand is 11 bits, so we need to manually sign-extend it.
         #[allow(clippy::unusual_byte_groupings)]
         let sign_extended = if instr & (1 << 10) == 0 {
@@ -431,7 +431,18 @@ impl Cpu {
 
         #[allow(clippy::cast_possible_wrap)]
         let offset = (sign_extended as i16).wrapping_mul(2);
-        self.execute_cond_branch(bus, offset, true);
+
+        self.execute_branch(bus, offset, true);
+    }
+
+    /// Thumb.19: Long branch with link.
+    fn execute_thumb19(&mut self, bus: &mut impl DataBus, instr: u16) {
+        // TODO: 3S+1N (first opcode 1S, second opcode 2S+1N)
+        // BL label
+        let offset_part = instr & 0b111_1111_1111;
+        let hi_part = instr & (1 << 11) == 0;
+
+        self.execute_bl(bus, hi_part, offset_part);
     }
 }
 
@@ -2013,6 +2024,21 @@ mod tests {
             0b11100_01111111111, // #2046
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 2046 + 4],
             negative | zero | carry | overflow
+        );
+    }
+
+    #[test]
+    fn execute_thumb19() {
+        // BL label
+        test_instr!(
+            0b11110_00000010100, // #14000h (hi part)
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x14000 + 4, 4],
+        );
+        #[rustfmt::skip]
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[LR_INDEX] = 0x14004,
+            0b11111_11111111111, // #FFEh (lo part)
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0x14004 + 0xffe + 4],
         );
     }
 }

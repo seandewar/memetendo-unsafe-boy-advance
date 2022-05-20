@@ -269,12 +269,27 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_cond_branch(&mut self, bus: &impl DataBus, addr_offset: i16, cond: bool) {
+    pub(super) fn execute_branch(&mut self, bus: &impl DataBus, addr_offset: i16, cond: bool) {
         if cond {
             #[allow(clippy::cast_sign_loss)]
-            let uoffset = i32::from(addr_offset) as _;
+            let addr_offset = i32::from(addr_offset) as _;
 
-            self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(uoffset);
+            self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(addr_offset);
+            self.reload_pipeline(bus);
+        }
+    }
+
+    pub(super) fn execute_bl(&mut self, bus: &impl DataBus, hi_part: bool, addr_offset_part: u16) {
+        let addr_offset_part = u32::from(addr_offset_part);
+
+        if hi_part {
+            self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_add(addr_offset_part << 12);
+        } else {
+            // Adjust for pipelining, which has us two instructions ahead.
+            let return_addr = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
+
+            self.reg.r[PC_INDEX] = self.reg.r[LR_INDEX].wrapping_add(addr_offset_part << 1);
+            self.reg.r[LR_INDEX] = return_addr | 1;
             self.reload_pipeline(bus);
         }
     }
