@@ -158,13 +158,13 @@ impl Cpu {
         result
     }
 
-    pub(super) fn execute_bx(&mut self, bus: &impl DataBus, pc: u32) {
-        self.reg.cpsr.state = if pc & 1 == 0 {
-            OperationState::Thumb
-        } else {
+    pub(super) fn execute_bx(&mut self, bus: &impl DataBus, addr: u32) {
+        self.reg.cpsr.state = if addr & 1 == 0 {
             OperationState::Arm
+        } else {
+            OperationState::Thumb
         };
-        self.reg.r[PC_INDEX] = pc;
+        self.reg.r[PC_INDEX] = addr;
         self.reload_pipeline(bus);
     }
 
@@ -186,7 +186,9 @@ impl Cpu {
 
     #[allow(clippy::cast_sign_loss)]
     pub(super) fn execute_ldrh_ldsh(bus: &impl DataBus, addr: u32, sign_extend: bool) -> u32 {
+        // TODO: emulate weird misaligned read behaviour? (LDRH Rd,[odd] -> LDRH Rd,[odd-1] ROR 8)
         let result = bus.read_hword(addr & !1);
+
         if sign_extend {
             i32::from(result) as _
         } else {
@@ -197,6 +199,7 @@ impl Cpu {
     #[allow(clippy::cast_sign_loss)]
     pub(super) fn execute_ldrb_ldsb(bus: &impl DataBus, addr: u32, sign_extend: bool) -> u32 {
         let result = bus.read_byte(addr);
+
         if sign_extend {
             i32::from(result) as _
         } else {
@@ -213,7 +216,7 @@ impl Cpu {
         // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
             if r_list & 1 != 0 {
-                bus.write_word(self.reg.r[r_base_addr], self.reg.r[r]);
+                bus.write_word(self.reg.r[r_base_addr] & !0b11, self.reg.r[r]);
                 self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
             }
 
@@ -225,7 +228,7 @@ impl Cpu {
         // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
             if r_list & 1 != 0 {
-                self.reg.r[r] = bus.read_word(self.reg.r[r_base_addr]);
+                self.reg.r[r] = bus.read_word(self.reg.r[r_base_addr] & !0b11);
                 self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
             }
 
@@ -234,16 +237,16 @@ impl Cpu {
     }
 
     pub(super) fn execute_push(&mut self, bus: &mut impl DataBus, mut r_list: u8, push_lr: bool) {
-        // TODO: what about SP alignment? and should we emulate weird r_list behaviour when its 0?
+        // TODO: emulate weird r_list behaviour when its 0?
         if push_lr {
             self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
-            bus.write_word(self.reg.r[SP_INDEX], self.reg.r[LR_INDEX]);
+            bus.write_word(self.reg.r[SP_INDEX] & !0b11, self.reg.r[LR_INDEX]);
         }
 
         for r in (0..8).rev() {
             if r_list & (1 << 7) != 0 {
                 self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
-                bus.write_word(self.reg.r[SP_INDEX], self.reg.r[r]);
+                bus.write_word(self.reg.r[SP_INDEX] & !0b11, self.reg.r[r]);
             }
 
             r_list <<= 1;
@@ -251,10 +254,10 @@ impl Cpu {
     }
 
     pub(super) fn execute_pop(&mut self, bus: &impl DataBus, mut r_list: u8, pop_pc: bool) {
-        // TODO: what about SP alignment? and should we emulate weird r_list behaviour when its 0?
+        // TODO: emulate weird r_list behaviour when its 0?
         for r in 0..8 {
             if r_list & 1 != 0 {
-                self.reg.r[r] = bus.read_word(self.reg.r[SP_INDEX]);
+                self.reg.r[r] = bus.read_word(self.reg.r[SP_INDEX] & !0b11);
                 self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
             }
 
@@ -262,7 +265,7 @@ impl Cpu {
         }
 
         if pop_pc {
-            self.reg.r[PC_INDEX] = bus.read_word(self.reg.r[SP_INDEX]);
+            self.reg.r[PC_INDEX] = bus.read_word(self.reg.r[SP_INDEX] & !0b11);
             self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
             self.reload_pipeline(bus);
         }
@@ -288,7 +291,7 @@ impl Cpu {
             let return_addr = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
 
             self.reg.r[PC_INDEX] = self.reg.r[LR_INDEX].wrapping_add(addr_offset_part << 1);
-            self.reg.r[LR_INDEX] = return_addr | 1;
+            self.reg.r[LR_INDEX] = return_addr | 1; // OR 1 is used to indicate THUMB.
             self.reload_pipeline(bus);
         }
     }

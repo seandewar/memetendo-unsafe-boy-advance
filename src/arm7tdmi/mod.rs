@@ -236,19 +236,19 @@ mod tests {
     #[test]
     fn step_works() {
         let mut bus = VecBus(vec![0; 102]);
-        bus.write_hword(0, 0b001_00_101_01100100); // MOV R5,#100
+        bus.write_hword(0, 0b001_00_101_01100101); // MOV R5,#101
         bus.write_hword(2, 0b010001_11_0_0_101_000); // BX R5
         bus.write_hword(100, 0b001_00_001_00100001); // MOV R1,#33
 
         let mut cpu = Cpu::new();
         cpu.reset(&bus);
-        cpu.execute_bx(&bus, 0); // act like the CPU started in THUMB mode
+        cpu.execute_bx(&bus, 1); // Act like the CPU started in THUMB mode.
         assert_eq!(4, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
 
         cpu.step(&mut bus);
         assert_eq!(6, cpu.reg.r[PC_INDEX]);
-        assert_eq!(100, cpu.reg.r[5]);
+        assert_eq!(101, cpu.reg.r[5]);
 
         cpu.step(&mut bus);
         assert_eq!(104, cpu.reg.r[PC_INDEX]);

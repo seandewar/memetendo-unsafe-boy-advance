@@ -468,7 +468,7 @@ mod tests {
         // Act like the CPU started in THUMB mode with interrupts enabled.
         cpu.reg.cpsr.irq_disabled = false;
         cpu.reg.cpsr.fiq_disabled = false;
-        cpu.execute_bx(bus, 0);
+        cpu.execute_bx(bus, 1);
         before(&mut cpu);
         cpu.execute_thumb(bus, instr);
 
@@ -482,7 +482,7 @@ mod tests {
             $instr:expr,
             $expected_rs:expr,
             $($expected_cspr_flag:ident)|*
-        ) => {
+        ) => {{
             let mut expected_cpsr = StatusRegister::default();
             expected_cpsr.state = OperationState::Thumb;
             $(
@@ -511,14 +511,16 @@ mod tests {
                 cpu.reg.cpsr.fiq_disabled, expected_cpsr.fiq_disabled,
                 "fiq_disabled flag"
             );
-        };
+
+            cpu
+        }};
 
         ($before:expr, $instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
-            test_instr!(&mut NullBus, $before, $instr, $expected_rs, $($expected_cspr_flag)|*);
+            test_instr!(&mut NullBus, $before, $instr, $expected_rs, $($expected_cspr_flag)|*)
         };
 
         ($instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
-            test_instr!(&mut NullBus, |_| {}, $instr, $expected_rs, $($expected_cspr_flag)|*);
+            test_instr!(&mut NullBus, |_| {}, $instr, $expected_rs, $($expected_cspr_flag)|*)
         };
 
         (@expand $expected_cspr:expr, $flag:ident) => (
@@ -527,6 +529,7 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn execute_thumb1() {
         // LSL{S} Rd,Rs,#Offset
         test_instr!(
@@ -589,7 +592,6 @@ mod tests {
             [0, 0, 0, 0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 4],
             negative
         );
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[5] = !(1 << 31),
             0b000_10_00001_101_000, // R0,R5,#1
@@ -605,6 +607,7 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn execute_thumb2() {
         // ADD{S} Rd,Rs,Rn
         test_instr!(
@@ -640,7 +643,6 @@ mod tests {
             [-5 as _, -10 as _, -15 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
             negative | carry
         );
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[0] = i32::MIN as _;
@@ -652,7 +654,6 @@ mod tests {
         );
 
         // SUB{S} Rd,Rs,Rn
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[3] = i32::MIN as _;
@@ -677,7 +678,6 @@ mod tests {
             [5, -10 as _, -15 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
             negative | carry
         );
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[0] = 1;
@@ -749,6 +749,7 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn execute_thumb4() {
         // AND{S} Rd,Rs
         test_instr!(
@@ -765,7 +766,6 @@ mod tests {
             [0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
             zero
         );
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[1] = i32::MIN as _;
@@ -892,7 +892,6 @@ mod tests {
             [u32::MAX, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
             negative | carry
         );
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[0] = 1 << 31;
@@ -1043,7 +1042,6 @@ mod tests {
         );
 
         // ROR{S} Rd,Rs
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[0] = 2;
@@ -1126,7 +1124,6 @@ mod tests {
             [0, 0, 0, -10 as _, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 4],
         );
         // negating i32::MIN isn't possible, and it should also set the overflow flag
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[3] = i32::MIN as _,
             0b010000_1001_011_111, // R7,R3
@@ -1267,7 +1264,6 @@ mod tests {
             [0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
             zero
         );
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.r[0] = u32::MAX;
@@ -1285,7 +1281,6 @@ mod tests {
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
             zero
         );
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[3] = 0b1111_0000,
             0b010000_1111_011_000, // R0,R3
@@ -1372,16 +1367,19 @@ mod tests {
         );
 
         // BX Rs
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 0b110,
+        let cpu = test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[1] = 0b111,
             0b010001_11_1_0_001_101, // R1
-            [0, 0b110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0b110 + 4],
+            [0, 0b111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0b110 + 4],
         );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[13] = 0b111,
+        assert_eq!(cpu.reg.cpsr.state, OperationState::Thumb);
+
+        let cpu = test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[13] = 0b110,
             0b010001_11_0_1_101_000, // R13
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0b111, 0, 0b100 + 8],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0b110, 0, 0b100 + 8],
         );
+        assert_eq!(cpu.reg.cpsr.state, OperationState::Arm);
     }
 
     #[test]
@@ -1472,6 +1470,7 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn execute_thumb8() {
         let mut bus = VecBus(vec![0; 22]);
         bus.write_byte(0, 0b0111_1110);
@@ -1493,7 +1492,6 @@ mod tests {
         assert_eq!(0, bus.read_hword(16));
 
         // LDSB Rd,[Rb,Ro]
-        #[rustfmt::skip]
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| {
@@ -1681,27 +1679,26 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn execute_thumb14() {
         let mut bus = VecBus(vec![0; 40]);
 
         // PUSH {Rlist}{LR}
-        #[rustfmt::skip]
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| {
-                cpu.reg.r[SP_INDEX] = 40;
+                cpu.reg.r[SP_INDEX] = 41; // Mis-aligned SP.
                 cpu.reg.r[0] = 0xabcd;
                 cpu.reg.r[3] = 0xfefe_0001;
                 cpu.reg.r[7] = 42;
             },
             0b1011_0_10_0_10001001, // {R0,R3,R7}
-            [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 28, 0, 4],
+            [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 29, 0, 4],
         );
         assert_eq!(42, bus.read_word(36));
         assert_eq!(0xfefe_0001, bus.read_word(32));
         assert_eq!(0xabcd, bus.read_word(28));
 
-        #[rustfmt::skip]
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| {
@@ -1716,28 +1713,26 @@ mod tests {
         assert_eq!(0b1010, bus.read_word(20));
 
         // POP {Rlist}{PC}
-        #[rustfmt::skip]
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 20,
             0b1011_1_10_1_00000001, // {R1,PC}
             [0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 0, 44],
         );
-        #[rustfmt::skip]
         test_instr!(
             &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 28,
+            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 31, // Mis-aligned SP.
             0b1011_1_10_0_10001001, // {R0,R3,R7}
-            [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 40, 0, 4],
+            [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 43, 0, 4],
         );
     }
 
     #[test]
+    #[rustfmt::skip]
     fn execute_thumb15() {
         let mut bus = VecBus(vec![0; 40]);
 
         // STMIA Rb!,{Rlist}
-        #[rustfmt::skip]
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| {
@@ -1753,17 +1748,34 @@ mod tests {
         assert_eq!(0xfefe_0001, bus.read_word(24));
         assert_eq!(42, bus.read_word(28));
 
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| {
+                cpu.reg.r[0] = 0xbeef_fefe;
+                cpu.reg.r[5] = 11; // Mis-aligned Rb.
+            },
+            0b1100_0_101_00000001, // R5!,{R0}
+            [0xbeef_fefe, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
+        assert_eq!(0xbeef_fefe, bus.read_word(8));
+
         // LDMIA Rb!,{Rlist}
-        #[rustfmt::skip]
         test_instr!(
             &mut bus,
             |cpu: &mut Cpu| cpu.reg.r[5] = 20,
             0b1100_1_101_10001001, // R5!,{R0,R3,R7}
             [0xabcd, 0, 0, 0xfefe_0001, 0, 32, 0, 42, 0, 0, 0, 0, 0, 0, 0, 4],
         );
+        test_instr!(
+            &mut bus,
+            |cpu: &mut Cpu| cpu.reg.r[5] = 11, // Mis-aligned Rb.
+            0b1100_1_101_00000001, // R5!,{R0}
+            [0xbeef_fefe, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
+        );
     }
 
     #[test]
+    #[rustfmt::skip]
     fn execute_thumb16() {
         // BEQ label
         test_instr!(
@@ -1778,7 +1790,6 @@ mod tests {
         );
 
         // BNE label
-        #[rustfmt::skip]
         test_instr!(
             0b1101_0001_11101100, // #(-40)
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 40 + 4) as _],
@@ -1803,7 +1814,6 @@ mod tests {
         );
 
         // BCC/BLO label
-        #[rustfmt::skip]
         test_instr!(
             0b1101_0011_10000000, // #(-256)
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 256 + 4) as _],
@@ -1840,7 +1850,6 @@ mod tests {
         );
 
         // BVS label
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.cpsr.overflow = true,
             0b1101_0110_11111101, // #(-6)
@@ -1853,7 +1862,6 @@ mod tests {
         );
 
         // BVC label
-        #[rustfmt::skip]
         test_instr!(
             0b1101_0111_00000011, // #6
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 6 + 4],
@@ -1866,7 +1874,6 @@ mod tests {
         );
 
         // BHI label
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.cpsr.carry = true,
             0b1101_1000_11111101, // #(-6)
@@ -1894,7 +1901,6 @@ mod tests {
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
             carry
         );
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| {
                 cpu.reg.cpsr.carry = true;
@@ -1904,7 +1910,6 @@ mod tests {
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 6 + 4) as _],
             carry | zero
         );
-        #[rustfmt::skip]
         test_instr!(
             0b1101_1001_11111101, // #(-6)
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 6 + 4) as _],
@@ -2007,6 +2012,7 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn execute_thumb18() {
         // B label
         test_instr!(
@@ -2015,7 +2021,6 @@ mod tests {
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 40 + 4],
             zero
         );
-        #[rustfmt::skip]
         test_instr!(
             0b11100_11111111111, // #(-2)
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 2 + 4) as _],
@@ -2034,13 +2039,13 @@ mod tests {
     }
 
     #[test]
+    #[rustfmt::skip]
     fn execute_thumb19() {
         // BL label
         test_instr!(
             0b11110_00000010100, // #14000h (hi part)
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x14000 + 4, 4],
         );
-        #[rustfmt::skip]
         test_instr!(
             |cpu: &mut Cpu| cpu.reg.r[LR_INDEX] = 0x14004,
             0b11111_11111111111, // #FFEh (lo part)
