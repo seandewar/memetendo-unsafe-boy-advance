@@ -1,4 +1,4 @@
-use crate::bus::DataBus;
+use crate::bus::{Bus, BusAlignedExt};
 
 use super::{
     reg::{LR_INDEX, PC_INDEX, SP_INDEX},
@@ -158,7 +158,7 @@ impl Cpu {
         result
     }
 
-    pub(super) fn execute_bx(&mut self, bus: &impl DataBus, addr: u32) {
+    pub(super) fn execute_bx(&mut self, bus: &impl Bus, addr: u32) {
         self.reg.cpsr.state = if addr & 1 == 0 {
             OperationState::Arm
         } else {
@@ -168,26 +168,26 @@ impl Cpu {
         self.reload_pipeline(bus);
     }
 
-    pub(super) fn execute_str(bus: &mut impl DataBus, addr: u32, value: u32) {
-        bus.write_word(addr & !0b11, value);
+    pub(super) fn execute_str(bus: &mut impl Bus, addr: u32, value: u32) {
+        bus.write_word_aligned(addr, value);
     }
 
-    pub(super) fn execute_strh(bus: &mut impl DataBus, addr: u32, value: u16) {
-        bus.write_hword(addr & !1, value);
+    pub(super) fn execute_strh(bus: &mut impl Bus, addr: u32, value: u16) {
+        bus.write_hword_aligned(addr, value);
     }
 
-    pub(super) fn execute_strb(bus: &mut impl DataBus, addr: u32, value: u8) {
+    pub(super) fn execute_strb(bus: &mut impl Bus, addr: u32, value: u8) {
         bus.write_byte(addr, value);
     }
 
-    pub(super) fn execute_ldr(bus: &impl DataBus, addr: u32) -> u32 {
-        bus.read_word(addr & !0b11)
+    pub(super) fn execute_ldr(bus: &impl Bus, addr: u32) -> u32 {
+        bus.read_word_aligned(addr)
     }
 
     #[allow(clippy::cast_sign_loss)]
-    pub(super) fn execute_ldrh_ldsh(bus: &impl DataBus, addr: u32, sign_extend: bool) -> u32 {
+    pub(super) fn execute_ldrh_ldsh(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
         // TODO: emulate weird misaligned read behaviour? (LDRH Rd,[odd] -> LDRH Rd,[odd-1] ROR 8)
-        let result = bus.read_hword(addr & !1);
+        let result = bus.read_hword_aligned(addr);
 
         if sign_extend {
             i32::from(result) as _
@@ -197,7 +197,7 @@ impl Cpu {
     }
 
     #[allow(clippy::cast_sign_loss)]
-    pub(super) fn execute_ldrb_ldsb(bus: &impl DataBus, addr: u32, sign_extend: bool) -> u32 {
+    pub(super) fn execute_ldrb_ldsb(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
         let result = bus.read_byte(addr);
 
         if sign_extend {
@@ -207,16 +207,11 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_stmia(
-        &mut self,
-        bus: &mut impl DataBus,
-        r_base_addr: usize,
-        mut r_list: u8,
-    ) {
+    pub(super) fn execute_stmia(&mut self, bus: &mut impl Bus, r_base_addr: usize, mut r_list: u8) {
         // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
             if r_list & 1 != 0 {
-                bus.write_word(self.reg.r[r_base_addr] & !0b11, self.reg.r[r]);
+                bus.write_word_aligned(self.reg.r[r_base_addr], self.reg.r[r]);
                 self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
             }
 
@@ -224,11 +219,11 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_ldmia(&mut self, bus: &impl DataBus, r_base_addr: usize, mut r_list: u8) {
+    pub(super) fn execute_ldmia(&mut self, bus: &impl Bus, r_base_addr: usize, mut r_list: u8) {
         // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
             if r_list & 1 != 0 {
-                self.reg.r[r] = bus.read_word(self.reg.r[r_base_addr] & !0b11);
+                self.reg.r[r] = bus.read_word_aligned(self.reg.r[r_base_addr]);
                 self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
             }
 
@@ -236,28 +231,28 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_push(&mut self, bus: &mut impl DataBus, mut r_list: u8, push_lr: bool) {
+    pub(super) fn execute_push(&mut self, bus: &mut impl Bus, mut r_list: u8, push_lr: bool) {
         // TODO: emulate weird r_list behaviour when its 0?
         if push_lr {
             self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
-            bus.write_word(self.reg.r[SP_INDEX] & !0b11, self.reg.r[LR_INDEX]);
+            bus.write_word_aligned(self.reg.r[SP_INDEX], self.reg.r[LR_INDEX]);
         }
 
         for r in (0..8).rev() {
             if r_list & (1 << 7) != 0 {
                 self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
-                bus.write_word(self.reg.r[SP_INDEX] & !0b11, self.reg.r[r]);
+                bus.write_word_aligned(self.reg.r[SP_INDEX], self.reg.r[r]);
             }
 
             r_list <<= 1;
         }
     }
 
-    pub(super) fn execute_pop(&mut self, bus: &impl DataBus, mut r_list: u8, pop_pc: bool) {
+    pub(super) fn execute_pop(&mut self, bus: &impl Bus, mut r_list: u8, pop_pc: bool) {
         // TODO: emulate weird r_list behaviour when its 0?
         for r in 0..8 {
             if r_list & 1 != 0 {
-                self.reg.r[r] = bus.read_word(self.reg.r[SP_INDEX] & !0b11);
+                self.reg.r[r] = bus.read_word_aligned(self.reg.r[SP_INDEX]);
                 self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
             }
 
@@ -265,13 +260,13 @@ impl Cpu {
         }
 
         if pop_pc {
-            self.reg.r[PC_INDEX] = bus.read_word(self.reg.r[SP_INDEX] & !0b11);
+            self.reg.r[PC_INDEX] = bus.read_word_aligned(self.reg.r[SP_INDEX]);
             self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
             self.reload_pipeline(bus);
         }
     }
 
-    pub(super) fn execute_branch(&mut self, bus: &impl DataBus, addr_offset: i16, cond: bool) {
+    pub(super) fn execute_branch(&mut self, bus: &impl Bus, addr_offset: i16, cond: bool) {
         if cond {
             #[allow(clippy::cast_sign_loss)]
             let addr_offset = i32::from(addr_offset) as _;
@@ -281,7 +276,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_bl(&mut self, bus: &impl DataBus, hi_part: bool, addr_offset_part: u16) {
+    pub(super) fn execute_bl(&mut self, bus: &impl Bus, hi_part: bool, addr_offset_part: u16) {
         let addr_offset_part = u32::from(addr_offset_part);
 
         if hi_part {

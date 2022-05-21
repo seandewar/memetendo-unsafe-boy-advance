@@ -1,4 +1,4 @@
-use crate::{arm7tdmi::reg::OperationState, bus::DataBus};
+use crate::{arm7tdmi::reg::OperationState, bus::Bus};
 
 use super::{
     reg::{PC_INDEX, SP_INDEX},
@@ -10,7 +10,7 @@ fn r_index(instr: u16, pos: u8) -> usize {
 }
 
 impl Cpu {
-    pub(super) fn execute_thumb(&mut self, bus: &mut impl DataBus, instr: u16) {
+    pub(super) fn execute_thumb(&mut self, bus: &mut impl Bus, instr: u16) {
         assert!(self.reg.cpsr.state == OperationState::Thumb);
 
         let hi8 = ((instr >> 8) & 0xff) as u8;
@@ -162,7 +162,7 @@ impl Cpu {
     }
 
     /// Thumb.5: Hi register operations or branch exchange.
-    fn execute_thumb5(&mut self, bus: &impl DataBus, instr: u16) {
+    fn execute_thumb5(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 1S cycle for ADD, MOV, CMP
         //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
         let r_src_msb = instr & (1 << 6) != 0;
@@ -198,7 +198,7 @@ impl Cpu {
     }
 
     /// Thumb.6: Load PC relative.
-    fn execute_thumb6(&mut self, bus: &impl DataBus, instr: u16) {
+    fn execute_thumb6(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 1S + 1N + 1I
         // LDR Rd,[PC,#nn]
         let r_dst = r_index(instr, 8);
@@ -210,7 +210,7 @@ impl Cpu {
 
     /// Thumb.7: Load or store with register offset, OR
     /// Thumb.8: Load or store sign-extended byte or half-word (if bit 9 is set in `instr`).
-    fn execute_thumb7_thumb8(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb7_thumb8(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: 1S + 1N + 1I for LDR, 2N for STR
         // Rd,[Rb,Ro]
         let r = r_index(instr, 0);
@@ -248,7 +248,7 @@ impl Cpu {
     }
 
     /// Thumb.9: Load or store with immediate offset.
-    fn execute_thumb9(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb9(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: 1S+1N+1I for LDR, or 2N for STR
         // Rd,[Rb,#nn]
         let r = r_index(instr, 0);
@@ -274,7 +274,7 @@ impl Cpu {
     }
 
     /// Thumb.10: Load or store half-word.
-    fn execute_thumb10(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb10(&mut self, bus: &mut impl Bus, instr: u16) {
         // 1S+1N+1I for LDR, or 2N for STR
         // Rd,[Rb,#nn]
         let r = r_index(instr, 0);
@@ -295,7 +295,7 @@ impl Cpu {
     }
 
     /// Thumb.11: Load or store SP relative.
-    fn execute_thumb11(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb11(&mut self, bus: &mut impl Bus, instr: u16) {
         // 1S+1N+1I for LDR, or 2N for STR
         // Rd,[SP,#nn]
         let offset = u32::from(instr & 0b1111_1111);
@@ -342,7 +342,7 @@ impl Cpu {
     }
 
     /// Thumb.14: Push or pop registers.
-    fn execute_thumb14(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: nS+1N+1I (POP), (n+1)S+2N+1I (POP PC), or (n-1)S+2N (PUSH)
         let r_list = (instr & 0b1111_1111) as _;
         let push_lr_pop_pc = instr & (1 << 8) != 0;
@@ -358,7 +358,7 @@ impl Cpu {
     }
 
     /// Thumb.15: Multiple load or store.
-    fn execute_thumb15(&mut self, bus: &mut impl DataBus, instr: u16) {
+    fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: nS+1N+1I for LDM, or (n-1)S+2N for STM
         // Rb!,{Rlist}
         let r_list = (instr & 0b1111_1111) as _;
@@ -375,7 +375,7 @@ impl Cpu {
     }
 
     /// Thumb.16: Conditional branch.
-    fn execute_thumb16(&mut self, bus: &impl DataBus, instr: u16) {
+    fn execute_thumb16(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 2S+1N if true (jumped) or 1S if false
         // label
         let offset = i16::from((instr & 0b1111_1111) as i8).wrapping_mul(2);
@@ -419,7 +419,7 @@ impl Cpu {
     }
 
     /// Thumb.18: Unconditional branch.
-    fn execute_thumb18(&mut self, bus: &impl DataBus, instr: u16) {
+    fn execute_thumb18(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 2S+1N
         // B label; operand is 11 bits, so we need to manually sign-extend it.
         #[allow(clippy::unusual_byte_groupings)]
@@ -436,7 +436,7 @@ impl Cpu {
     }
 
     /// Thumb.19: Long branch with link.
-    fn execute_thumb19(&mut self, bus: &impl DataBus, instr: u16) {
+    fn execute_thumb19(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 3S+1N (first opcode 1S, second opcode 2S+1N)
         // BL label
         let offset_part = instr & 0b111_1111_1111;
@@ -458,10 +458,13 @@ mod tests {
 
     use crate::{
         arm7tdmi::reg::{StatusRegister, LR_INDEX},
-        bus::{NullBus, VecBus},
+        bus::{
+            tests::{NullBus, VecBus},
+            BusExt,
+        },
     };
 
-    fn new_test_cpu(bus: &mut impl DataBus, before: impl Fn(&mut Cpu), instr: u16) -> Cpu {
+    fn new_test_cpu(bus: &mut impl Bus, before: impl Fn(&mut Cpu), instr: u16) -> Cpu {
         let mut cpu = Cpu::new();
         cpu.reset(bus);
 

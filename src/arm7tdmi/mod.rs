@@ -6,7 +6,7 @@ use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX};
 
 use strum_macros::EnumIter;
 
-use crate::bus::DataBus;
+use crate::bus::Bus;
 
 #[derive(Default, Debug)]
 pub struct Cpu {
@@ -34,7 +34,7 @@ impl Cpu {
         Self::default()
     }
 
-    pub fn reset(&mut self, bus: &impl DataBus) {
+    pub fn reset(&mut self, bus: &impl Bus) {
         self.run_state = RunState::Running;
         self.enter_exception(bus, Exception::Reset);
 
@@ -43,7 +43,7 @@ impl Cpu {
         self.reg.r[LR_INDEX] = 0;
     }
 
-    pub fn step(&mut self, bus: &mut impl DataBus) {
+    pub fn step(&mut self, bus: &mut impl Bus) {
         if self.run_state != RunState::Running {
             return;
         }
@@ -60,7 +60,9 @@ impl Cpu {
         }
     }
 
-    fn flush_pipeline(&mut self, bus: &impl DataBus) -> u32 {
+    fn flush_pipeline(&mut self, bus: &impl Bus) -> u32 {
+        use crate::bus::BusExt; // PC should already be aligned.
+
         let instr_size = self.reg.cpsr.state.instr_size();
         let instr = self.pipeline_instrs[0];
 
@@ -75,7 +77,9 @@ impl Cpu {
     }
 
     /// NOTE: also aligns PC.
-    fn reload_pipeline(&mut self, bus: &impl DataBus) {
+    fn reload_pipeline(&mut self, bus: &impl Bus) {
+        use crate::bus::BusExt; // Reads are already aligned.
+
         let instr_size = self.reg.cpsr.state.instr_size();
 
         self.reg.r[PC_INDEX] = match self.reg.cpsr.state {
@@ -137,7 +141,7 @@ impl Exception {
 }
 
 impl Cpu {
-    fn enter_exception(&mut self, bus: &impl DataBus, exception: Exception) {
+    fn enter_exception(&mut self, bus: &impl Bus, exception: Exception) {
         let old_cpsr = self.reg.cpsr;
 
         self.reg.set_mode(exception.entry_mode());
@@ -156,7 +160,10 @@ impl Cpu {
 mod tests {
     use super::*;
 
-    use crate::bus::{NullBus, VecBus};
+    use crate::bus::{
+        tests::{NullBus, VecBus},
+        BusExt,
+    };
 
     use strum::IntoEnumIterator;
 
