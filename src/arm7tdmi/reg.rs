@@ -75,8 +75,8 @@ pub(super) struct Registers {
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 struct Bank {
-    r13: u32,
-    r14: u32,
+    sp: u32,
+    lr: u32,
     spsr: StatusRegister,
 }
 
@@ -122,12 +122,12 @@ impl Registers {
         if self.cpsr.mode == OperationMode::FastInterrupt || mode == OperationMode::FastInterrupt {
             self.fiq_r8_12_bank.swap_with_slice(&mut self.r[8..=12]);
         }
-        self.banks[old_bank_index].r13 = self.r[13];
-        self.banks[old_bank_index].r14 = self.r[14];
+        self.banks[old_bank_index].sp = self.r[SP_INDEX];
+        self.banks[old_bank_index].lr = self.r[LR_INDEX];
         self.banks[old_bank_index].spsr = self.spsr;
 
-        self.r[13] = self.banks[bank_index].r13;
-        self.r[14] = self.banks[bank_index].r14;
+        self.r[SP_INDEX] = self.banks[bank_index].sp;
+        self.r[LR_INDEX] = self.banks[bank_index].lr;
         self.spsr = self.banks[bank_index].spsr;
     }
 }
@@ -221,8 +221,8 @@ mod tests {
 
         assert_eq!(OperationMode::UndefinedInstr, reg.cpsr.mode());
         let old_bank = reg.banks[OperationMode::User.bank_index()];
-        assert_eq!(1337, old_bank.r13);
-        assert_eq!(1337, old_bank.r14);
+        assert_eq!(1337, old_bank.sp);
+        assert_eq!(1337, old_bank.lr);
 
         reg.r[13..=14].fill(1234);
         let undef_spsr_zero = reg.spsr.zero;
@@ -231,8 +231,8 @@ mod tests {
 
         assert_eq!(OperationMode::FastInterrupt, reg.cpsr.mode());
         let old_bank = reg.banks[OperationMode::UndefinedInstr.bank_index()];
-        assert_eq!(1234, old_bank.r13);
-        assert_eq!(1234, old_bank.r14);
+        assert_eq!(1234, old_bank.sp);
+        assert_eq!(1234, old_bank.lr);
         assert_ne!(undef_spsr_zero, old_bank.spsr.zero);
         // should have temporarily saved r8-r12 for later restoration
         assert_eq!([1337; 5], reg.fiq_r8_12_bank);
@@ -246,8 +246,8 @@ mod tests {
         assert_eq!([1337; 2], reg.r[13..=14]);
         assert_eq!([0xeeee; 5], reg.fiq_r8_12_bank);
         let old_bank = reg.banks[OperationMode::FastInterrupt.bank_index()];
-        assert_eq!(0xaaaa, old_bank.r13);
-        assert_eq!(0xaaaa, old_bank.r14);
+        assert_eq!(0xaaaa, old_bank.sp);
+        assert_eq!(0xaaaa, old_bank.lr);
 
         // no need to do banking when switching to the same mode, or when switching between usr and
         // sys modes (they share the same "bank", which is actually no bank; that's an
@@ -257,7 +257,7 @@ mod tests {
         assert_eq!(OperationMode::System, reg.cpsr.mode());
         assert_eq!([1337; 2], reg.r[13..=14]);
         let bank = reg.banks[OperationMode::System.bank_index()];
-        assert_eq!(1337, bank.r13);
-        assert_eq!(1337, bank.r14);
+        assert_eq!(1337, bank.sp);
+        assert_eq!(1337, bank.lr);
     }
 }

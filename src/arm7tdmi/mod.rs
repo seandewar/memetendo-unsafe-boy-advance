@@ -37,6 +37,10 @@ impl Cpu {
     pub fn reset(&mut self, bus: &impl DataBus) {
         self.run_state = RunState::Running;
         self.enter_exception(bus, Exception::Reset);
+
+        // Values other than PC and CPSR are considered indeterminate after a reset.
+        // enter_exception gives LR an ugly value here; set it to zero for consistency.
+        self.reg.r[LR_INDEX] = 0;
     }
 
     pub fn step(&mut self, bus: &mut impl DataBus) {
@@ -142,7 +146,7 @@ impl Cpu {
         self.reg.cpsr.state = OperationState::Arm;
 
         self.reg.spsr = old_cpsr;
-        self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX];
+        self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
         self.reg.r[PC_INDEX] = exception.vector_addr();
         self.reload_pipeline(bus);
     }
@@ -183,13 +187,17 @@ mod tests {
             exception.disables_fiq() || old_reg.cpsr.fiq_disabled,
             cpu.reg.cpsr.fiq_disabled
         );
-
-        // +8 in PC due to pipe-lining
-        assert_eq!(exception.vector_addr().wrapping_add(8), cpu.reg.r[PC_INDEX]);
-        assert_eq!(old_reg.r[PC_INDEX], cpu.reg.r[LR_INDEX]);
-        assert_eq!(old_reg.cpsr, cpu.reg.spsr);
-        assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
         assert!(cpu.reg.cpsr.irq_disabled);
+
+        // PC is offset +8 due to pipelining in the ARM state.
+        assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
+        assert_eq!(exception.vector_addr().wrapping_add(8), cpu.reg.r[PC_INDEX]);
+
+        // Values except PC and CPSR are indeterminate after a reset.
+        if exception != Exception::Reset {
+            assert_eq!(old_reg.r[PC_INDEX].wrapping_sub(4), cpu.reg.r[LR_INDEX]);
+            assert_eq!(old_reg.cpsr, cpu.reg.spsr);
+        }
     }
 
     fn test_exception(cpu: &mut Cpu, exception: Exception) {

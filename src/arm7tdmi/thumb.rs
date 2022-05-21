@@ -21,7 +21,7 @@ impl Cpu {
 
         match (hi3, hi4, hi5, hi6, hi8) {
             (_, _, _, _, 0b1011_0000) => self.execute_thumb13(instr),
-            (_, _, _, _, 0b1011_1111) => self.enter_exception(bus, Exception::SoftwareInterrupt),
+            (_, _, _, _, 0b1101_1111) => self.enter_exception(bus, Exception::SoftwareInterrupt),
             (_, _, _, 0b01_0000, _) => self.execute_thumb4(instr),
             (_, _, _, 0b01_0001, _) => self.execute_thumb5(bus, instr),
             (_, _, 0b0_0011, _, _) => self.execute_thumb2(instr),
@@ -457,48 +457,22 @@ mod tests {
     use super::*;
 
     use crate::{
-        arm7tdmi::reg::{GeneralRegisters, StatusRegister, LR_INDEX},
+        arm7tdmi::reg::{StatusRegister, LR_INDEX},
         bus::{NullBus, VecBus},
     };
 
-    fn test_instr(
-        bus: &mut impl DataBus,
-        before: impl Fn(&mut Cpu),
-        instr: u16,
-        expected_rs: &GeneralRegisters,
-        expected_cspr: StatusRegister,
-    ) {
+    fn new_test_cpu(bus: &mut impl DataBus, before: impl Fn(&mut Cpu), instr: u16) -> Cpu {
         let mut cpu = Cpu::new();
         cpu.reset(bus);
 
-        // act like the CPU started in THUMB mode with interrupts enabled
+        // Act like the CPU started in THUMB mode with interrupts enabled.
         cpu.reg.cpsr.irq_disabled = false;
         cpu.reg.cpsr.fiq_disabled = false;
         cpu.execute_bx(bus, 0);
         before(&mut cpu);
         cpu.execute_thumb(bus, instr);
 
-        assert_eq!(cpu.reg.r, *expected_rs);
-
-        // only check condition and interrupt flags
-        assert_eq!(
-            cpu.reg.cpsr.negative, expected_cspr.negative,
-            "negative flag"
-        );
-        assert_eq!(cpu.reg.cpsr.zero, expected_cspr.zero, "zero flag");
-        assert_eq!(cpu.reg.cpsr.carry, expected_cspr.carry, "carry flag");
-        assert_eq!(
-            cpu.reg.cpsr.overflow, expected_cspr.overflow,
-            "overflow flag"
-        );
-        assert_eq!(
-            cpu.reg.cpsr.irq_disabled, expected_cspr.irq_disabled,
-            "irq_disabled flag"
-        );
-        assert_eq!(
-            cpu.reg.cpsr.fiq_disabled, expected_cspr.fiq_disabled,
-            "fiq_disabled flag"
-        );
+        cpu
     }
 
     macro_rules! test_instr {
@@ -515,7 +489,28 @@ mod tests {
                 test_instr!(@expand &mut expected_cpsr, $expected_cspr_flag);
             )*
 
-            test_instr($bus, $before, $instr, &GeneralRegisters($expected_rs), expected_cpsr);
+            let cpu = new_test_cpu($bus, $before, $instr);
+            assert_eq!(*cpu.reg.r, $expected_rs);
+
+            // Only check condition and interrupt flags.
+            assert_eq!(
+                cpu.reg.cpsr.negative, expected_cpsr.negative,
+                "negative flag"
+            );
+            assert_eq!(cpu.reg.cpsr.zero, expected_cpsr.zero, "zero flag");
+            assert_eq!(cpu.reg.cpsr.carry, expected_cpsr.carry, "carry flag");
+            assert_eq!(
+                cpu.reg.cpsr.overflow, expected_cpsr.overflow,
+                "overflow flag"
+            );
+            assert_eq!(
+                cpu.reg.cpsr.irq_disabled, expected_cpsr.irq_disabled,
+                "irq_disabled flag"
+            );
+            assert_eq!(
+                cpu.reg.cpsr.fiq_disabled, expected_cpsr.fiq_disabled,
+                "fiq_disabled flag"
+            );
         };
 
         ($before:expr, $instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
@@ -2001,6 +1996,17 @@ mod tests {
     }
 
     #[test]
+    fn execute_thumb17() {
+        // SWI nn
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 200,
+            0b11011111_10101010,
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 196, 0x08 + 8],
+            irq_disabled
+        );
+    }
+
+    #[test]
     fn execute_thumb18() {
         // B label
         test_instr!(
@@ -2039,6 +2045,16 @@ mod tests {
             |cpu: &mut Cpu| cpu.reg.r[LR_INDEX] = 0x14004,
             0b11111_11111111111, // #FFEh (lo part)
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0x14004 + 0xffe + 4],
+        );
+    }
+
+    #[test]
+    fn execute_undefined_instr() {
+        test_instr!(
+            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 200,
+            0b11101_01010101010,
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 196, 0x04 + 8],
+            irq_disabled
         );
     }
 }
