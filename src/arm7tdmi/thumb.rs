@@ -493,7 +493,7 @@ mod tests {
             )*
 
             let cpu = new_test_cpu($bus, $before, $instr);
-            assert_eq!(*cpu.reg.r, $expected_rs);
+            assert_eq!(cpu.reg.r.0, $expected_rs);
 
             // Only check condition and interrupt flags.
             assert_eq!(

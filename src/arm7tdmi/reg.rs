@@ -1,5 +1,5 @@
 use std::{
-    ops::{Deref, DerefMut, Index, IndexMut},
+    ops::{Index, IndexMut},
     slice::SliceIndex,
 };
 
@@ -35,20 +35,6 @@ pub(super) struct GeneralRegisters(pub(crate) [u32; 16]);
 pub(super) const SP_INDEX: usize = 13;
 pub(super) const LR_INDEX: usize = 14;
 pub(super) const PC_INDEX: usize = 15;
-
-impl Deref for GeneralRegisters {
-    type Target = [u32; 16];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for GeneralRegisters {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
 
 impl<I: SliceIndex<[u32]>> Index<I> for GeneralRegisters {
     type Output = I::Output;
@@ -216,7 +202,7 @@ mod tests {
 
         assert_eq!(OperationMode::User, reg.cpsr.mode());
 
-        *reg.r = [1337; 16];
+        reg.r.0 = [1337; 16];
         reg.set_mode(OperationMode::UndefinedInstr);
 
         assert_eq!(OperationMode::UndefinedInstr, reg.cpsr.mode());
