@@ -1,3 +1,5 @@
+use intbits::Bits;
+
 use crate::{arm7tdmi::reg::OperationState, bus::Bus};
 
 use super::{
@@ -6,20 +8,20 @@ use super::{
 };
 
 fn r_index(instr: u16, pos: u8) -> usize {
-    (usize::from(instr) >> usize::from(pos)) & 0b111
+    instr.bits(pos..(pos + 3)).into()
 }
 
 impl Cpu {
     pub(super) fn execute_thumb(&mut self, bus: &mut impl Bus, instr: u16) {
         assert!(self.reg.cpsr.state == OperationState::Thumb);
 
-        let hi8 = ((instr >> 8) & 0xff) as u8;
-        let hi6 = hi8 >> 2;
-        let hi5 = hi8 >> 3;
-        let hi4 = hi8 >> 4;
-        let hi3 = hi8 >> 5;
-
-        match (hi3, hi4, hi5, hi6, hi8) {
+        match (
+            instr.bits(13..),
+            instr.bits(12..),
+            instr.bits(11..),
+            instr.bits(10..),
+            instr.bits(8..),
+        ) {
             (_, _, _, _, 0b1011_0000) => self.execute_thumb13(instr),
             (_, _, _, _, 0b1101_1111) => self.enter_exception(bus, Exception::SoftwareInterrupt),
             (_, _, _, 0b01_0000, _) => self.execute_thumb4(instr),
@@ -47,10 +49,10 @@ impl Cpu {
         // TODO: 1S cycle
         // Rd,Rs,#Offset
         let value = self.reg.r[r_index(instr, 3)];
-        let offset = ((instr >> 6) & 0b1_1111) as _;
-        let op = (instr >> 11) & 0b11;
+        #[allow(clippy::cast_possible_truncation)]
+        let offset = instr.bits(6..11) as u8;
 
-        self.reg.r[r_index(instr, 0)] = match op {
+        self.reg.r[r_index(instr, 0)] = match instr.bits(11..13) {
             // LSL{S}
             0 => self.execute_lsl(value, offset),
             // LSR{S}
@@ -66,12 +68,10 @@ impl Cpu {
         // TODO: 1S cycle
         let a = self.reg.r[r_index(instr, 3)];
         let r = r_index(instr, 6);
-        let op = (instr >> 9) & 0b11;
-
         #[allow(clippy::cast_possible_truncation)]
-        let b = r as _;
+        let b = r as u32;
 
-        self.reg.r[r_index(instr, 0)] = match op {
+        self.reg.r[r_index(instr, 0)] = match instr.bits(9..11) {
             // ADD{S} Rd,Rs,Rn
             0 => self.execute_add_cmn(true, a, self.reg.r[r]),
             // SUB{S} Rd,Rs,Rn
@@ -88,11 +88,10 @@ impl Cpu {
     fn execute_thumb3(&mut self, instr: u16) {
         // TODO: 1S cycle
         // Rd,#nn
-        let value = (instr & 0b1111_1111).into();
+        let value = instr.bits(..8).into();
         let r_dst = r_index(instr, 8);
-        let op = (instr >> 11) & 0b11;
 
-        match op {
+        match instr.bits(11..13) {
             // MOV{S}
             0 => self.reg.r[r_dst] = self.execute_mov(true, value),
             // CMP{S}
@@ -108,6 +107,7 @@ impl Cpu {
     }
 
     /// Thumb.4: ALU operations.
+    #[allow(clippy::cast_possible_truncation)]
     fn execute_thumb4(&mut self, instr: u16) {
         // TODO: 1S: AND, EOR, ADC, SBC, TST, NEG, CMP, CMN, ORR, BIC, MVN
         //       1S+1I: LSL, LSR, ASR, ROR
@@ -115,10 +115,9 @@ impl Cpu {
         // Rd,Rs
         let r_dst = r_index(instr, 0);
         let value = self.reg.r[r_index(instr, 3)];
-        let offset = (value & 0xff) as _;
-        let op = (instr >> 6) & 0b1111;
+        let offset = value.bits(..8) as u8;
 
-        match op {
+        match instr.bits(6..10) {
             // AND{S}
             0 => self.reg.r[r_dst] = self.execute_and_tst(self.reg.r[r_dst], value),
             // EOR{S} (XOR)
@@ -165,11 +164,10 @@ impl Cpu {
     fn execute_thumb5(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 1S cycle for ADD, MOV, CMP
         //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
-        let r_src_msb = instr & (1 << 6) != 0;
-        let r_src = r_index(instr, 3) | (usize::from(r_src_msb) << 3);
+        let r_src = r_index(instr, 3).with_bit(3, instr.bit(6));
         let value = self.reg.r[r_src];
+        let op = instr.bits(8..10);
 
-        let op = (instr >> 8) & 0b11;
         if op == 3 {
             // BX Rs (jump)
             self.execute_bx(bus, value);
@@ -177,8 +175,7 @@ impl Cpu {
         }
 
         // Rd,Rs
-        let r_dst_msb = instr & (1 << 7) != 0;
-        let r_dst = r_index(instr, 0) | (usize::from(r_dst_msb) << 3);
+        let r_dst = r_index(instr, 0).with_bit(3, instr.bit(7));
 
         match op {
             // ADD
@@ -201,47 +198,46 @@ impl Cpu {
     fn execute_thumb6(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 1S + 1N + 1I
         // LDR Rd,[PC,#nn]
-        let r_dst = r_index(instr, 8);
-        let offset = u32::from(instr & 0b1111_1111);
+        let offset = u32::from(instr.bits(..8));
         let addr = self.reg.r[PC_INDEX].wrapping_add(offset * 4);
 
-        self.reg.r[r_dst] = Self::execute_ldr(bus, addr);
+        self.reg.r[r_index(instr, 8)] = Self::execute_ldr(bus, addr);
     }
 
     /// Thumb.7: Load or store with register offset, OR
     /// Thumb.8: Load or store sign-extended byte or half-word (if bit 9 is set in `instr`).
+    #[allow(clippy::cast_possible_truncation)]
     fn execute_thumb7_thumb8(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: 1S + 1N + 1I for LDR, 2N for STR
         // Rd,[Rb,Ro]
         let r = r_index(instr, 0);
-
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = self.reg.r[r_index(instr, 6)];
         let addr = base_addr.wrapping_add(offset);
+        let op = instr.bits(10..12);
 
-        let thumb7 = instr & (1 << 9) == 0;
-        let op = (instr >> 10) & 0b11;
-
-        if thumb7 {
-            match op {
-                // STR
-                0 => Self::execute_str(bus, addr, self.reg.r[r]),
-                // STRB
-                1 => Self::execute_strb(bus, addr, (self.reg.r[r] & 0xff) as _),
-                // LDR
-                2 => self.reg.r[r] = Self::execute_ldr(bus, addr),
-                // LDRB
-                3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
-                _ => unreachable!(),
-            }
-        } else {
+        if instr.bit(9) {
+            // Thumb.8
             match op {
                 // STRH
-                0 => Self::execute_strh(bus, addr, (self.reg.r[r] & 0xffff) as _),
+                0 => Self::execute_strh(bus, addr, self.reg.r[r] as u16),
                 // LDSB
                 1 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, true),
                 // LDRH, LDSH
                 2 | 3 => self.reg.r[r] = Self::execute_ldrh_ldsh(bus, addr, op == 3),
+                _ => unreachable!(),
+            }
+        } else {
+            // Thumb.7
+            match op {
+                // STR
+                0 => Self::execute_str(bus, addr, self.reg.r[r]),
+                // STRB
+                1 => Self::execute_strb(bus, addr, self.reg.r[r] as u8),
+                // LDR
+                2 => self.reg.r[r] = Self::execute_ldr(bus, addr),
+                // LDRB
+                3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
                 _ => unreachable!(),
             }
         }
@@ -252,21 +248,19 @@ impl Cpu {
         // TODO: 1S+1N+1I for LDR, or 2N for STR
         // Rd,[Rb,#nn]
         let r = r_index(instr, 0);
-
         let base_addr = self.reg.r[r_index(instr, 3)];
-        let offset = u32::from((instr >> 6) & 0b1_1111);
+        let offset = instr.bits(6..11).into();
         let addr = base_addr.wrapping_add(offset);
         let word_addr = base_addr.wrapping_add(offset * 4);
 
-        let op = (instr >> 11) & 0b11;
-
-        match op {
+        match instr.bits(11..13) {
             // STR
             0 => Self::execute_str(bus, word_addr, self.reg.r[r]),
             // LDR
             1 => self.reg.r[r] = Self::execute_ldr(bus, word_addr),
             // STRB
-            2 => Self::execute_strb(bus, addr, (self.reg.r[r] & 0xff) as _),
+            #[allow(clippy::cast_possible_truncation)]
+            2 => Self::execute_strb(bus, addr, self.reg.r[r] as u8),
             // LDRB
             3 => self.reg.r[r] = Self::execute_ldrb_ldsb(bus, addr, false),
             _ => unreachable!(),
@@ -278,19 +272,17 @@ impl Cpu {
         // 1S+1N+1I for LDR, or 2N for STR
         // Rd,[Rb,#nn]
         let r = r_index(instr, 0);
-
         let base_addr = self.reg.r[r_index(instr, 3)];
-        let offset = u32::from((instr >> 6) & 0b1_1111);
+        let offset = u32::from(instr.bits(6..11));
         let addr = base_addr.wrapping_add(offset * 2);
 
-        let op = (instr >> 11) & 1;
-
-        match op {
-            // STRH
-            0 => Self::execute_strh(bus, addr, (self.reg.r[r] & 0xffff) as _),
+        if instr.bit(11) {
             // LDRH
-            1 => self.reg.r[r] = Self::execute_ldrh_ldsh(bus, addr, false),
-            _ => unreachable!(),
+            self.reg.r[r] = Self::execute_ldrh_ldsh(bus, addr, false);
+        } else {
+            // STRH
+            #[allow(clippy::cast_possible_truncation)]
+            Self::execute_strh(bus, addr, self.reg.r[r] as u16);
         }
     }
 
@@ -298,18 +290,16 @@ impl Cpu {
     fn execute_thumb11(&mut self, bus: &mut impl Bus, instr: u16) {
         // 1S+1N+1I for LDR, or 2N for STR
         // Rd,[SP,#nn]
-        let offset = u32::from(instr & 0b1111_1111);
+        let offset = u32::from(instr.bits(..8));
         let addr = self.reg.r[SP_INDEX].wrapping_add(offset * 4);
-
         let r = r_index(instr, 8);
-        let op = (instr >> 11) & 1;
 
-        match op {
-            // STR
-            0 => Self::execute_str(bus, addr, self.reg.r[r]),
+        if instr.bit(11) {
             // LDR
-            1 => self.reg.r[r] = Self::execute_ldr(bus, addr),
-            _ => unreachable!(),
+            self.reg.r[r] = Self::execute_ldr(bus, addr);
+        } else {
+            // STR
+            Self::execute_str(bus, addr, self.reg.r[r]);
         }
     }
 
@@ -317,43 +307,40 @@ impl Cpu {
     fn execute_thumb12(&mut self, instr: u16) {
         // TODO: 1S
         // ADD Rd,(PC/SP),#nn
-        let offset = (instr & 0b1111_1111).into();
-        let r_dst = r_index(instr, 8);
-        let op = (instr >> 11) & 1;
-        let base_addr = self.reg.r[if op == 0 { PC_INDEX } else { SP_INDEX }];
+        let offset = instr.bits(..8).into();
+        let base_addr = self.reg.r[if instr.bit(11) { SP_INDEX } else { PC_INDEX }];
 
-        self.reg.r[r_dst] = self.execute_add_cmn(false, base_addr, offset);
+        self.reg.r[r_index(instr, 8)] = self.execute_add_cmn(false, base_addr, offset);
     }
 
     /// Thumb.13: Add offset to SP.
     fn execute_thumb13(&mut self, instr: u16) {
         // TODO: 1S
         // SP,#nn
-        let offset = u32::from(instr & 0b111_1111) * 4;
-        let op = (instr >> 7) & 1;
+        let offset = u32::from(instr.bits(..7)) * 4;
 
-        self.reg.r[SP_INDEX] = match op {
-            // ADD
-            0 => self.execute_add_cmn(false, self.reg.r[SP_INDEX], offset),
+        self.reg.r[SP_INDEX] = if instr.bit(7) {
             // SUB
-            1 => self.execute_sub_cmp(false, self.reg.r[SP_INDEX], offset),
-            _ => unreachable!(),
+            self.execute_sub_cmp(false, self.reg.r[SP_INDEX], offset)
+        } else {
+            // ADD
+            self.execute_add_cmn(false, self.reg.r[SP_INDEX], offset)
         };
     }
 
     /// Thumb.14: Push or pop registers.
     fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: nS+1N+1I (POP), (n+1)S+2N+1I (POP PC), or (n-1)S+2N (PUSH)
-        let r_list = (instr & 0b1111_1111) as _;
-        let push_lr_pop_pc = instr & (1 << 8) != 0;
-        let op = (instr >> 11) & 1;
+        #[allow(clippy::cast_possible_truncation)]
+        let r_list = instr.bits(..8) as u8;
+        let push_lr_pop_pc = instr.bit(8);
 
-        match op {
-            // PUSH {Rlist}{LR}
-            0 => self.execute_push(bus, r_list, push_lr_pop_pc),
+        if instr.bit(11) {
             // POP {Rlist}{PC}
-            1 => self.execute_pop(bus, r_list, push_lr_pop_pc),
-            _ => unreachable!(),
+            self.execute_pop(bus, r_list, push_lr_pop_pc);
+        } else {
+            // PUSH {Rlist}{LR}
+            self.execute_push(bus, r_list, push_lr_pop_pc);
         }
     }
 
@@ -361,16 +348,16 @@ impl Cpu {
     fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: nS+1N+1I for LDM, or (n-1)S+2N for STM
         // Rb!,{Rlist}
-        let r_list = (instr & 0b1111_1111) as _;
+        #[allow(clippy::cast_possible_truncation)]
+        let r_list = instr.bits(..8) as u8;
         let r_base = r_index(instr, 8);
-        let op = (instr >> 11) & 1;
 
-        match op {
-            // STMIA
-            0 => self.execute_stmia(bus, r_base, r_list),
+        if instr.bit(11) {
             // LDMIA
-            1 => self.execute_ldmia(bus, r_base, r_list),
-            _ => unreachable!(),
+            self.execute_ldmia(bus, r_base, r_list);
+        } else {
+            // STMIA
+            self.execute_stmia(bus, r_base, r_list);
         }
     }
 
@@ -378,10 +365,7 @@ impl Cpu {
     fn execute_thumb16(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 2S+1N if true (jumped) or 1S if false
         // label
-        let offset = i16::from((instr & 0b1111_1111) as i8).wrapping_mul(2);
-        let op = (instr >> 8) & 0b1111;
-
-        let cond = match op {
+        let cond = match instr.bits(8..12) {
             // BEQ
             0 => self.reg.cpsr.zero,
             // BNE
@@ -415,34 +399,29 @@ impl Cpu {
             _ => unreachable!(),
         };
 
-        self.execute_branch(bus, offset, cond);
+        #[allow(clippy::cast_possible_truncation)]
+        self.execute_branch(bus, i16::from(instr.bits(..8) as i8).wrapping_mul(2), cond);
     }
 
     /// Thumb.18: Unconditional branch.
     fn execute_thumb18(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 2S+1N
         // B label; operand is 11 bits, so we need to manually sign-extend it.
-        #[allow(clippy::unusual_byte_groupings)]
-        let sign_extended = if instr & (1 << 10) == 0 {
-            instr & 0b111_1111_1111
+        let sign_extended = if instr.bit(10) {
+            instr.bits(..11).with_bits(11.., 0b1_1111)
         } else {
-            (0b1111_1 << 11) | (instr & 0b111_1111_1111)
+            instr.bits(..11)
         };
 
         #[allow(clippy::cast_possible_wrap)]
-        let offset = (sign_extended as i16).wrapping_mul(2);
-
-        self.execute_branch(bus, offset, true);
+        self.execute_branch(bus, (sign_extended as i16).wrapping_mul(2), true);
     }
 
     /// Thumb.19: Long branch with link.
     fn execute_thumb19(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 3S+1N (first opcode 1S, second opcode 2S+1N)
         // BL label
-        let offset_part = instr & 0b111_1111_1111;
-        let hi_part = instr & (1 << 11) == 0;
-
-        self.execute_bl(bus, hi_part, offset_part);
+        self.execute_bl(bus, !instr.bit(11), instr.bits(..11));
     }
 }
 

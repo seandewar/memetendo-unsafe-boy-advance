@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 strum = "0.24.0"
 strum_macros = "0.24.0"
+intbits = "0.2.0"

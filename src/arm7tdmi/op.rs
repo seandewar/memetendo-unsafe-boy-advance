@@ -1,3 +1,5 @@
+use intbits::Bits;
+
 use crate::bus::{Bus, BusAlignedExt};
 
 use super::{
@@ -103,7 +105,7 @@ impl Cpu {
         let mut result = value;
         if offset > 0 {
             result = result.checked_shl((offset - 1).into()).unwrap_or(0);
-            self.reg.cpsr.carry = result & (1 << 31) != 0;
+            self.reg.cpsr.carry = result.bit(31);
             result <<= 1;
         }
         self.reg.cpsr.set_nz_from(result);
@@ -117,7 +119,7 @@ impl Cpu {
 
         let mut result = value;
         result = result.checked_shr(offset - 1).unwrap_or(0);
-        self.reg.cpsr.carry = result & 1 != 0;
+        self.reg.cpsr.carry = result.bit(0);
         result >>= 1;
         self.reg.cpsr.set_nz_from(result);
 
@@ -139,7 +141,7 @@ impl Cpu {
         };
 
         result = result.checked_shr(offset - 1).unwrap_or(overflow_result);
-        self.reg.cpsr.carry = result & 1 != 0;
+        self.reg.cpsr.carry = result.bit(0);
         let result = (result >> 1) as _;
         self.reg.cpsr.set_nz_from(result);
 
@@ -150,7 +152,7 @@ impl Cpu {
         let mut result = value;
         if offset > 0 {
             result = value.rotate_right(u32::from(offset) - 1);
-            self.reg.cpsr.carry = result & 1 != 0;
+            self.reg.cpsr.carry = result.bit(0);
             result = result.rotate_right(1);
         }
         self.reg.cpsr.set_nz_from(result);
@@ -159,10 +161,10 @@ impl Cpu {
     }
 
     pub(super) fn execute_bx(&mut self, bus: &impl Bus, addr: u32) {
-        self.reg.cpsr.state = if addr & 1 == 0 {
-            OperationState::Arm
-        } else {
+        self.reg.cpsr.state = if addr.bit(0) {
             OperationState::Thumb
+        } else {
+            OperationState::Arm
         };
         self.reg.r[PC_INDEX] = addr;
         self.reload_pipeline(bus);
@@ -210,11 +212,10 @@ impl Cpu {
     pub(super) fn execute_stmia(&mut self, bus: &mut impl Bus, r_base_addr: usize, mut r_list: u8) {
         // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
-            if r_list & 1 != 0 {
+            if r_list.bit(0) {
                 bus.write_word_aligned(self.reg.r[r_base_addr], self.reg.r[r]);
                 self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
             }
-
             r_list >>= 1;
         }
     }
@@ -222,11 +223,10 @@ impl Cpu {
     pub(super) fn execute_ldmia(&mut self, bus: &impl Bus, r_base_addr: usize, mut r_list: u8) {
         // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
-            if r_list & 1 != 0 {
+            if r_list.bit(0) {
                 self.reg.r[r] = bus.read_word_aligned(self.reg.r[r_base_addr]);
                 self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
             }
-
             r_list >>= 1;
         }
     }
@@ -239,11 +239,10 @@ impl Cpu {
         }
 
         for r in (0..8).rev() {
-            if r_list & (1 << 7) != 0 {
+            if r_list.bit(7) {
                 self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
                 bus.write_word_aligned(self.reg.r[SP_INDEX], self.reg.r[r]);
             }
-
             r_list <<= 1;
         }
     }
@@ -251,11 +250,10 @@ impl Cpu {
     pub(super) fn execute_pop(&mut self, bus: &impl Bus, mut r_list: u8, pop_pc: bool) {
         // TODO: emulate weird r_list behaviour when its 0?
         for r in 0..8 {
-            if r_list & 1 != 0 {
+            if r_list.bit(0) {
                 self.reg.r[r] = bus.read_word_aligned(self.reg.r[SP_INDEX]);
                 self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
             }
-
             r_list >>= 1;
         }
 
@@ -270,7 +268,6 @@ impl Cpu {
         if cond {
             #[allow(clippy::cast_sign_loss)]
             let addr_offset = i32::from(addr_offset) as _;
-
             self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(addr_offset);
             self.reload_pipeline(bus);
         }
@@ -286,7 +283,7 @@ impl Cpu {
             let return_addr = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
 
             self.reg.r[PC_INDEX] = self.reg.r[LR_INDEX].wrapping_add(addr_offset_part << 1);
-            self.reg.r[LR_INDEX] = return_addr | 1; // OR 1 is used to indicate THUMB.
+            self.reg.r[LR_INDEX] = return_addr | 1; // bit 0 set indicates THUMB
             self.reload_pipeline(bus);
         }
     }

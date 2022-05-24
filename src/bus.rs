@@ -1,5 +1,7 @@
 #![allow(clippy::module_name_repetitions)]
 
+use intbits::Bits;
+
 pub trait Bus {
     fn read_byte(&self, addr: u32) -> u8;
     fn write_byte(&mut self, addr: u32, value: u8);
@@ -18,24 +20,26 @@ impl<T: Bus> BusExt for T {
         let lo = self.read_byte(addr);
         let hi = self.read_byte(addr.wrapping_add(1));
 
-        (u16::from(hi) << 8) | u16::from(lo)
+        u16::from(lo).with_bits(8.., hi.into())
     }
 
     fn read_word(&self, addr: u32) -> u32 {
         let lo = self.read_hword(addr);
         let hi = self.read_hword(addr.wrapping_add(2));
 
-        (u32::from(hi) << 16) | u32::from(lo)
+        u32::from(lo).with_bits(16.., hi.into())
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn write_hword(&mut self, addr: u32, value: u16) {
-        self.write_byte(addr, (value & 0xff) as _);
-        self.write_byte(addr.wrapping_add(1), (value >> 8) as _);
+        self.write_byte(addr, value.bits(..8) as _);
+        self.write_byte(addr.wrapping_add(1), value.bits(8..) as _);
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     fn write_word(&mut self, addr: u32, value: u32) {
-        self.write_hword(addr, (value & 0xffff) as _);
-        self.write_hword(addr.wrapping_add(2), (value >> 16) as _);
+        self.write_hword(addr, value.bits(..16) as _);
+        self.write_hword(addr.wrapping_add(2), value.bits(16..) as _);
     }
 }
 

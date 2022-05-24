@@ -3,6 +3,7 @@ use std::{
     slice::SliceIndex,
 };
 
+use intbits::Bits;
 use strum_macros::FromRepr;
 
 #[derive(Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
@@ -81,14 +82,16 @@ impl OperationMode {
 
 impl Registers {
     pub(super) fn set_cpsr(&mut self, cpsr: u32) -> Result<(), ()> {
-        self.set_mode(OperationMode::from_repr((cpsr & 0b11111) as _).ok_or(())?);
+        #[allow(clippy::cast_possible_truncation)]
+        self.set_mode(OperationMode::from_repr(cpsr.bits(..5) as _).ok_or(())?);
         self.cpsr.state = OperationState::from_repr((cpsr & (1 << 5)) as _).unwrap();
-        self.cpsr.negative = cpsr & (1 << 31) != 0;
-        self.cpsr.zero = cpsr & (1 << 30) != 0;
-        self.cpsr.carry = cpsr & (1 << 29) != 0;
-        self.cpsr.overflow = cpsr & (1 << 28) != 0;
-        self.cpsr.irq_disabled = cpsr & (1 << 7) != 0;
-        self.cpsr.fiq_disabled = cpsr & (1 << 6) != 0;
+
+        self.cpsr.negative = cpsr.bit(31);
+        self.cpsr.zero = cpsr.bit(30);
+        self.cpsr.carry = cpsr.bit(29);
+        self.cpsr.overflow = cpsr.bit(28);
+        self.cpsr.irq_disabled = cpsr.bit(7);
+        self.cpsr.fiq_disabled = cpsr.bit(6);
 
         Ok(())
     }
@@ -153,6 +156,7 @@ pub(super) struct StatusRegister {
     pub(super) overflow: bool,
     pub(super) irq_disabled: bool,
     pub(super) fiq_disabled: bool,
+
     pub(super) state: OperationState,
     mode: OperationMode,
 }
@@ -160,14 +164,16 @@ pub(super) struct StatusRegister {
 impl StatusRegister {
     pub(super) fn psr(self) -> u32 {
         let mut psr = 0;
+
         psr |= self.state.psr();
         psr |= self.mode.psr();
-        psr |= u32::from(self.negative) << 31;
-        psr |= u32::from(self.zero) << 30;
-        psr |= u32::from(self.carry) << 29;
-        psr |= u32::from(self.overflow) << 28;
-        psr |= u32::from(self.irq_disabled) << 7;
-        psr |= u32::from(self.fiq_disabled) << 6;
+
+        psr.set_bit(31, self.negative);
+        psr.set_bit(30, self.zero);
+        psr.set_bit(29, self.carry);
+        psr.set_bit(28, self.overflow);
+        psr.set_bit(7, self.irq_disabled);
+        psr.set_bit(6, self.fiq_disabled);
 
         psr
     }

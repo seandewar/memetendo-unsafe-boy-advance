@@ -9,9 +9,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2540771e65fc8cb83cd6e8a237f70c319bd5c29f78ed1084ba5d50eeac86f7f9"
 
 [[package]]
+name = "intbits"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5170c2c8ecda29c1bccb9d95ccbe107bc75fa084dc0c9c6087e719f9d46330e5"
+
+[[package]]
 name = "memetendo-unsafe-boy-advance"
 version = "0.1.0"
 dependencies = [
+ "intbits",
  "strum",
  "strum_macros",
 ]

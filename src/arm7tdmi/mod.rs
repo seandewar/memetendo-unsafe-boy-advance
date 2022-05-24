@@ -4,6 +4,7 @@ mod thumb;
 
 use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX};
 
+use intbits::Bits;
 use strum_macros::EnumIter;
 
 use crate::bus::Bus;
@@ -55,7 +56,8 @@ impl Cpu {
                 self.execute_bx(bus, self.reg.r[PC_INDEX].wrapping_sub(8));
             }
             OperationState::Thumb => {
-                self.execute_thumb(bus, (instr & 0xffff) as _);
+                #[allow(clippy::cast_possible_truncation)]
+                self.execute_thumb(bus, instr.bits(..16) as _);
             }
         }
     }
@@ -172,7 +174,7 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.reset(&NullBus);
 
-        cpu.set_cpsr(OperationMode::Abort.psr() | (1 << 5));
+        cpu.set_cpsr(OperationMode::Abort.psr().with_bit(5, true));
         assert_eq!(RunState::Running, cpu.run_state);
         assert_eq!(OperationMode::Abort, cpu.reg.cpsr.mode());
         assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
@@ -216,7 +218,7 @@ mod tests {
     #[test]
     fn reset_works() {
         let mut cpu = Cpu::new();
-        cpu.set_cpsr((0b1111 << 28) | 0b1111_1111);
+        cpu.set_cpsr(0b1111_1111.with_bits(28.., 0b1111));
         cpu.reg.r[PC_INDEX] = 0xbeef;
         let old_reg = cpu.reg;
 
