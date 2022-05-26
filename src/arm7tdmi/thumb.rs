@@ -1,6 +1,6 @@
 use intbits::Bits;
 
-use crate::{arm7tdmi::reg::OperationState, bus::Bus};
+use crate::{arm7tdmi::reg::OperationState, bus::Bus, sign_extend};
 
 use super::{
     reg::{PC_INDEX, SP_INDEX},
@@ -362,66 +362,35 @@ impl Cpu {
     }
 
     /// Thumb.16: Conditional branch.
+    #[allow(clippy::cast_possible_truncation)]
     fn execute_thumb16(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 2S+1N if true (jumped) or 1S if false
         // label
-        let cond = match instr.bits(8..12) {
-            // BEQ
-            0 => self.reg.cpsr.zero,
-            // BNE
-            1 => !self.reg.cpsr.zero,
-            // BCS/BHS
-            2 => self.reg.cpsr.carry,
-            // BCC/BLO
-            3 => !self.reg.cpsr.carry,
-            // BMI
-            4 => self.reg.cpsr.negative,
-            // BPL
-            5 => !self.reg.cpsr.negative,
-            // BVS
-            6 => self.reg.cpsr.overflow,
-            // BVC
-            7 => !self.reg.cpsr.overflow,
-            // BHI
-            8 => self.reg.cpsr.carry && !self.reg.cpsr.zero,
-            // BLS
-            9 => !self.reg.cpsr.carry || self.reg.cpsr.zero,
-            // BGE
-            10 => self.reg.cpsr.negative == self.reg.cpsr.overflow,
-            // BLT
-            11 => self.reg.cpsr.negative != self.reg.cpsr.overflow,
-            // BGT
-            12 => !self.reg.cpsr.zero && (self.reg.cpsr.negative == self.reg.cpsr.overflow),
-            // BLE
-            13 => self.reg.cpsr.zero || (self.reg.cpsr.negative != self.reg.cpsr.overflow),
-            // Undefined (TODO: how does it behave?)
-            14 => false,
-            _ => unreachable!(),
-        };
-
-        #[allow(clippy::cast_possible_truncation)]
-        self.execute_branch(bus, i16::from(instr.bits(..8) as i8).wrapping_mul(2), cond);
+        if self.meets_condition(instr.bits(8..12) as u8) {
+            self.execute_branch(
+                bus,
+                self.reg.r[PC_INDEX],
+                2 * i32::from(instr.bits(..8) as i8),
+            );
+        }
     }
 
     /// Thumb.18: Unconditional branch.
     fn execute_thumb18(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 2S+1N
-        // B label; operand is 11 bits, so we need to manually sign-extend it.
-        let sign_extended = if instr.bit(10) {
-            instr.bits(..11).with_bits(11.., 0b1_1111)
-        } else {
-            instr.bits(..11)
-        };
-
-        #[allow(clippy::cast_possible_wrap)]
-        self.execute_branch(bus, (sign_extended as i16).wrapping_mul(2), true);
+        // B label
+        self.execute_branch(
+            bus,
+            self.reg.r[PC_INDEX],
+            2 * sign_extend!(i32, instr.bits(..11), 11),
+        );
     }
 
     /// Thumb.19: Long branch with link.
     fn execute_thumb19(&mut self, bus: &impl Bus, instr: u16) {
         // TODO: 3S+1N (first opcode 1S, second opcode 2S+1N)
         // BL label
-        self.execute_bl(bus, !instr.bit(11), instr.bits(..11));
+        self.execute_thumb_bl(bus, !instr.bit(11), instr.bits(..11));
     }
 }
 
@@ -436,931 +405,916 @@ mod tests {
     use super::*;
 
     use crate::{
-        arm7tdmi::reg::{StatusRegister, LR_INDEX},
-        bus::{
-            tests::{NullBus, VecBus},
-            BusExt,
-        },
+        arm7tdmi::op::tests::InstrTest,
+        arm7tdmi::reg::{OperationState, LR_INDEX},
+        bus::{tests::VecBus, BusExt},
     };
 
-    fn new_test_cpu(bus: &mut impl Bus, before: impl Fn(&mut Cpu), instr: u16) -> Cpu {
-        let mut cpu = Cpu::new();
-        cpu.reset(bus);
-
-        // Act like the CPU started in THUMB mode with interrupts enabled.
-        cpu.reg.cpsr.irq_disabled = false;
-        cpu.reg.cpsr.fiq_disabled = false;
-        cpu.execute_bx(bus, 1);
-        before(&mut cpu);
-        cpu.execute_thumb(bus, instr);
-
-        cpu
-    }
-
-    macro_rules! test_instr {
-        (
-            $bus:expr,
-            $before:expr,
-            $instr:expr,
-            $expected_rs:expr,
-            $($expected_cspr_flag:ident)|*
-        ) => {{
-            let mut expected_cpsr = StatusRegister::default();
-            expected_cpsr.state = OperationState::Thumb;
-            $(
-                test_instr!(@expand &mut expected_cpsr, $expected_cspr_flag);
-            )*
-
-            let cpu = new_test_cpu($bus, $before, $instr);
-            assert_eq!(cpu.reg.r.0, $expected_rs);
-
-            // Only check condition and interrupt flags.
-            assert_eq!(
-                cpu.reg.cpsr.negative, expected_cpsr.negative,
-                "negative flag"
-            );
-            assert_eq!(cpu.reg.cpsr.zero, expected_cpsr.zero, "zero flag");
-            assert_eq!(cpu.reg.cpsr.carry, expected_cpsr.carry, "carry flag");
-            assert_eq!(
-                cpu.reg.cpsr.overflow, expected_cpsr.overflow,
-                "overflow flag"
-            );
-            assert_eq!(
-                cpu.reg.cpsr.irq_disabled, expected_cpsr.irq_disabled,
-                "irq_disabled flag"
-            );
-            assert_eq!(
-                cpu.reg.cpsr.fiq_disabled, expected_cpsr.fiq_disabled,
-                "fiq_disabled flag"
-            );
-
-            cpu
-        }};
-
-        ($before:expr, $instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
-            test_instr!(&mut NullBus, $before, $instr, $expected_rs, $($expected_cspr_flag)|*)
-        };
-
-        ($instr:expr, $expected_rs:expr, $($expected_cspr_flag:ident)|*) => {
-            test_instr!(&mut NullBus, |_| {}, $instr, $expected_rs, $($expected_cspr_flag)|*)
-        };
-
-        (@expand $expected_cspr:expr, $flag:ident) => (
-            $expected_cspr.$flag = true;
-        );
-    }
-
     #[test]
-    #[rustfmt::skip]
     fn execute_thumb1() {
         // LSL{S} Rd,Rs,#Offset
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 0b10,
-            0b000_00_00011_001_100, // R4,R1,#3
-            [0, 0b10, 0, 0, 0b10_000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[7] = 1,
-            0b000_00_01111_111_000, // R0,R7,#15
-            [1 << 15, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
-            0b000_00_00001_111_000, // R0,R7,#1
-            [0, 0, 0, 0, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | zero
-        );
-        test_instr!(
-            0b000_00_01010_111_000, // R0,R7,#10
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[0] = u32::MAX,
-            0b000_00_00000_000_000, // R0,R0,#0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
+        InstrTest::new_thumb(0b000_00_00011_001_100) // R4,R1,#3
+            .setup(&|cpu| cpu.reg.r[1] = 0b10)
+            .assert_r(1, 0b10)
+            .assert_r(4, 0b10_000)
+            .run();
+
+        InstrTest::new_thumb(0b000_00_01111_111_000) // R0,R7,#15
+            .setup(&|cpu| cpu.reg.r[7] = 1)
+            .assert_r(0, 1 << 15)
+            .assert_r(7, 1)
+            .run();
+
+        InstrTest::new_thumb(0b000_00_00001_111_000) // R0,R7,#1
+            .setup(&|cpu| cpu.reg.r[7] = 1 << 31)
+            .assert_r(7, 1 << 31)
+            .assert_carry()
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b000_00_01010_111_000) // R0,R7,#10
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b000_00_00000_000_000) // R0,R0,#0
+            .setup(&|cpu| cpu.reg.r[0] = u32::MAX)
+            .assert_r(0, u32::MAX)
+            .assert_negative()
+            .run();
 
         // LSR{S} Rd,Rs,#Offset
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 0b100,
-            0b000_01_00011_001_100, // R4,R1,#2
-            [0, 0b100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 0b10,
-            0b000_01_00011_001_100, // R4,R1,#2
-            [0, 0b10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
-            0b000_01_11111_111_111, // R7,R7,#31
-            [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
-            0b000_01_00000_111_111, // R7,R7,#32
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero | carry
-        );
+        InstrTest::new_thumb(0b000_01_00011_001_100) // R4,R1,#2
+            .setup(&|cpu| cpu.reg.r[1] = 0b100)
+            .assert_r(1, 0b100)
+            .assert_zero()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b000_01_00011_001_100) // R4,R1,#2
+            .setup(&|cpu| cpu.reg.r[1] = 0b10)
+            .assert_r(1, 0b10)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b000_01_11111_111_111) // R7,R7,#31
+            .setup(&|cpu| cpu.reg.r[7] = 1 << 31)
+            .assert_r(7, 1)
+            .run();
+
+        InstrTest::new_thumb(0b000_01_00000_111_111) // R7,R7,#32
+            .setup(&|cpu| cpu.reg.r[7] = 1 << 31)
+            .assert_zero()
+            .assert_carry()
+            .run();
 
         // ASR{S} Rd,Rs,#Offset
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
-            0b000_10_11111_111_111, // R7,R7,#31
-            [0, 0, 0, 0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[5] = !(1 << 31),
-            0b000_10_00001_101_000, // R0,R5,#1
-            [!(0b11 << 30), 0, 0, 0, 0, !(1 << 31), 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[7] = 1 << 31,
-            0b000_10_00000_111_111, // R7,R7,#32
-            [0, 0, 0, 0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | carry
-        );
+        InstrTest::new_thumb(0b000_10_11111_111_111) // R7,R7,#31
+            .setup(&|cpu| cpu.reg.r[7] = 1 << 31)
+            .assert_r(7, u32::MAX)
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b000_10_00001_101_000) // R0,R5,#1
+            .setup(&|cpu| cpu.reg.r[5] = !(1 << 31))
+            .assert_r(0, !(0b11 << 30))
+            .assert_r(5, !(1 << 31))
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b000_10_00000_111_111) // R7,R7,#32
+            .setup(&|cpu| cpu.reg.r[7] = 1 << 31)
+            .assert_r(7, u32::MAX)
+            .assert_negative()
+            .assert_carry()
+            .run();
     }
 
     #[test]
-    #[rustfmt::skip]
     fn execute_thumb2() {
         // ADD{S} Rd,Rs,Rn
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b00011_00_111_001_100) // R4,R1,R7
+            .setup(&|cpu| {
                 cpu.reg.r[1] = 13;
                 cpu.reg.r[7] = 7;
-            },
-            0b00011_00_111_001_100, // R4,R1,R7
-            [0, 13, 0, 0, 20, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
-                cpu.reg.r[7] = 1;
-            },
-            0b00011_00_111_111_111, // R7,R7,R7
-            [0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(1, 13)
+            .assert_r(4, 20)
+            .assert_r(7, 7)
+            .run();
+
+        InstrTest::new_thumb(0b00011_00_111_111_111) // R7,R7,R7
+            .setup(&|cpu| cpu.reg.r[7] = 1)
+            .assert_r(7, 2)
+            .run();
+
+        InstrTest::new_thumb(0b00011_00_111_110_000) // R0,R6,R7
+            .setup(&|cpu| {
                 cpu.reg.r[6] = u32::MAX;
                 cpu.reg.r[7] = 1;
-            },
-            0b00011_00_111_110_000, // R0,R6,R7
-            [0, 0, 0, 0, 0, 0, u32::MAX, 1, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(6, u32::MAX)
+            .assert_r(7, 1)
+            .assert_carry()
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b00011_00_000_001_010) // R2,R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = -5 as _;
                 cpu.reg.r[1] = -10 as _;
-            },
-            0b00011_00_000_001_010, // R2,R1,R0
-            [-5 as _, -10 as _, -15 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, -5 as _)
+            .assert_r(1, -10 as _)
+            .assert_r(2, -15 as _)
+            .assert_negative()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b00011_00_000_001_010) // R2,R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = i32::MIN as _;
                 cpu.reg.r[1] = -1 as _;
-            },
-            0b00011_00_000_001_010, // R2,R1,R0
-            [i32::MIN as _, -1 as _, i32::MIN.wrapping_sub(1) as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | overflow
-        );
+            })
+            .assert_r(0, i32::MIN as _)
+            .assert_r(1, -1 as _)
+            .assert_r(2, i32::MIN.wrapping_sub(1) as _)
+            .assert_carry()
+            .assert_overflow()
+            .run();
 
         // SUB{S} Rd,Rs,Rn
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b00011_01_110_011_000) // R0,R3,R6
+            .setup(&|cpu| {
                 cpu.reg.r[3] = i32::MIN as _;
                 cpu.reg.r[6] = i32::MAX as _;
-            },
-            0b00011_01_110_011_000, // R0,R3,R6
-            [1, 0, 0, i32::MIN as _, 0, 0, i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | overflow
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[0] = -5 as _,
-            0b00011_01_000_000_010, // R2,R0,R0
-            [-5 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 1)
+            .assert_r(3, i32::MIN as _)
+            .assert_r(6, i32::MAX as _)
+            .assert_carry()
+            .assert_overflow()
+            .run();
+
+        InstrTest::new_thumb(0b00011_01_000_000_010) // R2,R0,R0
+            .setup(&|cpu| cpu.reg.r[0] = -5 as _)
+            .assert_r(0, -5 as _)
+            .assert_carry()
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b00011_01_000_001_010) // R2,R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 5;
                 cpu.reg.r[1] = -10 as _;
-            },
-            0b00011_01_000_001_010, // R2,R1,R0
-            [5, -10 as _, -15 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 5)
+            .assert_r(1, -10 as _)
+            .assert_r(2, -15 as _)
+            .assert_negative()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b00011_01_000_001_010) // R2,R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 1;
                 cpu.reg.r[1] = i32::MIN as u32 + 1;
-            },
-            0b00011_01_000_001_010, // R2,R1,R0
-            [1, i32::MIN as u32 + 1, i32::MIN as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | carry
-        );
+            })
+            .assert_r(0, 1)
+            .assert_r(1, i32::MIN as u32 + 1)
+            .assert_r(2, i32::MIN as _)
+            .assert_negative()
+            .assert_carry()
+            .run();
 
         // ADD{S} Rd,Rs,#nn
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[0] = 10,
-            0b00011_10_101_000_000, // R0,R0,#5
-            [15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b00011_10_101_000_000) // R0,R0,#5
+            .setup(&|cpu| cpu.reg.r[0] = 10)
+            .assert_r(0, 15)
+            .run();
 
         // SUB{S} Rd,Rs,#nn
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[0] = 10,
-            0b00011_11_010_000_000, // R0,R0,#2
-            [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
+        InstrTest::new_thumb(0b00011_11_010_000_000) // R0,R0,#2
+            .setup(&|cpu| cpu.reg.r[0] = 10)
+            .assert_r(0, 8)
+            .assert_carry()
+            .run();
     }
 
     #[test]
     fn execute_thumb3() {
         // MOV{S} Rd,#nn
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.negative = true,
-            0b001_00_101_11111111, // R5,#255
-            [0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 1337,
-            0b001_00_001_00000000, // R1,#0
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
+        InstrTest::new_thumb(0b001_00_101_11111111) // R5,#255
+            .setup(&|cpu| cpu.reg.cpsr.negative = true)
+            .assert_r(5, 255)
+            .run();
+
+        InstrTest::new_thumb(0b001_00_001_00000000) // R1,#0
+            .setup(&|cpu| cpu.reg.r[1] = 1337)
+            .assert_zero()
+            .run();
 
         // CMP{S} Rd,#nn
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[6] = 255,
-            0b001_01_110_11111111, // R6,#255
-            [0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[2] = 13,
-            0b001_01_010_00000000, // R2,#0
-            [0, 0, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b001_01_110_11111111) // R6,#255
+            .setup(&|cpu| cpu.reg.r[6] = 255)
+            .assert_r(6, 255)
+            .assert_zero()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b001_01_010_00000000) // R2,#0
+            .setup(&|cpu| cpu.reg.r[2] = 13)
+            .assert_r(2, 13)
+            .run();
 
         // ADD{S} Rd,#nn
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[7] = 3,
-            0b001_10_111_10101010, // R7,#170
-            [0, 0, 0, 0, 0, 0, 0, 173, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b001_10_111_10101010) // R7,#170
+            .setup(&|cpu| cpu.reg.r[7] = 3)
+            .assert_r(7, 173)
+            .run();
 
         // SUB{S} Rd,#nn
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[3] = 10,
-            0b001_11_011_00001111, // R3,#15
-            [0, 0, 0, -5 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
+        InstrTest::new_thumb(0b001_11_011_00001111) // R3,#15
+            .setup(&|cpu| cpu.reg.r[3] = 10)
+            .assert_r(3, -5 as _)
+            .assert_negative()
+            .run();
     }
 
     #[test]
-    #[rustfmt::skip]
     fn execute_thumb4() {
         // AND{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_0000_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0b0011;
                 cpu.reg.r[1] = 0b1010;
-            },
-            0b010000_0000_001_000, // R0,R1
-            [0b0010, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 0b1010,
-            0b010000_0000_001_000, // R0,R1
-            [0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 0b0010)
+            .assert_r(1, 0b1010)
+            .run();
+
+        InstrTest::new_thumb(0b010000_0000_001_000) // R0,R1
+            .setup(&|cpu| cpu.reg.r[1] = 0b1010)
+            .assert_r(1, 0b1010)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0000_101_001) // R1,R5
+            .setup(&|cpu| {
                 cpu.reg.r[1] = i32::MIN as _;
                 cpu.reg.r[5] = 1 << 31;
-            },
-            0b010000_0000_101_001, // R1,R5
-            [0, i32::MIN as _, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
+            })
+            .assert_r(1, i32::MIN as _)
+            .assert_r(5, 1 << 31)
+            .assert_negative()
+            .run();
 
         // EOR{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_0001_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0b0011;
                 cpu.reg.r[1] = 0b1110;
-            },
-            0b010000_0001_001_000, // R0,R1
-            [0b1101, 0b1110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 0b1101)
+            .assert_r(1, 0b1110)
+            .run();
+
+        InstrTest::new_thumb(0b010000_0001_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0b1100;
                 cpu.reg.r[1] = 0b1100;
-            },
-            0b010000_0001_000_001, // R1,R0
-            [0b1100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 0b1100)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0001_001_111) // R7,R1
+            .setup(&|cpu| {
                 cpu.reg.r[1] = u32::MAX;
                 cpu.reg.r[7] = u32::MAX >> 1;
-            },
-            0b010000_0001_001_111, // R7,R1
-            [0, u32::MAX, 0, 0, 0, 0, 0, 1 << 31, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
+            })
+            .assert_r(1, u32::MAX)
+            .assert_r(7, 1 << 31)
+            .assert_negative()
+            .run();
 
         // LSL{S} Rd,Rs
         // this test should not panic due to shift overflow:
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_0010_001_111) // R7,R1
+            .setup(&|cpu| {
                 cpu.reg.r[1] = 32;
                 cpu.reg.r[7] = 1;
-            },
-            0b010000_0010_001_111, // R7,R1
-            [0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(1, 32)
+            .assert_zero()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0010_001_111) // R7,R1
+            .setup(&|cpu| {
                 cpu.reg.r[1] = 33;
                 cpu.reg.r[7] = 1;
-            },
-            0b010000_0010_001_111, // R7,R1
-            [0, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(1, 33)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0010_001_111) // R7,R1
+            .setup(&|cpu| {
                 cpu.reg.r[1] = u8::MAX.into();
                 cpu.reg.r[7] = 1;
-            },
-            0b010000_0010_001_111, // R7,R1
-            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
+            })
+            .assert_r(1, u8::MAX.into())
+            .assert_zero()
+            .run();
 
         // LSR{S} Rd,Rs
         // this test should not panic due to shift overflow:
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_0011_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 32;
                 cpu.reg.r[1] = 1 << 31;
-            },
-            0b010000_0011_000_001, // R1,R0
-            [32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 32)
+            .assert_zero()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0011_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 33;
                 cpu.reg.r[1] = 1 << 31;
-            },
-            0b010000_0011_000_001, // R1,R0
-            [33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 33)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0011_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = u8::MAX.into();
                 cpu.reg.r[1] = 1;
-            },
-            0b010000_0011_000_001, // R1,R0
-            [u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u8::MAX.into())
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0011_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 3;
                 cpu.reg.r[1] = 0b1000;
-            },
-            0b010000_0011_000_001, // R1,R0
-            [3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 3)
+            .assert_r(1, 1)
+            .run();
 
         // ASR{S} Rd,Rs
         // this test should not panic due to shift overflow:
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_0100_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 1 << 31;
                 cpu.reg.r[1] = 32;
-            },
-            0b010000_0100_001_000, // R0,R1
-            [u32::MAX, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u32::MAX)
+            .assert_r(1, 32)
+            .assert_negative()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0100_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 1 << 31;
                 cpu.reg.r[1] = 33;
-            },
-            0b010000_0100_001_000, // R0,R1
-            [u32::MAX, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u32::MAX)
+            .assert_r(1, 33)
+            .assert_negative()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0100_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 1 << 31;
                 cpu.reg.r[1] = u8::MAX.into();
-            },
-            0b010000_0100_001_000, // R0,R1
-            [u32::MAX, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u32::MAX)
+            .assert_r(1, u8::MAX.into())
+            .assert_negative()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0100_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 1 << 30;
                 cpu.reg.r[1] = u8::MAX.into();
-            },
-            0b010000_0100_001_000, // R0,R1
-            [0, u8::MAX.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
+            })
+            .assert_r(1, u8::MAX.into())
+            .assert_zero()
+            .run();
 
         // ADC{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_0101_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 5;
                 cpu.reg.r[1] = 32;
-            },
-            0b010000_0101_000_001, // R1,R0
-            [5, 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 5)
+            .assert_r(1, 37)
+            .run();
+
+        InstrTest::new_thumb(0b010000_0101_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 5;
                 cpu.reg.r[1] = 32;
                 cpu.reg.cpsr.carry = true;
-            },
-            0b010000_0101_000_001, // R1,R0
-            [5, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 5)
+            .assert_r(1, 38)
+            .run();
+
+        InstrTest::new_thumb(0b010000_0101_000_111) // R7,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
                 cpu.reg.r[7] = 1;
-            },
-            0b010000_0101_000_111, // R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u32::MAX)
+            .assert_carry()
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0101_000_111) // R7,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
                 cpu.reg.r[7] = 1;
                 cpu.reg.cpsr.carry = true;
-            },
-            0b010000_0101_000_111, // R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u32::MAX)
+            .assert_r(7, 1)
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0101_000_111) // R7,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
                 cpu.reg.r[7] = u32::MAX;
-            },
-            0b010000_0101_000_111, // R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, -2 as _, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
-                cpu.reg.r[0] = u32::MAX;
-                cpu.reg.r[7] = u32::MAX;
-                cpu.reg.cpsr.carry = true;
-            },
-            0b010000_0101_000_111, // R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, -1 as _, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u32::MAX)
+            .assert_r(7, -2 as _)
+            .assert_carry()
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0101_000_111) // R7,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
                 cpu.reg.r[7] = u32::MAX;
                 cpu.reg.cpsr.carry = true;
-            },
-            0b010000_0101_000_111, // R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, -1 as _, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u32::MAX)
+            .assert_r(7, -1 as _)
+            .assert_carry()
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0101_000_111) // R7,R0
+            .setup(&|cpu| {
+                cpu.reg.r[0] = u32::MAX;
+                cpu.reg.r[7] = u32::MAX;
+                cpu.reg.cpsr.carry = true;
+            })
+            .assert_r(0, u32::MAX)
+            .assert_r(7, -1 as _)
+            .assert_carry()
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0101_000_111) // R7,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
                 cpu.reg.cpsr.carry = true;
-            },
-            0b010000_0101_000_111, // R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | zero
-        );
+            })
+            .assert_r(0, u32::MAX)
+            .assert_carry()
+            .assert_zero()
+            .run();
 
         // SBC{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_0110_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 5;
                 cpu.reg.r[1] = 32;
-            },
-            0b010000_0110_000_001, // R1,R0
-            [5, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 5)
+            .assert_r(1, 26)
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0110_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 5;
                 cpu.reg.r[1] = 32;
                 cpu.reg.cpsr.carry = true;
-            },
-            0b010000_0110_000_001, // R1,R0
-            [5, 27, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 5)
+            .assert_r(1, 27)
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0110_000_111) // R7,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = -1 as _;
                 cpu.reg.r[7] = 1;
-            },
-            0b010000_0110_000_111, // R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u32::MAX)
+            .assert_r(7, 1)
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0110_000_111) // R7,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = -1 as _;
                 cpu.reg.r[7] = 1;
                 cpu.reg.cpsr.carry = true;
-            },
-            0b010000_0110_000_111, // R7,R0
-            [u32::MAX, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[7] = i32::MIN as _,
-            0b010000_0110_000_111, // R7,R0
-            [0, 0, 0, 0, 0, 0, 0, i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 4],
-            overflow | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, u32::MAX)
+            .assert_r(7, 2)
+            .run();
+
+        InstrTest::new_thumb(0b010000_0110_000_111) // R7,R0
+            .setup(&|cpu| cpu.reg.r[7] = i32::MIN as _)
+            .assert_r(7, i32::MAX as _)
+            .assert_overflow()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0110_000_111) // R7,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = i32::MAX as _;
                 cpu.reg.r[7] = i32::MIN as _;
-            },
-            0b010000_0110_000_111, // R7,R0
-            [i32::MAX as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            overflow | carry | zero
-        );
+            })
+            .assert_r(0, i32::MAX as _)
+            .assert_overflow()
+            .assert_carry()
+            .assert_zero()
+            .run();
 
         // ROR{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_0111_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 2;
                 cpu.reg.r[1] = 0b1111;
-            },
-            0b010000_0111_000_001, // R1,R0
-            [2, (0b11 << 30) | 0b11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 0b1111,
-            0b010000_0111_000_001, // R1,R0
-            [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 2)
+            .assert_r(1, (0b11 << 30) | 0b11)
+            .assert_carry()
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0111_000_001) // R1,R0
+            .setup(&|cpu| cpu.reg.r[1] = 0b1111)
+            .assert_r(1, 0b1111)
+            .run();
+
+        InstrTest::new_thumb(0b010000_0111_010_011) // R3,R2
+            .setup(&|cpu| {
                 cpu.reg.r[2] = 255;
                 cpu.reg.r[3] = 0b1111;
-            },
-            0b010000_0111_010_011, // R3,R2
-            [0, 0, 255, 0b11110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[2] = 255,
-            0b010000_0111_010_011, // R3,R2
-            [0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
+            })
+            .assert_r(2, 255)
+            .assert_r(3, 0b11110)
+            .run();
+
+        InstrTest::new_thumb(0b010000_0111_010_011) // R3,R2
+            .setup(&|cpu| cpu.reg.r[2] = 255)
+            .assert_r(2, 255)
+            .assert_zero()
+            .run();
 
         // TST Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 0b1111,
-            0b010000_1000_000_001, // R1,R0
-            [0, 0b1111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_1000_000_001) // R1,R0
+            .setup(&|cpu| cpu.reg.r[1] = 0b1111)
+            .assert_r(1, 0b1111)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1000_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0b10000;
                 cpu.reg.r[1] = 0b01111;
-            },
-            0b010000_1000_000_001, // R1,R0
-            [0b10000, 0b01111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 0b10000)
+            .assert_r(1, 0b01111)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1000_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 1;
                 cpu.reg.r[1] = 1;
-            },
-            0b010000_1000_000_001, // R1,R0
-            [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 1)
+            .assert_r(1, 1)
+            .run();
+
+        InstrTest::new_thumb(0b010000_1000_000_001) // R1,R0
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 1 << 31;
                 cpu.reg.r[1] = u32::MAX;
-            },
-            0b010000_1000_000_001, // R1,R0
-            [1 << 31, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
+            })
+            .assert_r(0, 1 << 31)
+            .assert_r(1, u32::MAX)
+            .assert_negative()
+            .run();
 
         // NEG{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[3] = 30,
-            0b010000_1001_011_111, // R7,R3
-            [0, 0, 0, 30, 0, 0, 0, -30 as _, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[3] = 0,
-            0b010000_1001_011_111, // R7,R3
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[3] = -10 as _,
-            0b010000_1001_011_111, // R7,R3
-            [0, 0, 0, -10 as _, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b010000_1001_011_111) // R7,R3
+            .setup(&|cpu| cpu.reg.r[3] = 30)
+            .assert_r(3, 30)
+            .assert_r(7, -30 as _)
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1001_011_111) // R7,R3
+            .setup(&|cpu| cpu.reg.r[3] = 0)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1001_011_111) // R7,R3
+            .setup(&|cpu| cpu.reg.r[3] = -10 as _)
+            .assert_r(3, -10 as _)
+            .assert_r(7, 10)
+            .run();
+
         // negating i32::MIN isn't possible, and it should also set the overflow flag
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[3] = i32::MIN as _,
-            0b010000_1001_011_111, // R7,R3
-            [0, 0, 0, i32::MIN as _, 0, 0, 0, i32::MIN as _, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | overflow
-        );
+        InstrTest::new_thumb(0b010000_1001_011_111) // R7,R3
+            .setup(&|cpu| cpu.reg.r[3] = i32::MIN as _)
+            .assert_r(3, i32::MIN as _)
+            .assert_r(7, i32::MIN as _)
+            .assert_negative()
+            .assert_overflow()
+            .run();
 
         // CMP Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_1010_011_100) // R4,R3
+            .setup(&|cpu| {
                 cpu.reg.r[3] = 30;
                 cpu.reg.r[4] = 30;
-            },
-            0b010000_1010_011_100, // R4,R3
-            [0, 0, 0, 30, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(3, 30)
+            .assert_r(4, 30)
+            .assert_zero()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1010_011_100) // R4,R3
+            .setup(&|cpu| {
                 cpu.reg.r[3] = 30;
                 cpu.reg.r[4] = 20;
-            },
-            0b010000_1010_011_100, // R4,R3
-            [0, 0, 0, 30, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(3, 30)
+            .assert_r(4, 20)
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1010_011_100) // R4,R3
+            .setup(&|cpu| {
                 cpu.reg.r[3] = 20;
                 cpu.reg.r[4] = 30;
-            },
-            0b010000_1010_011_100, // R4,R3
-            [0, 0, 0, 20, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
+            })
+            .assert_r(3, 20)
+            .assert_r(4, 30)
+            .assert_carry()
+            .run();
 
         // CMN Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_1011_011_100) // R4,R3
+            .setup(&|cpu| {
                 cpu.reg.r[3] = -30 as _;
                 cpu.reg.r[4] = 30;
-            },
-            0b010000_1011_011_100, // R4,R3
-            [0, 0, 0, -30 as _, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero | carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(3, -30 as _)
+            .assert_r(4, 30)
+            .assert_zero()
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1011_011_100) // R4,R3
+            .setup(&|cpu| {
                 cpu.reg.r[3] = -30 as _;
                 cpu.reg.r[4] = 20;
-            },
-            0b010000_1011_011_100, // R4,R3
-            [0, 0, 0, -30 as _, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(3, -30 as _)
+            .assert_r(4, 20)
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1011_011_100) // R4,R3
+            .setup(&|cpu| {
                 cpu.reg.r[3] = -20 as _;
                 cpu.reg.r[4] = 30;
-            },
-            0b010000_1011_011_100, // R4,R3
-            [0, 0, 0, -20 as _, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
+            })
+            .assert_r(3, -20 as _)
+            .assert_r(4, 30)
+            .assert_carry()
+            .run();
 
         // ORR{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_1100_101_000) // R0,R5
+            .setup(&|cpu| {
                 cpu.reg.r[5] = 0b1010;
                 cpu.reg.r[0] = 0b0101;
-            },
-            0b010000_1100_101_000, // R0,R5
-            [0b1111, 0, 0, 0, 0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            0b010000_1100_101_000, // R0,R5
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[4] = u32::MAX,
-            0b010000_1100_100_100, // R4,R4
-            [0, 0, 0, 0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
+            })
+            .assert_r(0, 0b1111)
+            .assert_r(5, 0b1010)
+            .run();
+
+        InstrTest::new_thumb(0b010000_1100_101_000) // R0,R5
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1100_100_100) // R4,R4
+            .setup(&|cpu| cpu.reg.r[4] = u32::MAX)
+            .assert_r(4, u32::MAX)
+            .assert_negative()
+            .run();
 
         // MUL{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_1101_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 11;
                 cpu.reg.r[1] = 3;
-            },
-            0b010000_1101_001_000, // R0,R1
-            [33, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 33)
+            .assert_r(1, 3)
+            .run();
+
+        InstrTest::new_thumb(0b010000_1101_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0;
                 cpu.reg.r[1] = 5;
-            },
-            0b010000_1101_001_000, // R0,R1
-            [0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(1, 5)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1101_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = -8 as _;
                 cpu.reg.r[1] = 14;
-            },
-            0b010000_1101_001_000, // R0,R1
-            [-112 as _, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, -112 as _)
+            .assert_r(1, 14)
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1101_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = -4 as _;
                 cpu.reg.r[1] = -4 as _;
-            },
-            0b010000_1101_001_000, // R0,R1
-            [16, -4 as _, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 16)
+            .assert_r(1, -4 as _)
+            .run();
 
         // BIC{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010000_1110_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0b11111;
                 cpu.reg.r[1] = 0b10101;
-            },
-            0b010000_1110_001_000, // R0,R1
-            [0b01010, 0b10101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(0, 0b01010)
+            .assert_r(1, 0b10101)
+            .run();
+
+        InstrTest::new_thumb(0b010000_1110_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
                 cpu.reg.r[1] = u32::MAX;
-            },
-            0b010000_1110_001_000, // R0,R1
-            [0, u32::MAX, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(1, u32::MAX)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1110_001_000) // R0,R1
+            .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
                 cpu.reg.r[1] = u32::MAX >> 1;
-            },
-            0b010000_1110_001_000, // R0,R1
-            [1 << 31, u32::MAX >> 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
+            })
+            .assert_r(0, 1 << 31)
+            .assert_r(1, u32::MAX >> 1)
+            .assert_negative()
+            .run();
 
         // MVN{S} Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[0] = u32::MAX,
-            0b010000_1111_000_000, // R0,R0
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[3] = 0b1111_0000,
-            0b010000_1111_011_000, // R0,R3
-            [!0b1111_0000, 0, 0, 0b1111_0000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
+        InstrTest::new_thumb(0b010000_1111_000_000) // R0,R0
+            .setup(&|cpu| cpu.reg.r[0] = u32::MAX)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_1111_011_000) // R0,R3
+            .setup(&|cpu| cpu.reg.r[3] = 0b1111_0000)
+            .assert_r(0, !0b1111_0000)
+            .assert_r(3, 0b1111_0000)
+            .assert_negative()
+            .run();
     }
 
     #[test]
     fn execute_thumb5() {
         // ADD Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010001_00_1_0_001_101) // R13,R1
+            .setup(&|cpu| {
                 cpu.reg.r[13] = 20;
                 cpu.reg.r[1] = 15;
-            },
-            0b010001_00_1_0_001_101, // R13,R1
-            [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 35, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(1, 15)
+            .assert_r(13, 35)
+            .run();
+
+        InstrTest::new_thumb(0b010001_00_1_1_110_000) // R8,R14
+            .setup(&|cpu| {
                 cpu.reg.r[8] = 5;
                 cpu.reg.r[14] = -10 as _;
-            },
-            0b010001_00_1_1_110_000, // R8,R14
-            [0, 0, 0, 0, 0, 0, 0, 0, -5 as _, 0, 0, 0, 0, 0, -10 as _, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(8, -5 as _)
+            .assert_r(14, -10 as _)
+            .run();
+
+        InstrTest::new_thumb(0b010001_00_1_1_010_111) // PC,R10
+            .setup(&|cpu| {
                 cpu.reg.r[PC_INDEX] = 1;
                 cpu.reg.r[10] = 10;
-            },
-            0b010001_00_1_1_010_111, // PC,R10
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 14],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(10, 10)
+            .assert_r(PC_INDEX, 14)
+            .run();
+
+        InstrTest::new_thumb(0b010001_00_1_1_010_111) // PC,R10
+            .setup(&|cpu| {
                 cpu.reg.r[PC_INDEX] = 0;
                 cpu.reg.r[10] = 10;
-            },
-            0b010001_00_1_1_010_111, // PC,R10
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 14],
-        );
+            })
+            .assert_r(10, 10)
+            .assert_r(PC_INDEX, 14)
+            .run();
 
         // CMP Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b010001_01_1_0_001_101) // R13,R1
+            .setup(&|cpu| {
                 cpu.reg.r[13] = 20;
                 cpu.reg.r[1] = 15;
-            },
-            0b010001_01_1_0_001_101, // R13,R1
-            [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 4],
-            carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(1, 15)
+            .assert_r(13, 20)
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b010001_01_0_1_101_001) // R1,R13
+            .setup(&|cpu| {
                 cpu.reg.r[13] = 20;
                 cpu.reg.r[1] = 15;
-            },
-            0b010001_01_0_1_101_001, // R1,R13
-            [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 4],
-            negative
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+            })
+            .assert_r(1, 15)
+            .assert_r(13, 20)
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b010001_01_1_1_010_111) // PC,R10
+            .setup(&|cpu| {
                 cpu.reg.r[PC_INDEX] = 10;
                 cpu.reg.r[10] = 10;
-            },
-            0b010001_01_1_1_010_111, // PC,R10
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 10],
-            zero | carry
-        );
+            })
+            .assert_r(10, 10)
+            .assert_r(PC_INDEX, 10)
+            .assert_zero()
+            .assert_carry()
+            .run();
 
         // MOV Rd,Rs
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 15,
-            0b010001_10_1_0_001_101, // R13,R1
-            [0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[8] = 15,
-            0b010001_10_1_1_001_001, // R8,R8
-            [0, 0, 0, 0, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b010001_10_1_0_001_101) // R13,R1
+            .setup(&|cpu| cpu.reg.r[1] = 15)
+            .assert_r(1, 15)
+            .assert_r(13, 15)
+            .run();
+
+        InstrTest::new_thumb(0b010001_10_1_1_001_001) // R8,R8
+            .setup(&|cpu| cpu.reg.r[8] = 15)
+            .assert_r(8, 15)
+            .run();
 
         // BX Rs
-        let cpu = test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[1] = 0b111,
-            0b010001_11_1_0_001_101, // R1
-            [0, 0b111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0b110 + 4],
-        );
+        let cpu = InstrTest::new_thumb(0b010001_11_1_0_001_101) // R1
+            .setup(&|cpu| cpu.reg.r[1] = 0b111)
+            .assert_r(1, 0b111)
+            .assert_r(PC_INDEX, 0b110 + 4)
+            .run();
+
         assert_eq!(cpu.reg.cpsr.state, OperationState::Thumb);
 
-        let cpu = test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[13] = 0b110,
-            0b010001_11_0_1_101_000, // R13
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0b110, 0, 0b100 + 8],
-        );
+        let cpu = InstrTest::new_thumb(0b010001_11_0_1_101_000) // R13
+            .setup(&|cpu| cpu.reg.r[13] = 0b110)
+            .assert_r(13, 0b110)
+            .assert_r(PC_INDEX, 0b100 + 8)
+            .run();
+
         assert_eq!(cpu.reg.cpsr.state, OperationState::Arm);
     }
 
@@ -1371,18 +1325,15 @@ mod tests {
         bus.write_word(84, 0xbead_feed);
 
         // LDR Rd,[PC,#nn]
-        test_instr!(
-            &mut bus,
-            |_| {},
-            0b01001_101_00001100, // R5,[PC,#48]
-            [0, 0, 0, 0, 0, 0xdead_beef, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 20,
-            0b01001_000_00010000, // R0,[PC,#64]
-            [0xbead_feed, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20],
-        );
+        InstrTest::new_thumb(0b01001_101_00001100) // R5,[PC,#48]
+            .assert_r(5, 0xdead_beef)
+            .run_with_bus(&mut bus);
+
+        InstrTest::new_thumb(0b01001_000_00010000) // R0,[PC,#64]
+            .setup(&|cpu| cpu.reg.r[PC_INDEX] = 20)
+            .assert_r(0, 0xbead_feed)
+            .assert_r(PC_INDEX, 20)
+            .run_with_bus(&mut bus);
     }
 
     #[test]
@@ -1390,69 +1341,71 @@ mod tests {
         let mut bus = VecBus(vec![0; 88]);
 
         // STR Rd,[Rb,Ro]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b0101_00_0_010_001_000) // R0,[R1,R2]
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0xabcd_ef01;
                 cpu.reg.r[1] = 10;
                 cpu.reg.r[2] = 5;
-            },
-            0b0101_00_0_010_001_000, // R0,[R1,R2]
-            [0xabcd_ef01, 10, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(1, 10)
+            .assert_r(2, 5)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0xabcd_ef01, bus.read_word(12));
 
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b0101_00_0_010_001_000) // R0,[R1,R2]
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0x0102_abbc;
                 cpu.reg.r[1] = 12;
                 cpu.reg.r[2] = 4;
-            },
-            0b0101_00_0_010_001_000, // R0,[R1,R2]
-            [0x0102_abbc, 12, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0x0102_abbc)
+            .assert_r(1, 12)
+            .assert_r(2, 4)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0x0102_abbc, bus.read_word(16));
 
         // STRB Rd,[Rb,Ro]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b0101_01_0_010_001_000) // R0,[R1,R2]
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0xabab;
                 cpu.reg.r[1] = 10;
                 cpu.reg.r[2] = 9;
-            },
-            0b0101_01_0_010_001_000, // R0,[R1,R2]
-            [0xabab, 10, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabab)
+            .assert_r(1, 10)
+            .assert_r(2, 9)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0xab, bus.read_byte(19));
         assert_eq!(0, bus.read_byte(20));
 
         // LDR Rd,[Rb,Ro]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b0101_10_0_010_001_000) // R0,[R1,R2]
+            .setup(&|cpu| {
                 cpu.reg.r[1] = 7;
                 cpu.reg.r[2] = 8;
-            },
-            0b0101_10_0_010_001_000, // R0,[R1,R2]
-            [0xabcd_ef01, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(1, 7)
+            .assert_r(2, 8)
+            .run_with_bus(&mut bus);
 
         // LDRB Rd,[Rb,Ro]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b0101_11_0_110_001_000) // R0,[R1,R6]
+            .setup(&|cpu| {
                 cpu.reg.r[1] = 2;
                 cpu.reg.r[6] = 17;
-            },
-            0b0101_11_0_110_001_000, // R0,[R1,R6]
-            [0xab, 2, 0, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xab)
+            .assert_r(1, 2)
+            .assert_r(6, 17)
+            .run_with_bus(&mut bus);
     }
 
     #[test]
-    #[rustfmt::skip]
     fn execute_thumb8() {
         let mut bus = VecBus(vec![0; 22]);
         bus.write_byte(0, 0b0111_1110);
@@ -1460,57 +1413,56 @@ mod tests {
         bus.write_byte(21, !1);
 
         // STRH Rd,[Rb,Ro]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b0101_00_1_010_001_000) // R0,[R1,R2]
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0xabcd_ef01;
                 cpu.reg.r[1] = 10;
                 cpu.reg.r[2] = 5;
-            },
-            0b0101_00_1_010_001_000, // R0,[R1,R2]
-            [0xabcd_ef01, 10, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(1, 10)
+            .assert_r(2, 5)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0xef01, bus.read_hword(14));
         assert_eq!(0, bus.read_hword(16));
 
         // LDSB Rd,[Rb,Ro]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b0101_01_1_010_001_000) // R0,[R1,R2]
+            .setup(&|cpu| {
                 cpu.reg.r[1] = 20;
                 cpu.reg.r[2] = 1;
-            },
-            0b0101_01_1_010_001_000, // R0,[R1,R2]
-            [i32::from(!1u8) as _, 20, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            &mut bus,
-            |_| {},
-            0b0101_01_1_010_001_000, // R0,[R1,R2]
-            [0b0111_1110, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, i32::from(!1u8) as _)
+            .assert_r(1, 20)
+            .assert_r(2, 1)
+            .run_with_bus(&mut bus);
+
+        InstrTest::new_thumb(0b0101_01_1_010_001_000) // R0,[R1,R2]
+            .assert_r(0, 0b0111_1110)
+            .run_with_bus(&mut bus);
 
         // LDRH Rd,[Rb,Ro]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b0101_10_1_010_001_000) // R0,[R1,R2]
+            .setup(&|cpu| {
                 cpu.reg.r[1] = 13;
                 cpu.reg.r[2] = 1;
-            },
-            0b0101_10_1_010_001_000, // R0,[R1,R2]
-            [0xef01, 13, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xef01)
+            .assert_r(1, 13)
+            .assert_r(2, 1)
+            .run_with_bus(&mut bus);
 
         // LDSH Rd,[Rb,Ro]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b0101_11_1_010_001_000) // R0,[R1,R2]
+            .setup(&|cpu| {
                 cpu.reg.r[1] = 2;
                 cpu.reg.r[2] = 17;
-            },
-            0b0101_11_1_010_001_000, // R0,[R1,R2]
-            [1 << 7, 2, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 1 << 7)
+            .assert_r(1, 2)
+            .assert_r(2, 17)
+            .run_with_bus(&mut bus);
     }
 
     #[test]
@@ -1518,44 +1470,42 @@ mod tests {
         let mut bus = VecBus(vec![0; 40]);
 
         // STR Rd,[Rb,#nn]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b011_00_00110_001_000) // R0,[R1,#24]
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0xabcd_ef01;
                 cpu.reg.r[1] = 10;
-            },
-            0b011_00_00110_001_000, // R0,[R1,#24]
-            [0xabcd_ef01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(1, 10)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0xabcd_ef01, bus.read_word(32));
 
         // LDR Rd,[Rb,#nn]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[1] = 8,
-            0b011_01_00110_001_000, // R0,[R1,#24]
-            [0xabcd_ef01, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b011_01_00110_001_000) // R0,[R1,#24]
+            .setup(&|cpu| cpu.reg.r[1] = 8)
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(1, 8)
+            .run_with_bus(&mut bus);
 
         // STRB Rd,[Rb,#nn]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b011_10_00110_001_000) // R0,[R1,#6]
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0xabcd_ef01;
                 cpu.reg.r[1] = 10;
-            },
-            0b011_10_00110_001_000, // R0,[R1,#6]
-            [0xabcd_ef01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(1, 10)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0x01, bus.read_byte(16));
 
         // LDRB Rd,[Rb,#nn]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[1] = 10,
-            0b011_11_00110_001_000, // R0,[R1,#6]
-            [0x01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b011_11_00110_001_000) // R0,[R1,#6]
+            .setup(&|cpu| cpu.reg.r[1] = 10)
+            .assert_r(0, 0x01)
+            .assert_r(1, 10)
+            .run_with_bus(&mut bus);
     }
 
     #[test]
@@ -1563,24 +1513,23 @@ mod tests {
         let mut bus = VecBus(vec![0; 40]);
 
         // STRH Rd,[Rb,#nn]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1000_0_00101_001_000) // R0,[R1,#10]
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0xabcd_ef01;
                 cpu.reg.r[1] = 10;
-            },
-            0b1000_0_00101_001_000, // R0,[R1,#10]
-            [0xabcd_ef01, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(1, 10)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0xef01, bus.read_hword(20));
 
         // LDRH Rd,[Rb,#nn]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[1] = 9,
-            0b1000_1_00110_001_000, // R0,[R1,#12]
-            [0xef01, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b1000_1_00110_001_000) // R0,[R1,#12]
+            .setup(&|cpu| cpu.reg.r[1] = 9)
+            .assert_r(0, 0xef01)
+            .assert_r(1, 9)
+            .run_with_bus(&mut bus);
     }
 
     #[test]
@@ -1588,460 +1537,434 @@ mod tests {
         let mut bus = VecBus(vec![0; 40]);
 
         // STR Rd,[SP,#nn]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1001_0_000_00000010) // R0,[SP,#8]
+            .setup(&|cpu| {
                 cpu.reg.r[SP_INDEX] = 8;
                 cpu.reg.r[0] = 0xabcd_ef01;
-            },
-            0b1001_0_000_00000010, // R0,[SP,#8]
-            [0xabcd_ef01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(SP_INDEX, 8)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0xabcd_ef01, bus.read_word(16));
 
         // LDR Rd,[SP,#nn]
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 1,
-            0b1001_1_000_00000100, // R0,[SP,#16]
-            [0xabcd_ef01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4],
-        );
+        InstrTest::new_thumb(0b1001_1_000_00000100) // R0,[SP,#16]
+            .setup(&|cpu| cpu.reg.r[SP_INDEX] = 1)
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(SP_INDEX, 1)
+            .run_with_bus(&mut bus);
     }
 
     #[test]
     fn execute_thumb12() {
         // ADD Rd,[PC,#nn]
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 20,
-            0b1010_0_000_11001000, // R0,[PC,#200]
-            [220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 0,
-            0b1010_0_000_00000000, // R0,[PC,#0]
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        );
+        InstrTest::new_thumb(0b1010_0_000_11001000) // R0,[PC,#200]
+            .setup(&|cpu| cpu.reg.r[PC_INDEX] = 20)
+            .assert_r(0, 220)
+            .assert_r(PC_INDEX, 20)
+            .run();
+
+        InstrTest::new_thumb(0b1010_0_000_00000000) // R0,[PC,#0]
+            .setup(&|cpu| cpu.reg.r[PC_INDEX] = 0)
+            .assert_r(PC_INDEX, 0)
+            .run();
 
         // ADD Rd,[SP,#nn]
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 40,
-            0b1010_1_000_11001000, // R0,[SP,#200]
-            [240, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40, 0, 4],
-        );
-        test_instr!(
-            0b1010_1_000_00000000, // R0,[SP,#0]
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b1010_1_000_11001000) // R0,[SP,#200]
+            .setup(&|cpu| cpu.reg.r[SP_INDEX] = 40)
+            .assert_r(0, 240)
+            .assert_r(SP_INDEX, 40)
+            .run();
+
+        InstrTest::new_thumb(0b1010_1_000_00000000) // R0,[SP,#0]
+            .run();
     }
 
     #[test]
     fn execute_thumb13() {
         // ADD SP,#nn
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 1,
-            0b10110000_0_0110010, // SP,#200
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 201, 0, 4],
-        );
-        test_instr!(
-            0b10110000_0_0000000, // SP,#0
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b10110000_0_0110010) // SP,#200
+            .setup(&|cpu| cpu.reg.r[SP_INDEX] = 1)
+            .assert_r(SP_INDEX, 201)
+            .run();
+
+        InstrTest::new_thumb(0b10110000_0_0000000) // SP,#0
+            .run();
 
         // SUB SP,#nn
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 200,
-            0b10110000_1_0110010, // SP,#200
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 50,
-            0b10110000_1_0110010, // SP,#200
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, u32::MAX - 149, 0, 4],
-        );
+        InstrTest::new_thumb(0b10110000_1_0110010) // SP,#200
+            .setup(&|cpu| cpu.reg.r[SP_INDEX] = 200)
+            .run();
+
+        InstrTest::new_thumb(0b10110000_1_0110010) // SP,#200
+            .setup(&|cpu| cpu.reg.r[SP_INDEX] = 50)
+            .assert_r(SP_INDEX, u32::MAX - 149)
+            .run();
     }
 
     #[test]
-    #[rustfmt::skip]
     fn execute_thumb14() {
         let mut bus = VecBus(vec![0; 40]);
 
         // PUSH {Rlist}{LR}
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1011_0_10_0_10001001) // {R0,R3,R7}
+            .setup(&|cpu| {
                 cpu.reg.r[SP_INDEX] = 41; // Mis-aligned SP.
                 cpu.reg.r[0] = 0xabcd;
                 cpu.reg.r[3] = 0xfefe_0001;
                 cpu.reg.r[7] = 42;
-            },
-            0b1011_0_10_0_10001001, // {R0,R3,R7}
-            [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 29, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabcd)
+            .assert_r(3, 0xfefe_0001)
+            .assert_r(7, 42)
+            .assert_r(SP_INDEX, 29)
+            .run_with_bus(&mut bus);
+
         assert_eq!(42, bus.read_word(36));
         assert_eq!(0xfefe_0001, bus.read_word(32));
         assert_eq!(0xabcd, bus.read_word(28));
 
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1011_0_10_1_00000010) // {R1,LR}
+            .setup(&|cpu| {
                 cpu.reg.r[SP_INDEX] = 28;
                 cpu.reg.r[1] = 0b1010;
                 cpu.reg.r[LR_INDEX] = 40;
-            },
-            0b1011_0_10_1_00000010, // {R1,LR}
-            [0, 0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 40, 4],
-        );
+            })
+            .assert_r(1, 0b1010)
+            .assert_r(SP_INDEX, 20)
+            .assert_r(LR_INDEX, 40)
+            .run_with_bus(&mut bus);
+
         assert_eq!(40, bus.read_word(24));
         assert_eq!(0b1010, bus.read_word(20));
 
         // POP {Rlist}{PC}
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 20,
-            0b1011_1_10_1_00000001, // {R1,PC}
-            [0b1010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 0, 44],
-        );
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[SP_INDEX] = 31, // Mis-aligned SP.
-            0b1011_1_10_0_10001001, // {R0,R3,R7}
-            [0xabcd, 0, 0, 0xfefe_0001, 0, 0, 0, 42, 0, 0, 0, 0, 0, 43, 0, 4],
-        );
+        InstrTest::new_thumb(0b1011_1_10_1_00000001) // {R1,PC}
+            .setup(&|cpu| cpu.reg.r[SP_INDEX] = 20)
+            .assert_r(0, 0b1010)
+            .assert_r(SP_INDEX, 28)
+            .assert_r(PC_INDEX, 44)
+            .run_with_bus(&mut bus);
+
+        InstrTest::new_thumb(0b1011_1_10_0_10001001) // {R0,R3,R7}
+            .setup(&|cpu| cpu.reg.r[SP_INDEX] = 31) // Mis-aligned SP.
+            .assert_r(0, 0xabcd)
+            .assert_r(3, 0xfefe_0001)
+            .assert_r(7, 42)
+            .assert_r(SP_INDEX, 43)
+            .run_with_bus(&mut bus);
     }
 
     #[test]
-    #[rustfmt::skip]
     fn execute_thumb15() {
         let mut bus = VecBus(vec![0; 40]);
 
         // STMIA Rb!,{Rlist}
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1100_0_101_10001001) // R5!,{R0,R3,R7}
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0xabcd;
                 cpu.reg.r[3] = 0xfefe_0001;
                 cpu.reg.r[5] = 20;
                 cpu.reg.r[7] = 42;
-            },
-            0b1100_0_101_10001001, // R5!,{R0,R3,R7}
-            [0xabcd, 0, 0, 0xfefe_0001, 0, 32, 0, 42, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xabcd)
+            .assert_r(3, 0xfefe_0001)
+            .assert_r(5, 32)
+            .assert_r(7, 42)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0xabcd, bus.read_word(20));
         assert_eq!(0xfefe_0001, bus.read_word(24));
         assert_eq!(42, bus.read_word(28));
 
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1100_0_101_00000001) // R5!,{R0}
+            .setup(&|cpu| {
                 cpu.reg.r[0] = 0xbeef_fefe;
                 cpu.reg.r[5] = 11; // Mis-aligned Rb.
-            },
-            0b1100_0_101_00000001, // R5!,{R0}
-            [0xbeef_fefe, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_r(0, 0xbeef_fefe)
+            .assert_r(5, 15)
+            .run_with_bus(&mut bus);
+
         assert_eq!(0xbeef_fefe, bus.read_word(8));
 
         // LDMIA Rb!,{Rlist}
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[5] = 20,
-            0b1100_1_101_10001001, // R5!,{R0,R3,R7}
-            [0xabcd, 0, 0, 0xfefe_0001, 0, 32, 0, 42, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            &mut bus,
-            |cpu: &mut Cpu| cpu.reg.r[5] = 11, // Mis-aligned Rb.
-            0b1100_1_101_00000001, // R5!,{R0}
-            [0xbeef_fefe, 0, 0, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b1100_1_101_10001001) // R5!,{R0,R3,R7}
+            .setup(&|cpu| cpu.reg.r[5] = 20)
+            .assert_r(0, 0xabcd)
+            .assert_r(3, 0xfefe_0001)
+            .assert_r(5, 32)
+            .assert_r(7, 42)
+            .run_with_bus(&mut bus);
+
+        InstrTest::new_thumb(0b1100_1_101_00000001) // R5!,{R0}
+            .setup(&|cpu| cpu.reg.r[5] = 11) // Mis-aligned Rb.
+            .assert_r(0, 0xbeef_fefe)
+            .assert_r(5, 15)
+            .run_with_bus(&mut bus);
     }
 
     #[test]
-    #[rustfmt::skip]
     fn execute_thumb16() {
         // BEQ label
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.zero = true,
-            0b1101_0000_00010100, // #40
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 40 + 4],
-            zero
-        );
-        test_instr!(
-            0b1101_0000_00010100, // #40
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b1101_0000_00010100) // #40
+            .setup(&|cpu| cpu.reg.cpsr.zero = true)
+            .assert_r(PC_INDEX, 4 + 40 + 4)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b1101_0000_00010100) // #40
+            .run();
 
         // BNE label
-        test_instr!(
-            0b1101_0001_11101100, // #(-40)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 40 + 4) as _],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.zero = true,
-            0b1101_0001_11101100, // #(-40)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
+        InstrTest::new_thumb(0b1101_0001_11101100) // #(-40)
+            .assert_r(PC_INDEX, 4u32.wrapping_sub(40) + 4)
+            .run();
+
+        InstrTest::new_thumb(0b1101_0001_11101100) // #(-40)
+            .setup(&|cpu| cpu.reg.cpsr.zero = true)
+            .assert_zero()
+            .run();
 
         // BCS/BHS label
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.carry = true,
-            0b1101_0010_01111111, // #254
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 254 + 4],
-            carry
-        );
-        test_instr!(
-            0b1101_0010_01111111, // #254
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b1101_0010_01111111) // #254
+            .setup(&|cpu| cpu.reg.cpsr.carry = true)
+            .assert_r(PC_INDEX, 4u32.wrapping_add(254) + 4)
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b1101_0010_01111111) // #254
+            .run();
 
         // BCC/BLO label
-        test_instr!(
-            0b1101_0011_10000000, // #(-256)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 256 + 4) as _],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.carry = true,
-            0b1101_0011_10000000, // #(-256)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
+        InstrTest::new_thumb(0b1101_0011_10000000) // #(-256)
+            .assert_r(PC_INDEX, 4u32.wrapping_sub(256) + 4)
+            .run();
+
+        InstrTest::new_thumb(0b1101_0011_10000000) // #(-256)
+            .setup(&|cpu| cpu.reg.cpsr.carry = true)
+            .assert_carry()
+            .run();
 
         // BMI label
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.negative = true,
-            0b1101_0100_00000000, // #0
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 4],
-            negative
-        );
-        test_instr!(
-            0b1101_0100_00000000, // #0
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b1101_0100_00000000) // #0
+            .setup(&|cpu| cpu.reg.cpsr.negative = true)
+            .assert_r(PC_INDEX, 4 + 4)
+            .assert_negative()
+            .run();
+
+        InstrTest::new_thumb(0b1101_0100_00000000) // #0
+            .run();
 
         // BPL label
-        test_instr!(
-            0b1101_0101_00000010, // #4
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 4 + 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.negative = true,
-            0b1101_0101_00000010, // #4
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative
-        );
+        InstrTest::new_thumb(0b1101_0101_00000010) // #4
+            .assert_r(PC_INDEX, 4 + 4 + 4)
+            .run();
+
+        InstrTest::new_thumb(0b1101_0101_00000010) // #4
+            .setup(&|cpu| cpu.reg.cpsr.negative = true)
+            .assert_negative()
+            .run();
 
         // BVS label
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.overflow = true,
-            0b1101_0110_11111101, // #(-6)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 6 + 4) as _],
-            overflow
-        );
-        test_instr!(
-            0b1101_0110_11111101, // #(-6)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+        InstrTest::new_thumb(0b1101_0110_11111101) // #(-6)
+            .setup(&|cpu| cpu.reg.cpsr.overflow = true)
+            .assert_r(PC_INDEX, 4u32.wrapping_sub(6).wrapping_add(4))
+            .assert_overflow()
+            .run();
+
+        InstrTest::new_thumb(0b1101_0110_11111101) // #(-6)
+            .run();
 
         // BVC label
-        test_instr!(
-            0b1101_0111_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 6 + 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.overflow = true,
-            0b1101_0111_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            overflow
-        );
+        InstrTest::new_thumb(0b1101_0111_00000011) // #6
+            .assert_r(PC_INDEX, 4 + 6 + 4)
+            .run();
+
+        InstrTest::new_thumb(0b1101_0111_00000011) // #6
+            .setup(&|cpu| cpu.reg.cpsr.overflow = true)
+            .assert_overflow()
+            .run();
 
         // BHI label
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.carry = true,
-            0b1101_1000_11111101, // #(-6)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 6 + 4) as _],
-            carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1101_1000_11111101) // #(-6)
+            .setup(&|cpu| cpu.reg.cpsr.carry = true)
+            .assert_r(PC_INDEX, 4u32.wrapping_sub(6).wrapping_add(4))
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1000_11111101) // #(-6)
+            .setup(&|cpu| {
                 cpu.reg.cpsr.carry = true;
                 cpu.reg.cpsr.zero = true;
-            },
-            0b1101_1000_11111101, // #(-6)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry | zero
-        );
-        test_instr!(
-            0b1101_1000_11111101, // #(-6)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_carry()
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1000_11111101) // #(-6)
+            .run();
 
         // BLS label
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.carry = true,
-            0b1101_1001_11111101, // #(-6)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            carry
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1101_1001_11111101) // #(-6)
+            .setup(&|cpu| cpu.reg.cpsr.carry = true)
+            .assert_carry()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1001_11111101) // #(-6)
+            .setup(&|cpu| {
                 cpu.reg.cpsr.carry = true;
                 cpu.reg.cpsr.zero = true;
-            },
-            0b1101_1001_11111101, // #(-6)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 6 + 4) as _],
-            carry | zero
-        );
-        test_instr!(
-            0b1101_1001_11111101, // #(-6)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 6 + 4) as _],
-        );
+            })
+            .assert_r(PC_INDEX, 4u32.wrapping_sub(6).wrapping_add(4))
+            .assert_carry()
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1001_11111101) // #(-6)
+            .assert_r(PC_INDEX, 4u32.wrapping_sub(6).wrapping_add(4))
+            .run();
 
         // BGE label
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1101_1010_00000011) // #6
+            .setup(&|cpu| {
                 cpu.reg.cpsr.negative = true;
                 cpu.reg.cpsr.overflow = true;
-            },
-            0b1101_1010_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 6 + 4],
-            negative | overflow
-        );
-        test_instr!(
-            0b1101_1010_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 6 + 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.overflow = true,
-            0b1101_1010_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            overflow
-        );
+            })
+            .assert_r(PC_INDEX, 4 + 6 + 4)
+            .assert_negative()
+            .assert_overflow()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1010_00000011) // #6
+            .assert_r(PC_INDEX, 4 + 6 + 4)
+            .run();
+
+        InstrTest::new_thumb(0b1101_1010_00000011) // #6
+            .setup(&|cpu| cpu.reg.cpsr.overflow = true)
+            .assert_overflow()
+            .run();
 
         // BLT label
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1101_1011_00000011) // #6
+            .setup(&|cpu| {
                 cpu.reg.cpsr.negative = true;
                 cpu.reg.cpsr.overflow = true;
-            },
-            0b1101_1011_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | overflow
-        );
-        test_instr!(
-            0b1101_1011_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.negative = true,
-            0b1101_1011_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 6 + 4],
-            negative
-        );
+            })
+            .assert_negative()
+            .assert_overflow()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1011_00000011) // #6
+            .run();
+
+        InstrTest::new_thumb(0b1101_1011_00000011) // #6
+            .setup(&|cpu| cpu.reg.cpsr.negative = true)
+            .assert_r(PC_INDEX, 4 + 6 + 4)
+            .assert_negative()
+            .run();
 
         // BGT label
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1101_1100_00000011) // #6
+            .setup(&|cpu| {
                 cpu.reg.cpsr.negative = true;
                 cpu.reg.cpsr.overflow = true;
-            },
-            0b1101_1100_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 6 + 4],
-            negative | overflow
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.zero = true,
-            0b1101_1100_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            zero
-        );
-        test_instr!(
-            0b1101_1100_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 6 + 4],
-        );
+            })
+            .assert_r(PC_INDEX, 4 + 6 + 4)
+            .assert_negative()
+            .assert_overflow()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1100_00000011) // #6
+            .setup(&|cpu| cpu.reg.cpsr.zero = true)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1100_00000011) // #6
+            .assert_r(PC_INDEX, 4 + 6 + 4)
+            .run();
 
         // BLE label
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b1101_1101_00000011) // #6
+            .setup(&|cpu| {
                 cpu.reg.cpsr.negative = true;
                 cpu.reg.cpsr.overflow = true;
-            },
-            0b1101_1101_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-            negative | overflow
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.zero = true,
-            0b1101_1101_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 6 + 4],
-            zero
-        );
-        test_instr!(
-            0b1101_1101_00000011, // #6
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4],
-        );
+            })
+            .assert_negative()
+            .assert_overflow()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1101_00000011) // #6
+            .setup(&|cpu| cpu.reg.cpsr.zero = true)
+            .assert_r(PC_INDEX, 4 + 6 + 4)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b1101_1101_00000011) // #6
+            .run();
     }
 
     #[test]
     fn execute_thumb17() {
         // SWI nn
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 200,
-            0b11011111_10101010,
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 196, 0x08 + 8],
-            irq_disabled
-        );
+        InstrTest::new_thumb(0b11011111_10101010)
+            .setup(&|cpu| cpu.reg.r[PC_INDEX] = 200)
+            .assert_r(LR_INDEX, 196)
+            .assert_r(PC_INDEX, 0x08 + 8)
+            .assert_irq_disabled()
+            .run();
     }
 
     #[test]
-    #[rustfmt::skip]
     fn execute_thumb18() {
         // B label
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.cpsr.zero = true,
-            0b11100_00000010100, // #40
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 40 + 4],
-            zero
-        );
-        test_instr!(
-            0b11100_11111111111, // #(-2)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (4 - 2 + 4) as _],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| {
+        InstrTest::new_thumb(0b11100_00000010100) // #40
+            .setup(&|cpu| cpu.reg.cpsr.zero = true)
+            .assert_r(PC_INDEX, 4 + 40 + 4)
+            .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b11100_11111111111) // #(-2)
+            .assert_r(PC_INDEX, 4 - 2 + 4)
+            .run();
+
+        InstrTest::new_thumb(0b11100_01111111111) // #2046
+            .setup(&|cpu| {
                 cpu.reg.cpsr.negative = true;
                 cpu.reg.cpsr.zero = true;
                 cpu.reg.cpsr.carry = true;
                 cpu.reg.cpsr.overflow = true;
-            },
-            0b11100_01111111111, // #2046
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4 + 2046 + 4],
-            negative | zero | carry | overflow
-        );
+            })
+            .assert_r(PC_INDEX, 4 + 2046 + 4)
+            .assert_negative()
+            .assert_zero()
+            .assert_carry()
+            .assert_overflow()
+            .run();
     }
 
     #[test]
-    #[rustfmt::skip]
     fn execute_thumb19() {
         // BL label
-        test_instr!(
-            0b11110_00000010100, // #14000h (hi part)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x14000 + 4, 4],
-        );
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[LR_INDEX] = 0x14004,
-            0b11111_11111111111, // #FFEh (lo part)
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0x14004 + 0xffe + 4],
-        );
+        InstrTest::new_thumb(0b11110_00000010100) // #14000h (hi part)
+            .assert_r(LR_INDEX, 0x14000 + 4)
+            .run();
+
+        InstrTest::new_thumb(0b11111_11111111111) // #FFEh (lo part)
+            .setup(&|cpu| cpu.reg.r[LR_INDEX] = 0x14004)
+            .assert_r(LR_INDEX, 3)
+            .assert_r(PC_INDEX, 0x14004 + 0xffe + 4)
+            .run();
     }
 
     #[test]
     fn execute_undefined_instr() {
-        test_instr!(
-            |cpu: &mut Cpu| cpu.reg.r[PC_INDEX] = 200,
-            0b11101_01010101010,
-            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 196, 0x04 + 8],
-            irq_disabled
-        );
+        InstrTest::new_thumb(0b11101_01010101010)
+            .setup(&|cpu| cpu.reg.r[PC_INDEX] = 200)
+            .assert_r(LR_INDEX, 196)
+            .assert_r(PC_INDEX, 0x04 + 8)
+            .assert_irq_disabled()
+            .run();
     }
 }

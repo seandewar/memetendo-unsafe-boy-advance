@@ -264,16 +264,56 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_branch(&mut self, bus: &impl Bus, addr_offset: i16, cond: bool) {
-        if cond {
-            #[allow(clippy::cast_sign_loss)]
-            let addr_offset = i32::from(addr_offset) as _;
-            self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(addr_offset);
-            self.reload_pipeline(bus);
+    #[allow(clippy::cast_sign_loss)]
+    pub(super) fn execute_branch(&mut self, bus: &impl Bus, base_addr: u32, addr_offset: i32) {
+        self.reg.r[PC_INDEX] = base_addr.wrapping_add(addr_offset as _);
+        self.reload_pipeline(bus);
+    }
+
+    pub(super) fn meets_condition(&self, cond: u8) -> bool {
+        match cond {
+            // EQ
+            0 => self.reg.cpsr.zero,
+            // NE
+            1 => !self.reg.cpsr.zero,
+            // CS/HS
+            2 => self.reg.cpsr.carry,
+            // CC/LO
+            3 => !self.reg.cpsr.carry,
+            // MI
+            4 => self.reg.cpsr.negative,
+            // PL
+            5 => !self.reg.cpsr.negative,
+            // VS
+            6 => self.reg.cpsr.overflow,
+            // VC
+            7 => !self.reg.cpsr.overflow,
+            // HI
+            8 => self.reg.cpsr.carry && !self.reg.cpsr.zero,
+            // LS
+            9 => !self.reg.cpsr.carry || self.reg.cpsr.zero,
+            // GE
+            10 => self.reg.cpsr.negative == self.reg.cpsr.overflow,
+            // LT
+            11 => self.reg.cpsr.negative != self.reg.cpsr.overflow,
+            // GT
+            12 => !self.reg.cpsr.zero && (self.reg.cpsr.negative == self.reg.cpsr.overflow),
+            // LE
+            13 => self.reg.cpsr.zero || (self.reg.cpsr.negative != self.reg.cpsr.overflow),
+            // AL (Always) or Undefined in Thumb (TODO: how does it act?)
+            14 => true,
+            // Reserved (TODO: acts like Never in ARMv1,v2?)
+            15 => false,
+            _ => unreachable!(),
         }
     }
 
-    pub(super) fn execute_bl(&mut self, bus: &impl Bus, hi_part: bool, addr_offset_part: u16) {
+    pub(super) fn execute_thumb_bl(
+        &mut self,
+        bus: &impl Bus,
+        hi_part: bool,
+        addr_offset_part: u16,
+    ) {
         let addr_offset_part = u32::from(addr_offset_part);
 
         if hi_part {
@@ -282,9 +322,161 @@ impl Cpu {
             // Adjust for pipelining, which has us two instructions ahead.
             let return_addr = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
 
-            self.reg.r[PC_INDEX] = self.reg.r[LR_INDEX].wrapping_add(addr_offset_part << 1);
+            #[allow(clippy::cast_possible_wrap)]
+            self.execute_branch(bus, self.reg.r[LR_INDEX], (addr_offset_part << 1) as _);
             self.reg.r[LR_INDEX] = return_addr | 1; // bit 0 set indicates THUMB
-            self.reload_pipeline(bus);
+        }
+    }
+
+    pub(super) fn execute_arm_bl(&mut self, bus: &impl Bus, addr_offset: i32) {
+        // Adjust for pipelining, which has us two instructions ahead.
+        self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
+        self.execute_branch(bus, self.reg.r[PC_INDEX], addr_offset);
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use crate::{
+        arm7tdmi::{
+            reg::{OperationState, PC_INDEX},
+            Cpu,
+        },
+        bus::{tests::NullBus, Bus},
+    };
+
+    #[allow(clippy::struct_excessive_bools)]
+    pub struct InstrTest<'a> {
+        setup: &'a dyn Fn(&mut Cpu),
+        state: OperationState,
+        instr: u32,
+
+        asserted_rs: [u32; 16],
+        assert_negative: bool,
+        assert_zero: bool,
+        assert_carry: bool,
+        assert_overflow: bool,
+        assert_irq_disabled: bool,
+        assert_fiq_disabled: bool,
+    }
+
+    impl InstrTest<'_> {
+        fn new(state: OperationState, instr: u32) -> Self {
+            let mut asserted_rs = [0; 16];
+            asserted_rs[PC_INDEX] = 2 * state.instr_size();
+
+            Self {
+                setup: &|_| {},
+                state,
+                instr,
+                asserted_rs,
+                assert_negative: false,
+                assert_zero: false,
+                assert_carry: false,
+                assert_overflow: false,
+                assert_irq_disabled: false,
+                assert_fiq_disabled: false,
+            }
+        }
+
+        #[must_use]
+        pub fn new_arm(instr: u32) -> Self {
+            Self::new(OperationState::Arm, instr)
+        }
+
+        #[must_use]
+        pub fn new_thumb(instr: u16) -> Self {
+            Self::new(OperationState::Thumb, instr.into())
+        }
+    }
+
+    impl<'a> InstrTest<'a> {
+        pub fn run_with_bus(self, bus: &mut impl Bus) -> Cpu {
+            let mut cpu = Cpu::new();
+            cpu.reset(bus);
+
+            // Act like the CPU started with interrupts enabled.
+            cpu.reg.cpsr.irq_disabled = false;
+            cpu.reg.cpsr.fiq_disabled = false;
+
+            if self.state == OperationState::Thumb {
+                cpu.execute_bx(bus, 1); // Enter Thumb mode.
+            }
+
+            (self.setup)(&mut cpu);
+
+            match self.state {
+                OperationState::Thumb => cpu.execute_thumb(bus, self.instr.try_into().unwrap()),
+                OperationState::Arm => cpu.execute_arm(bus, self.instr),
+            }
+
+            assert_eq!(cpu.reg.r.0, self.asserted_rs);
+            assert_eq!(cpu.reg.cpsr.negative, self.assert_negative, "negative flag");
+            assert_eq!(cpu.reg.cpsr.zero, self.assert_zero, "zero flag");
+            assert_eq!(cpu.reg.cpsr.carry, self.assert_carry, "carry flag");
+            assert_eq!(cpu.reg.cpsr.overflow, self.assert_overflow, "overflow flag");
+            assert_eq!(
+                cpu.reg.cpsr.irq_disabled, self.assert_irq_disabled,
+                "irq_disabled flag"
+            );
+            assert_eq!(
+                cpu.reg.cpsr.fiq_disabled, self.assert_fiq_disabled,
+                "fiq_disabled flag"
+            );
+
+            cpu
+        }
+
+        pub fn run(self) -> Cpu {
+            self.run_with_bus(&mut NullBus)
+        }
+
+        #[must_use]
+        pub fn setup(mut self, setup: &'a dyn Fn(&mut Cpu)) -> Self {
+            self.setup = setup;
+            self
+        }
+
+        #[must_use]
+        pub fn assert_r(mut self, index: usize, r: u32) -> Self {
+            self.asserted_rs[index] = r;
+            self
+        }
+
+        #[must_use]
+        pub fn assert_negative(mut self) -> Self {
+            self.assert_negative = true;
+            self
+        }
+
+        #[must_use]
+        pub fn assert_zero(mut self) -> Self {
+            self.assert_zero = true;
+            self
+        }
+
+        #[must_use]
+        pub fn assert_carry(mut self) -> Self {
+            self.assert_carry = true;
+            self
+        }
+
+        #[must_use]
+        pub fn assert_overflow(mut self) -> Self {
+            self.assert_overflow = true;
+            self
+        }
+
+        #[must_use]
+        pub fn assert_irq_disabled(mut self) -> Self {
+            self.assert_irq_disabled = true;
+            self
+        }
+
+        #[must_use]
+        pub fn assert_fiq_disabled(mut self) -> Self {
+            self.assert_fiq_disabled = true;
+            self
         }
     }
 }

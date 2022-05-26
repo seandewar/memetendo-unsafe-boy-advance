@@ -1,3 +1,4 @@
+mod arm;
 mod op;
 mod reg;
 mod thumb;
@@ -51,10 +52,7 @@ impl Cpu {
 
         let instr = self.flush_pipeline(bus);
         match self.reg.cpsr.state {
-            OperationState::Arm => {
-                // TODO: ARM instruction set is unimplemented rn so just do THUMB
-                self.execute_bx(bus, self.reg.r[PC_INDEX].wrapping_sub(8));
-            }
+            OperationState::Arm => self.execute_arm(bus, instr),
             OperationState::Thumb => {
                 #[allow(clippy::cast_possible_truncation)]
                 self.execute_thumb(bus, instr.bits(..16) as _);

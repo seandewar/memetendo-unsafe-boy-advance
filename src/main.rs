@@ -3,6 +3,7 @@
 mod arm7tdmi;
 mod bus;
 mod gba;
+mod util;
 
 use gba::Gba;
 
