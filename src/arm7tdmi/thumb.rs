@@ -23,6 +23,7 @@ impl Cpu {
             instr.bits(8..),
         ) {
             (_, _, _, _, 0b1011_0000) => self.execute_thumb13(instr),
+            // TODO: 2S+1N
             (_, _, _, _, 0b1101_1111) => self.enter_exception(bus, Exception::SoftwareInterrupt),
             (_, _, _, 0b01_0000, _) => self.execute_thumb4(instr),
             (_, _, _, 0b01_0001, _) => self.execute_thumb5(bus, instr),
@@ -40,6 +41,7 @@ impl Cpu {
             (0b000, _, _, _, _) => self.execute_thumb1(instr),
             (0b001, _, _, _, _) => self.execute_thumb3(instr),
             (0b011, _, _, _, _) => self.execute_thumb9(bus, instr),
+            // TODO: maybe 2S+1N+1I, like ARM?
             _ => self.enter_exception(bus, Exception::UndefinedInstr),
         }
     }
@@ -54,11 +56,11 @@ impl Cpu {
 
         self.reg.r[r_index(instr, 0)] = match instr.bits(11..13) {
             // LSL{S}
-            0 => self.execute_lsl(value, offset),
+            0 => self.execute_lsl(true, value, offset),
             // LSR{S}
-            1 => self.execute_lsr(value, offset),
+            1 => self.execute_lsr(true, true, value, offset),
             // ASR{S}
-            2 => self.execute_asr(value, offset),
+            2 => self.execute_asr(true, true, value, offset),
             _ => unreachable!(),
         };
     }
@@ -66,20 +68,20 @@ impl Cpu {
     /// Thumb.2: Add or subtract.
     fn execute_thumb2(&mut self, instr: u16) {
         // TODO: 1S cycle
-        let a = self.reg.r[r_index(instr, 3)];
+        let value1 = self.reg.r[r_index(instr, 3)];
         let r = r_index(instr, 6);
         #[allow(clippy::cast_possible_truncation)]
-        let b = r as u32;
+        let value2 = r as u32;
 
         self.reg.r[r_index(instr, 0)] = match instr.bits(9..11) {
             // ADD{S} Rd,Rs,Rn
-            0 => self.execute_add_cmn(true, a, self.reg.r[r]),
+            0 => self.execute_add_cmn(true, value1, self.reg.r[r]),
             // SUB{S} Rd,Rs,Rn
-            1 => self.execute_sub_cmp(true, a, self.reg.r[r]),
+            1 => self.execute_sub_cmp(true, value1, self.reg.r[r]),
             // ADD{S} Rd,Rs,#nn
-            2 => self.execute_add_cmn(true, a, b),
+            2 => self.execute_add_cmn(true, value1, value2),
             // SUB{S} Rd,Rs,#nn
-            3 => self.execute_sub_cmp(true, a, b),
+            3 => self.execute_sub_cmp(true, value1, value2),
             _ => unreachable!(),
         };
     }
@@ -119,24 +121,24 @@ impl Cpu {
 
         match instr.bits(6..10) {
             // AND{S}
-            0 => self.reg.r[r_dst] = self.execute_and_tst(self.reg.r[r_dst], value),
+            0 => self.reg.r[r_dst] = self.execute_and_tst(true, self.reg.r[r_dst], value),
             // EOR{S} (XOR)
-            1 => self.reg.r[r_dst] = self.execute_eor(self.reg.r[r_dst], value),
+            1 => self.reg.r[r_dst] = self.execute_eor_teq(true, self.reg.r[r_dst], value),
             // LSL{S}
-            2 => self.reg.r[r_dst] = self.execute_lsl(self.reg.r[r_dst], offset),
+            2 => self.reg.r[r_dst] = self.execute_lsl(true, self.reg.r[r_dst], offset),
             // LSR{S}
-            3 => self.reg.r[r_dst] = self.execute_lsr(self.reg.r[r_dst], offset),
+            3 => self.reg.r[r_dst] = self.execute_lsr(true, false, self.reg.r[r_dst], offset),
             // ASR{S}
-            4 => self.reg.r[r_dst] = self.execute_asr(self.reg.r[r_dst], offset),
+            4 => self.reg.r[r_dst] = self.execute_asr(true, false, self.reg.r[r_dst], offset),
             // ADC{S}
             5 => self.reg.r[r_dst] = self.execute_adc(true, self.reg.r[r_dst], value),
             // SBC{S}
             6 => self.reg.r[r_dst] = self.execute_sbc(true, self.reg.r[r_dst], value),
             // ROR{S}
-            7 => self.reg.r[r_dst] = self.execute_ror(self.reg.r[r_dst], offset),
+            7 => self.reg.r[r_dst] = self.execute_ror(true, false, self.reg.r[r_dst], offset),
             // TST
             8 => {
-                self.execute_and_tst(self.reg.r[r_dst], value);
+                self.execute_and_tst(true, self.reg.r[r_dst], value);
             }
             // NEG{S}
             9 => self.reg.r[r_dst] = self.execute_sub_cmp(true, 0, value),
@@ -149,13 +151,13 @@ impl Cpu {
                 self.execute_add_cmn(true, self.reg.r[r_dst], value);
             }
             // ORR{S}
-            12 => self.reg.r[r_dst] = self.execute_orr(self.reg.r[r_dst], value),
+            12 => self.reg.r[r_dst] = self.execute_orr(true, self.reg.r[r_dst], value),
             // MUL{S}
             13 => self.reg.r[r_dst] = self.execute_mul(self.reg.r[r_dst], value),
             // BIC{S}
-            14 => self.reg.r[r_dst] = self.execute_bic(self.reg.r[r_dst], value),
+            14 => self.reg.r[r_dst] = self.execute_bic(true, self.reg.r[r_dst], value),
             // MVN{S} (NOT)
-            15 => self.reg.r[r_dst] = self.execute_mvn(value),
+            15 => self.reg.r[r_dst] = self.execute_mvn(true, value),
             _ => unreachable!(),
         }
     }
@@ -406,7 +408,7 @@ mod tests {
 
     use crate::{
         arm7tdmi::op::tests::InstrTest,
-        arm7tdmi::reg::{OperationState, LR_INDEX},
+        arm7tdmi::reg::LR_INDEX,
         bus::{tests::VecBus, BusExt},
     };
 
@@ -1909,10 +1911,12 @@ mod tests {
     fn execute_thumb17() {
         // SWI nn
         InstrTest::new_thumb(0b11011111_10101010)
-            .setup(&|cpu| cpu.reg.r[PC_INDEX] = 200)
+            .setup(&|cpu| {
+                cpu.reg.r[PC_INDEX] = 200;
+                cpu.reg.cpsr.irq_disabled = false;
+            })
             .assert_r(LR_INDEX, 196)
             .assert_r(PC_INDEX, 0x08 + 8)
-            .assert_irq_disabled()
             .run();
     }
 
@@ -1961,10 +1965,12 @@ mod tests {
     #[test]
     fn execute_undefined_instr() {
         InstrTest::new_thumb(0b11101_01010101010)
-            .setup(&|cpu| cpu.reg.r[PC_INDEX] = 200)
+            .setup(&|cpu| {
+                cpu.reg.cpsr.irq_disabled = false;
+                cpu.reg.r[PC_INDEX] = 200;
+            })
             .assert_r(LR_INDEX, 196)
             .assert_r(PC_INDEX, 0x04 + 8)
-            .assert_irq_disabled()
             .run();
     }
 }

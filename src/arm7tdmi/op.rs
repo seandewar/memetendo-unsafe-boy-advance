@@ -38,7 +38,6 @@ impl Cpu {
         execute_add_impl(self, update_cond, a, b, 0)
     }
 
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
     pub(super) fn execute_sub_cmp(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         execute_sub_impl(self, update_cond, a, b, 0)
     }
@@ -66,70 +65,108 @@ impl Cpu {
         value
     }
 
-    pub(super) fn execute_and_tst(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_and_tst(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         let result = a & b;
-        self.reg.cpsr.set_nz_from(result);
+        if update_cond {
+            self.reg.cpsr.set_nz_from(result);
+        }
 
         result
     }
 
-    pub(super) fn execute_bic(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_bic(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         let result = a & !b;
-        self.reg.cpsr.set_nz_from(result);
+        if update_cond {
+            self.reg.cpsr.set_nz_from(result);
+        }
 
         result
     }
 
-    pub(super) fn execute_eor(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_eor_teq(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         let result = a ^ b;
-        self.reg.cpsr.set_nz_from(result);
+        if update_cond {
+            self.reg.cpsr.set_nz_from(result);
+        }
 
         result
     }
 
-    pub(super) fn execute_orr(&mut self, a: u32, b: u32) -> u32 {
+    pub(super) fn execute_orr(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         let result = a | b;
-        self.reg.cpsr.set_nz_from(result);
+        if update_cond {
+            self.reg.cpsr.set_nz_from(result);
+        }
 
         result
     }
 
-    pub(super) fn execute_mvn(&mut self, value: u32) -> u32 {
+    pub(super) fn execute_mvn(&mut self, update_cond: bool, value: u32) -> u32 {
         let result = !value;
-        self.reg.cpsr.set_nz_from(result);
+        if update_cond {
+            self.reg.cpsr.set_nz_from(result);
+        }
 
         result
     }
 
-    pub(super) fn execute_lsl(&mut self, value: u32, offset: u8) -> u32 {
+    pub(super) fn execute_lsl(&mut self, update_cond: bool, value: u32, offset: u8) -> u32 {
         let mut result = value;
         if offset > 0 {
             result = result.checked_shl((offset - 1).into()).unwrap_or(0);
-            self.reg.cpsr.carry = result.bit(31);
+            if update_cond {
+                self.reg.cpsr.carry = result.bit(31);
+            }
             result <<= 1;
         }
-        self.reg.cpsr.set_nz_from(result);
+
+        if update_cond {
+            self.reg.cpsr.set_nz_from(result);
+        }
 
         result
     }
 
-    pub(super) fn execute_lsr(&mut self, value: u32, offset: u8) -> u32 {
-        // LSR/ASR #0 is a special case that works like LSR/ASR #32
-        let offset = if offset == 0 { 32 } else { offset.into() };
+    pub(super) fn execute_lsr(
+        &mut self,
+        update_cond: bool,
+        special_zero_offset: bool,
+        value: u32,
+        offset: u8,
+    ) -> u32 {
+        let offset = if special_zero_offset && offset == 0 {
+            32 // #0 works like #32
+        } else {
+            offset.into()
+        };
 
         let mut result = value;
         result = result.checked_shr(offset - 1).unwrap_or(0);
-        self.reg.cpsr.carry = result.bit(0);
+        if update_cond {
+            self.reg.cpsr.carry = result.bit(0);
+        }
+
         result >>= 1;
-        self.reg.cpsr.set_nz_from(result);
+        if update_cond {
+            self.reg.cpsr.set_nz_from(result);
+        }
 
         result
     }
 
     #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-    pub(super) fn execute_asr(&mut self, value: u32, offset: u8) -> u32 {
-        // LSR/ASR #0 is a special case that works like LSR/ASR #32
-        let offset = if offset == 0 { 32 } else { offset.into() };
+    pub(super) fn execute_asr(
+        &mut self,
+        update_cond: bool,
+        special_zero_offset: bool,
+        value: u32,
+        offset: u8,
+    ) -> u32 {
+        let offset = if special_zero_offset && offset == 0 {
+            32 // #0 works like #32
+        } else {
+            offset.into()
+        };
 
         // A value shifted 32 or more times is either 0 or has all bits set depending on the
         // initial value of the sign bit (due to sign extension)
@@ -141,21 +178,46 @@ impl Cpu {
         };
 
         result = result.checked_shr(offset - 1).unwrap_or(overflow_result);
-        self.reg.cpsr.carry = result.bit(0);
+        if update_cond {
+            self.reg.cpsr.carry = result.bit(0);
+        }
+
         let result = (result >> 1) as _;
-        self.reg.cpsr.set_nz_from(result);
+        if update_cond {
+            self.reg.cpsr.set_nz_from(result);
+        }
 
         result
     }
 
-    pub(super) fn execute_ror(&mut self, value: u32, offset: u8) -> u32 {
+    pub(super) fn execute_ror(
+        &mut self,
+        update_cond: bool,
+        special_zero_offset: bool,
+        value: u32,
+        offset: u8,
+    ) -> u32 {
         let mut result = value;
+
         if offset > 0 {
             result = value.rotate_right(u32::from(offset) - 1);
-            self.reg.cpsr.carry = result.bit(0);
+            if update_cond {
+                self.reg.cpsr.carry = result.bit(0);
+            }
             result = result.rotate_right(1);
+        } else if special_zero_offset {
+            // #0 works like RRX #1 (ROR #1, but bit 31 is set to the old carry)
+            let old_carry = self.reg.cpsr.carry;
+            if update_cond {
+                self.reg.cpsr.carry = result.bit(0);
+            }
+            result = value.rotate_right(1);
+            result.set_bit(31, old_carry);
         }
-        self.reg.cpsr.set_nz_from(result);
+
+        if update_cond {
+            self.reg.cpsr.set_nz_from(result);
+        }
 
         result
     }
@@ -374,8 +436,8 @@ pub(super) mod tests {
                 assert_zero: false,
                 assert_carry: false,
                 assert_overflow: false,
-                assert_irq_disabled: false,
-                assert_fiq_disabled: false,
+                assert_irq_disabled: true,
+                assert_fiq_disabled: true,
             }
         }
 
@@ -394,10 +456,6 @@ pub(super) mod tests {
         pub fn run_with_bus(self, bus: &mut impl Bus) -> Cpu {
             let mut cpu = Cpu::new();
             cpu.reset(bus);
-
-            // Act like the CPU started with interrupts enabled.
-            cpu.reg.cpsr.irq_disabled = false;
-            cpu.reg.cpsr.fiq_disabled = false;
 
             if self.state == OperationState::Thumb {
                 cpu.execute_bx(bus, 1); // Enter Thumb mode.
@@ -468,14 +526,14 @@ pub(super) mod tests {
         }
 
         #[must_use]
-        pub fn assert_irq_disabled(mut self) -> Self {
-            self.assert_irq_disabled = true;
+        pub fn assert_irq_enabled(mut self) -> Self {
+            self.assert_irq_disabled = false;
             self
         }
 
         #[must_use]
-        pub fn assert_fiq_disabled(mut self) -> Self {
-            self.assert_fiq_disabled = true;
+        pub fn assert_fiq_enabled(mut self) -> Self {
+            self.assert_fiq_disabled = false;
             self
         }
     }
