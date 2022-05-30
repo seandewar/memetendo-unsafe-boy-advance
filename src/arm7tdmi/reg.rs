@@ -181,12 +181,6 @@ impl StatusRegister {
     pub(super) fn mode(self) -> OperationMode {
         self.mode
     }
-
-    #[allow(clippy::cast_possible_wrap)]
-    pub(super) fn set_nz_from(&mut self, result: u32) {
-        self.zero = result == 0;
-        self.negative = (result as i32).is_negative();
-    }
 }
 
 #[cfg(test)]

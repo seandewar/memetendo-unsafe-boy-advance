@@ -1,11 +1,28 @@
+mod arm;
+mod thumb;
+
 use intbits::Bits;
 
 use crate::bus::{Bus, BusAlignedExt};
 
 use super::{
-    reg::{LR_INDEX, PC_INDEX, SP_INDEX},
+    reg::{StatusRegister, LR_INDEX, PC_INDEX, SP_INDEX},
     Cpu, OperationState,
 };
+
+impl StatusRegister {
+    #[allow(clippy::cast_possible_wrap)]
+    fn set_nz_from_word(&mut self, result: u32) {
+        self.zero = result == 0;
+        self.negative = (result as i32).is_negative();
+    }
+
+    #[allow(clippy::cast_possible_wrap)]
+    fn set_nz_from_dword(&mut self, result: u64) {
+        self.zero = result == 0;
+        self.negative = (result as i64).is_negative();
+    }
+}
 
 #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
 fn execute_add_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) -> u32 {
@@ -16,7 +33,7 @@ fn execute_add_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) ->
         let actual_result = i64::from(a) + i64::from(b) + i64::from(c);
         cpu.reg.cpsr.overflow = a_b_overflow || a_b_c_overflow;
         cpu.reg.cpsr.carry = actual_result as u64 > u32::MAX.into();
-        cpu.reg.cpsr.set_nz_from(result as _);
+        cpu.reg.cpsr.set_nz_from_word(result as _);
     }
 
     result as _
@@ -34,83 +51,107 @@ fn execute_sub_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) ->
 }
 
 impl Cpu {
-    pub(super) fn execute_add_cmn(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
+    fn execute_add(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         execute_add_impl(self, update_cond, a, b, 0)
     }
 
-    pub(super) fn execute_sub_cmp(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
+    fn execute_sub(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         execute_sub_impl(self, update_cond, a, b, 0)
     }
 
-    pub(super) fn execute_adc(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
+    fn execute_adc(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         execute_add_impl(self, update_cond, a, b, self.reg.cpsr.carry.into())
     }
 
-    pub(super) fn execute_sbc(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
+    fn execute_sbc(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         execute_sub_impl(self, update_cond, a, b, (!self.reg.cpsr.carry).into())
     }
 
-    pub(super) fn execute_mul(&mut self, a: u32, b: u32) -> u32 {
-        let result = a.wrapping_mul(b);
-        self.reg.cpsr.set_nz_from(result); // TODO: MUL corrupts carry flag (lol), but how?
+    fn execute_mla(&mut self, update_cond: bool, a: u32, b: u32, accum: u32) -> u32 {
+        let result = a.wrapping_mul(b).wrapping_add(accum);
+        if update_cond {
+            // TODO: should corrupt carry flag (lol), but how?
+            self.reg.cpsr.set_nz_from_word(result);
+        }
 
         result
     }
 
-    pub(super) fn execute_mov(&mut self, update_cond: bool, value: u32) -> u32 {
+    fn execute_smlal(&mut self, update_cond: bool, a: i32, b: i32, accum: i64) -> u64 {
+        #[allow(clippy::cast_sign_loss)]
+        let result = i64::from(a).wrapping_mul(b.into()).wrapping_add(accum) as u64;
         if update_cond {
-            self.reg.cpsr.set_nz_from(value);
+            // TODO: should corrupt carry flag (lol), but how?
+            self.reg.cpsr.set_nz_from_dword(result);
+        }
+
+        result
+    }
+
+    fn execute_umlal(&mut self, update_cond: bool, a: u32, b: u32, accum: u64) -> u64 {
+        let result = u64::from(a).wrapping_mul(b.into()).wrapping_add(accum);
+        if update_cond {
+            // TODO: should corrupt carry flag (lol), but how?
+            self.reg.cpsr.set_nz_from_dword(result);
+        }
+
+        result
+    }
+
+    fn execute_mov(&mut self, update_cond: bool, value: u32) -> u32 {
+        if update_cond {
+            self.reg.cpsr.set_nz_from_word(value);
         }
 
         value
     }
 
-    pub(super) fn execute_and_tst(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
+    fn execute_and(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         let result = a & b;
         if update_cond {
-            self.reg.cpsr.set_nz_from(result);
+            self.reg.cpsr.set_nz_from_word(result);
         }
 
         result
     }
 
-    pub(super) fn execute_bic(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
+    fn execute_bic(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         let result = a & !b;
         if update_cond {
-            self.reg.cpsr.set_nz_from(result);
+            self.reg.cpsr.set_nz_from_word(result);
         }
 
         result
     }
 
-    pub(super) fn execute_eor_teq(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
+    fn execute_eor(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         let result = a ^ b;
         if update_cond {
-            self.reg.cpsr.set_nz_from(result);
+            self.reg.cpsr.set_nz_from_word(result);
         }
 
         result
     }
 
-    pub(super) fn execute_orr(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
+    fn execute_orr(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         let result = a | b;
         if update_cond {
-            self.reg.cpsr.set_nz_from(result);
+            self.reg.cpsr.set_nz_from_word(result);
         }
 
         result
     }
 
-    pub(super) fn execute_mvn(&mut self, update_cond: bool, value: u32) -> u32 {
+    fn execute_mvn(&mut self, update_cond: bool, value: u32) -> u32 {
         let result = !value;
         if update_cond {
-            self.reg.cpsr.set_nz_from(result);
+            self.reg.cpsr.set_nz_from_word(result);
         }
 
         result
     }
 
-    pub(super) fn execute_lsl(&mut self, update_cond: bool, value: u32, offset: u8) -> u32 {
+    fn execute_lsl(&mut self, update_cond: bool, value: u32, offset: u8) -> u32 {
         let mut result = value;
         if offset > 0 {
             result = result.checked_shl((offset - 1).into()).unwrap_or(0);
@@ -121,13 +162,13 @@ impl Cpu {
         }
 
         if update_cond {
-            self.reg.cpsr.set_nz_from(result);
+            self.reg.cpsr.set_nz_from_word(result);
         }
 
         result
     }
 
-    pub(super) fn execute_lsr(
+    fn execute_lsr(
         &mut self,
         update_cond: bool,
         special_zero_offset: bool,
@@ -148,14 +189,14 @@ impl Cpu {
 
         result >>= 1;
         if update_cond {
-            self.reg.cpsr.set_nz_from(result);
+            self.reg.cpsr.set_nz_from_word(result);
         }
 
         result
     }
 
     #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
-    pub(super) fn execute_asr(
+    fn execute_asr(
         &mut self,
         update_cond: bool,
         special_zero_offset: bool,
@@ -172,7 +213,7 @@ impl Cpu {
         // initial value of the sign bit (due to sign extension)
         let mut result = value as i32;
         let overflow_result = if result.is_negative() {
-            u32::MAX as _
+            u32::MAX as i32
         } else {
             0
         };
@@ -182,15 +223,15 @@ impl Cpu {
             self.reg.cpsr.carry = result.bit(0);
         }
 
-        let result = (result >> 1) as _;
+        let result = (result >> 1) as u32;
         if update_cond {
-            self.reg.cpsr.set_nz_from(result);
+            self.reg.cpsr.set_nz_from_word(result);
         }
 
         result
     }
 
-    pub(super) fn execute_ror(
+    fn execute_ror(
         &mut self,
         update_cond: bool,
         special_zero_offset: bool,
@@ -216,13 +257,13 @@ impl Cpu {
         }
 
         if update_cond {
-            self.reg.cpsr.set_nz_from(result);
+            self.reg.cpsr.set_nz_from_word(result);
         }
 
         result
     }
 
-    pub(super) fn execute_bx(&mut self, bus: &impl Bus, addr: u32) {
+    fn execute_bx(&mut self, bus: &impl Bus, addr: u32) {
         self.reg.cpsr.state = if addr.bit(0) {
             OperationState::Thumb
         } else {
@@ -232,46 +273,46 @@ impl Cpu {
         self.reload_pipeline(bus);
     }
 
-    pub(super) fn execute_str(bus: &mut impl Bus, addr: u32, value: u32) {
+    fn execute_str(bus: &mut impl Bus, addr: u32, value: u32) {
         bus.write_word_aligned(addr, value);
     }
 
-    pub(super) fn execute_strh(bus: &mut impl Bus, addr: u32, value: u16) {
+    fn execute_strh(bus: &mut impl Bus, addr: u32, value: u16) {
         bus.write_hword_aligned(addr, value);
     }
 
-    pub(super) fn execute_strb(bus: &mut impl Bus, addr: u32, value: u8) {
+    fn execute_strb(bus: &mut impl Bus, addr: u32, value: u8) {
         bus.write_byte(addr, value);
     }
 
-    pub(super) fn execute_ldr(bus: &impl Bus, addr: u32) -> u32 {
+    fn execute_ldr(bus: &impl Bus, addr: u32) -> u32 {
         bus.read_word_aligned(addr)
     }
 
-    #[allow(clippy::cast_sign_loss)]
-    pub(super) fn execute_ldrh_ldsh(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+    fn execute_ldrh_or_ldsh(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
         // TODO: emulate weird misaligned read behaviour? (LDRH Rd,[odd] -> LDRH Rd,[odd-1] ROR 8)
         let result = bus.read_hword_aligned(addr);
 
         if sign_extend {
-            i32::from(result) as _
+            i32::from(result as i16) as _
         } else {
             result.into()
         }
     }
 
-    #[allow(clippy::cast_sign_loss)]
-    pub(super) fn execute_ldrb_ldsb(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+    fn execute_ldrb_or_ldsb(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
         let result = bus.read_byte(addr);
 
         if sign_extend {
-            i32::from(result) as _
+            i32::from(result as i8) as _
         } else {
             result.into()
         }
     }
 
-    pub(super) fn execute_stmia(&mut self, bus: &mut impl Bus, r_base_addr: usize, mut r_list: u8) {
+    fn execute_stmia(&mut self, bus: &mut impl Bus, r_base_addr: usize, mut r_list: u8) {
         // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
             if r_list.bit(0) {
@@ -282,7 +323,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_ldmia(&mut self, bus: &impl Bus, r_base_addr: usize, mut r_list: u8) {
+    fn execute_ldmia(&mut self, bus: &impl Bus, r_base_addr: usize, mut r_list: u8) {
         // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
             if r_list.bit(0) {
@@ -293,7 +334,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_push(&mut self, bus: &mut impl Bus, mut r_list: u8, push_lr: bool) {
+    fn execute_push(&mut self, bus: &mut impl Bus, mut r_list: u8, push_lr: bool) {
         // TODO: emulate weird r_list behaviour when its 0?
         if push_lr {
             self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
@@ -309,7 +350,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_pop(&mut self, bus: &impl Bus, mut r_list: u8, pop_pc: bool) {
+    fn execute_pop(&mut self, bus: &impl Bus, mut r_list: u8, pop_pc: bool) {
         // TODO: emulate weird r_list behaviour when its 0?
         for r in 0..8 {
             if r_list.bit(0) {
@@ -327,12 +368,12 @@ impl Cpu {
     }
 
     #[allow(clippy::cast_sign_loss)]
-    pub(super) fn execute_branch(&mut self, bus: &impl Bus, base_addr: u32, addr_offset: i32) {
+    fn execute_branch(&mut self, bus: &impl Bus, base_addr: u32, addr_offset: i32) {
         self.reg.r[PC_INDEX] = base_addr.wrapping_add(addr_offset as _);
         self.reload_pipeline(bus);
     }
 
-    pub(super) fn meets_condition(&self, cond: u8) -> bool {
+    fn meets_condition(&self, cond: u8) -> bool {
         match cond {
             // EQ
             0 => self.reg.cpsr.zero,
@@ -370,12 +411,7 @@ impl Cpu {
         }
     }
 
-    pub(super) fn execute_thumb_bl(
-        &mut self,
-        bus: &impl Bus,
-        hi_part: bool,
-        addr_offset_part: u16,
-    ) {
+    fn execute_thumb_bl(&mut self, bus: &impl Bus, hi_part: bool, addr_offset_part: u16) {
         let addr_offset_part = u32::from(addr_offset_part);
 
         if hi_part {
@@ -386,11 +422,11 @@ impl Cpu {
 
             #[allow(clippy::cast_possible_wrap)]
             self.execute_branch(bus, self.reg.r[LR_INDEX], (addr_offset_part << 1) as _);
-            self.reg.r[LR_INDEX] = return_addr | 1; // bit 0 set indicates THUMB
+            self.reg.r[LR_INDEX] = return_addr | 1; // bit 0 set indicates Thumb
         }
     }
 
-    pub(super) fn execute_arm_bl(&mut self, bus: &impl Bus, addr_offset: i32) {
+    fn execute_arm_bl(&mut self, bus: &impl Bus, addr_offset: i32) {
         // Adjust for pipelining, which has us two instructions ahead.
         self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
         self.execute_branch(bus, self.reg.r[PC_INDEX], addr_offset);
@@ -398,7 +434,7 @@ impl Cpu {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+mod tests {
     use crate::{
         arm7tdmi::{
             reg::{OperationState, PC_INDEX},
@@ -409,7 +445,7 @@ pub(super) mod tests {
 
     #[allow(clippy::struct_excessive_bools)]
     pub struct InstrTest<'a> {
-        setup: &'a dyn Fn(&mut Cpu),
+        setup_fn: Option<&'a dyn Fn(&mut Cpu)>,
         state: OperationState,
         instr: u32,
 
@@ -428,7 +464,7 @@ pub(super) mod tests {
             asserted_rs[PC_INDEX] = 2 * state.instr_size();
 
             Self {
-                setup: &|_| {},
+                setup_fn: None,
                 state,
                 instr,
                 asserted_rs,
@@ -460,8 +496,9 @@ pub(super) mod tests {
             if self.state == OperationState::Thumb {
                 cpu.execute_bx(bus, 1); // Enter Thumb mode.
             }
-
-            (self.setup)(&mut cpu);
+            if let Some(setup_fn) = self.setup_fn {
+                setup_fn(&mut cpu);
+            }
 
             match self.state {
                 OperationState::Thumb => cpu.execute_thumb(bus, self.instr.try_into().unwrap()),
@@ -490,8 +527,8 @@ pub(super) mod tests {
         }
 
         #[must_use]
-        pub fn setup(mut self, setup: &'a dyn Fn(&mut Cpu)) -> Self {
-            self.setup = setup;
+        pub fn setup(mut self, setup_fn: &'a dyn Fn(&mut Cpu)) -> Self {
+            self.setup_fn = Some(setup_fn);
             self
         }
 

@@ -1,19 +1,22 @@
+use bitmatch::bitmatch;
 use intbits::Bits;
 
 use crate::{
-    arm7tdmi::{reg::OperationState, Exception},
+    arbitrary_sign_extend,
+    arm7tdmi::{
+        reg::{OperationState, PC_INDEX},
+        Cpu, Exception,
+    },
     bus::Bus,
-    sign_extend,
 };
-
-use super::{reg::PC_INDEX, Cpu};
 
 fn r_index(instr: u32, pos: u8) -> usize {
     instr.bits(pos..(pos + 4)) as _
 }
 
 impl Cpu {
-    pub(crate) fn execute_arm(&mut self, bus: &mut impl Bus, instr: u32) {
+    #[bitmatch]
+    pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl Bus, instr: u32) {
         assert!(self.reg.cpsr.state == OperationState::Arm);
 
         #[allow(clippy::cast_possible_truncation)]
@@ -21,33 +24,33 @@ impl Cpu {
             return; // TODO: 1S cycle anyway
         }
 
-        match (
-            instr.bits(26..28),
-            instr.bits(25..28),
-            instr.bits(24..28),
-            instr.bits(8..28),
-        ) {
-            (_, 0b101, _, _) => self.execute_arm_b_bl(bus, instr),
-            (_, _, _, 0b0001_0010_1111_1111_1111) => self.execute_arm_bx(bus, instr),
-            // TODO: 2S+1N, also what happens if 0b0001? BKPT does apply to ARMv4
-            (_, _, 0b1111, _) => self.enter_exception(bus, Exception::SoftwareInterrupt),
-            // TODO: 2S+1N+1I
-            (_, 0b011, _, _) => self.enter_exception(bus, Exception::UndefinedInstr),
-            (0b00, _, _, _) => self.execute_arm_alu(bus, instr),
-            _ => todo!(),
+        // TODO: 2S+1N for SWI, 2N+1N+1I for undefined exception
+        #[bitmatch]
+        match instr.bits(..28) {
+            "0001_0010_1111_1111_1111_????_????" => self.execute_arm_bx(bus, instr),
+            "000?_????_????_????_????_1001_????" => self.execute_arm_multiply(instr),
+            "1111_????_????_????_????_????_????" => {
+                self.enter_exception(bus, Exception::SoftwareInterrupt);
+            }
+            "011?_????_????_????_????_????_????" => {
+                self.enter_exception(bus, Exception::UndefinedInstr);
+            }
+            "101?_????_????_????_????_????_????" => self.execute_arm_b_bl(bus, instr),
+            "00??_????_????_????_????_????_????" => self.execute_arm_data_processing(bus, instr),
+            // TODO: implement others
+            _ => self.enter_exception(bus, Exception::UndefinedInstr),
         }
     }
 
     /// Branch and branch with link.
     fn execute_arm_b_bl(&mut self, bus: &impl Bus, instr: u32) {
         // TODO: 2S+1N
-        // {cond} label
-        let addr_offset = 4 * sign_extend!(i32, instr.bits(..24), 24);
+        let addr_offset = 4 * arbitrary_sign_extend!(i32, instr.bits(..24), 24);
         if instr.bit(24) {
-            // BL
+            // BL{cond} label
             self.execute_arm_bl(bus, addr_offset);
         } else {
-            // B
+            // B{cond} label
             self.execute_branch(bus, self.reg.r[PC_INDEX], addr_offset);
         }
     }
@@ -56,12 +59,12 @@ impl Cpu {
     fn execute_arm_bx(&mut self, bus: &impl Bus, instr: u32) {
         // TODO: 2S+1N
         // TODO: bits 4-7 should be 0b0001, but what happens if they're not?
-        // {cond} Rn
+        // BX{cond} Rn
         self.execute_bx(bus, self.reg.r[r_index(instr, 0)]);
     }
 
-    /// ALU operations.
-    fn execute_arm_alu(&mut self, bus: &impl Bus, instr: u32) {
+    /// Data processing operations.
+    fn execute_arm_data_processing(&mut self, bus: &impl Bus, instr: u32) {
         // TODO: (1+p)S+rI+pN. Whereas r=1 if I=0 and R=1 (ie. shift by register); otherwise r=0.
         //       And p=1 if Rd=R15; otherwise p=0.
         // TODO: do these instructions act weird when, e.g, reserved bits are set?
@@ -104,13 +107,13 @@ impl Cpu {
             }
 
             match instr.bits(5..7) {
-                // LSL
+                // LSL{S} Op2,#nn
                 0 => self.execute_lsl(update_cond, value2, offset),
-                // LSR
+                // LSR{S} Op2,#nn
                 1 => self.execute_lsr(update_cond, !offset_from_reg, value2, offset),
-                // ASR
+                // ASR{S} Op2,#nn
                 2 => self.execute_asr(update_cond, !offset_from_reg, value2, offset),
-                // ROR
+                // ROR{S} Op2,#nn
                 3 => self.execute_ror(update_cond, !offset_from_reg, value2, offset),
                 _ => unreachable!(),
             }
@@ -120,36 +123,36 @@ impl Cpu {
 
         match op {
             // AND{cond}{S} Rd,Rn,Op2
-            0 => self.reg.r[r_dst] = self.execute_and_tst(update_cond, value1, value2),
+            0 => self.reg.r[r_dst] = self.execute_and(update_cond, value1, value2),
             // EOR{cond}{S} Rd,Rn,Op2
-            1 => self.reg.r[r_dst] = self.execute_eor_teq(update_cond, value1, value2),
+            1 => self.reg.r[r_dst] = self.execute_eor(update_cond, value1, value2),
             // SUB{cond}{S} Rd,Rn,Op2
-            2 => self.reg.r[r_dst] = self.execute_sub_cmp(update_cond, value1, value2),
+            2 => self.reg.r[r_dst] = self.execute_sub(update_cond, value1, value2),
             // RSB{cond}{S} Rd,Rn,Op2
-            3 => self.reg.r[r_dst] = self.execute_sub_cmp(update_cond, value2, value1),
+            3 => self.reg.r[r_dst] = self.execute_sub(update_cond, value2, value1),
             // ADD{cond}{S} Rd,Rn,Op2
-            4 => self.reg.r[r_dst] = self.execute_add_cmn(update_cond, value1, value2),
+            4 => self.reg.r[r_dst] = self.execute_add(update_cond, value1, value2),
             // ADC{cond}{S} Rd,Rn,Op2
             5 => self.reg.r[r_dst] = self.execute_adc(update_cond, value1, value2),
             // SBC{cond}{S} Rd,Rn,Op2
             6 => self.reg.r[r_dst] = self.execute_sbc(update_cond, value1, value2),
             // RSC{cond}{S} Rd,Rn,Op2
             7 => self.reg.r[r_dst] = self.execute_sbc(update_cond, value2, value1),
-            // TST{cond}{P} Rn,Op2
+            // TST{cond} Rn,Op2
             8 => {
-                self.execute_and_tst(true, value1, value2);
+                self.execute_and(true, value1, value2);
             }
-            // TEQ{cond}{P} Rn,Op2
+            // TEQ{cond} Rn,Op2
             9 => {
-                self.execute_eor_teq(true, value1, value2);
+                self.execute_eor(true, value1, value2);
             }
-            // CMP{cond}{P} Rn,Op2
+            // CMP{cond} Rn,Op2
             10 => {
-                self.execute_sub_cmp(true, value1, value2);
+                self.execute_sub(true, value1, value2);
             }
-            // CMN{cond}{P} Rn,Op2
+            // CMN{cond} Rn,Op2
             11 => {
-                self.execute_add_cmn(true, value1, value2);
+                self.execute_add(true, value1, value2);
             }
             // ORR{cond}{S} Rd,Rn,Op2
             12 => self.reg.r[r_dst] = self.execute_orr(update_cond, value1, value2),
@@ -166,21 +169,71 @@ impl Cpu {
             self.reload_pipeline(bus);
         }
     }
+
+    /// Multiply and multiply-accumulate.
+    fn execute_arm_multiply(&mut self, instr: u32) {
+        // TODO: Cycle counting -- it's complicated; see GBATEK.
+        // TODO: There are some restrictions; what if they're violated?
+        //       Right now, due to how our opcode parsing is implemented, using unused opcodes may
+        //       be interpreted as valid opcodes; we'll just call it undefined behaviour. :-)
+        let update_cond = instr.bit(20);
+        let r_dst_or_hi = r_index(instr, 16);
+        let r_accum_or_lo = r_index(instr, 12);
+
+        let value1 = self.reg.r[r_index(instr, 0)];
+        let value2 = self.reg.r[r_index(instr, 8)];
+        let accum1 = self.reg.r[r_accum_or_lo];
+        let accum2 = self.reg.r[r_dst_or_hi];
+
+        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+        if instr.bit(23) {
+            // 64-bit result written to RdHiLo.
+            let accum_dword = u64::from(accum1).with_bits(32.., accum2.into());
+
+            let result = match instr.bits(21..23) {
+                // UMULL{cond}{S} RdLo,RdHi,Rm,Rs
+                0 => self.execute_umlal(update_cond, value1, value2, 0),
+                // UMLAL{cond}{S} RdLo,RdHi,Rm,Rs
+                1 => self.execute_umlal(update_cond, value1, value2, accum_dword),
+                // SMULL{cond}{S} RdLo,RdHi,Rm,Rs
+                2 => self.execute_smlal(update_cond, value1 as i32, value2 as i32, 0),
+                // SMLAL{cond}{S} RdLo,RdHi,Rm,Rs
+                3 => self.execute_smlal(
+                    update_cond,
+                    value1 as i32,
+                    value2 as i32,
+                    accum_dword as i64,
+                ),
+                _ => unreachable!(),
+            };
+
+            self.reg.r[r_accum_or_lo] = result.bits(..32) as u32;
+            self.reg.r[r_dst_or_hi] = result.bits(32..) as u32;
+        } else {
+            // 32-bit result written to Rd.
+            self.reg.r[r_dst_or_hi] = if instr.bit(21) {
+                // MLA{cond}{S} Rd,Rm,Rs,Rn
+                self.execute_mla(update_cond, value1, value2, accum1) as u32
+            } else {
+                // MUL{cond}{S} Rd,Rm,Rs
+                self.execute_mla(update_cond, value1, value2, 0) as u32
+            };
+        }
+    }
 }
 
 #[allow(
     clippy::unusual_byte_groupings,
-    clippy::cast_sign_loss,
     clippy::too_many_lines,
     clippy::unnecessary_cast // lint doesn't work properly with negative literals
 )]
 #[cfg(test)]
 mod tests {
+    use crate::arm7tdmi::{isa::tests::InstrTest, reg::LR_INDEX};
+
     use super::*;
 
     use intbits::Bits;
-
-    use crate::arm7tdmi::{op::tests::InstrTest, reg::LR_INDEX};
 
     #[test]
     fn execute_arm_cond_branch() {
@@ -253,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_arm_alu_and_args() {
+    fn execute_arm_data_processing_decode() {
         // AND{cond}{S} Rd,Rn,Op2; mostly test argument decoding and handling here.
         // AL S R14,R0,#10101010b
         InstrTest::new_arm(0b1110_00_1_0000_1_0000_1110_0000_10101010)
@@ -275,7 +328,7 @@ mod tests {
             .assert_r(0, 0b1100_0011)
             .run();
 
-        // AL S R14,R0,#11100001b,ROR#6
+        // AL S R14,R0,#11100001b,ROR #6
         InstrTest::new_arm(0b1110_00_1_0000_1_0000_1110_0011_11100001)
             .setup(&|cpu| cpu.reg.r[0] = u32::MAX)
             .assert_r(0, u32::MAX)
@@ -284,7 +337,7 @@ mod tests {
             .assert_carry()
             .run();
 
-        // AL R14,R0,#11100001b,ROR#6
+        // AL R14,R0,#11100001b,ROR #6
         InstrTest::new_arm(0b1110_00_1_0000_0_0000_1110_0011_11100001)
             .setup(&|cpu| cpu.reg.r[0] = u32::MAX)
             .assert_r(0, u32::MAX)
@@ -303,7 +356,7 @@ mod tests {
             .assert_r(PC_INDEX, 8 + 8)
             .run();
 
-        // AL S R9,R0,R11,LSL#30
+        // AL S R9,R0,R11,LSL #30
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_11110_00_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = 0b111 << 29;
@@ -316,7 +369,7 @@ mod tests {
             .assert_negative()
             .run();
 
-        // AL S R9,R0,R11,LSL#0
+        // AL S R9,R0,R11,LSL #0
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00000_00_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = 0b111 << 29;
@@ -327,7 +380,7 @@ mod tests {
             .assert_zero()
             .run();
 
-        // AL S R9,R0,R11,LSR#2
+        // AL S R9,R0,R11,LSR #2
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00010_01_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = 0b111 << 29;
@@ -339,7 +392,7 @@ mod tests {
             .assert_carry()
             .run();
 
-        // AL S R9,R0,R11,LSR#0
+        // AL S R9,R0,R11,LSR #0
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00000_01_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = 0b111 << 29;
@@ -351,7 +404,7 @@ mod tests {
             .assert_zero()
             .run();
 
-        // AL S R9,R0,R11,LSR#0
+        // AL S R9,R0,R11,LSR #0
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00000_01_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = 0b111 << 29;
@@ -362,7 +415,7 @@ mod tests {
             .assert_zero()
             .run();
 
-        // AL S R9,R0,R11,ASR#2
+        // AL S R9,R0,R11,ASR #2
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00010_10_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = 0b111 << 29;
@@ -375,7 +428,7 @@ mod tests {
             .assert_negative()
             .run();
 
-        // AL S R9,R0,R11,ASR#0
+        // AL S R9,R0,R11,ASR #0
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00000_10_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
@@ -388,7 +441,7 @@ mod tests {
             .assert_negative()
             .run();
 
-        // AL S R9,R0,R11,ROR#3
+        // AL S R9,R0,R11,ROR #3
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00011_11_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
@@ -401,7 +454,7 @@ mod tests {
             .assert_negative()
             .run();
 
-        // AL S R9,R0,R11,ROR#0
+        // AL S R9,R0,R11,ROR #0
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00000_11_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
@@ -413,7 +466,7 @@ mod tests {
             .assert_carry()
             .run();
 
-        // AL S R9,R0,R11,ROR#0
+        // AL S R9,R0,R11,ROR #0
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00000_11_0_1011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = u32::MAX;
@@ -427,14 +480,14 @@ mod tests {
             .assert_negative()
             .run();
 
-        // AL S R9,R0,R15,LSL#1
+        // AL S R9,R0,R15,LSL #1
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_00001_00_0_1111)
             .setup(&|cpu| cpu.reg.r[0] = u32::MAX)
             .assert_r(0, u32::MAX)
             .assert_r(9, 8 << 1)
             .run();
 
-        // AL S R9,R15,R0,LSL#0
+        // AL S R9,R15,R0,LSL #0
         InstrTest::new_arm(0b1110_00_0_0000_1_1111_1001_00000_00_0_0000)
             .setup(&|cpu| cpu.reg.r[0] = u32::MAX)
             .assert_r(0, u32::MAX)
@@ -478,8 +531,9 @@ mod tests {
     }
 
     #[test]
-    fn execute_arm_alu_ops() {
-        // AND plus argument handling is already tested in execute_arm_alu_and_args.
+    #[allow(clippy::cast_sign_loss)]
+    fn execute_arm_data_processing_ops() {
+        // AND plus argument handling is already tested in execute_arm_data_processing_decode.
         // We'll test the other ops here with and without the condition bit set
         // (except TST, TEQ, CMP and CMN).
 
@@ -603,7 +657,7 @@ mod tests {
             .assert_r(14, 4)
             .run();
 
-        // TST{cond}{P} Rn,Op2
+        // TST{cond} Rn,Op2
         // AL R0,#10101010b
         InstrTest::new_arm(0b1110_00_1_1000_1_0000_1111_0000_10101010)
             .setup(&|cpu| cpu.reg.r[0] = 1)
@@ -617,7 +671,7 @@ mod tests {
             .assert_r(0, 0b10)
             .run();
 
-        // TEQ{cond}{P} Rn,Op2
+        // TEQ{cond} Rn,Op2
         // AL R0,#10101010b
         InstrTest::new_arm(0b1110_00_1_1001_1_0000_0000_0000_10101010)
             .setup(&|cpu| cpu.reg.r[0] = 0b1010_1011)
@@ -631,7 +685,7 @@ mod tests {
             .assert_zero()
             .run();
 
-        // CMP{cond}{P} Rn,Op2
+        // CMP{cond} Rn,Op2
         // AL S R0,#20
         InstrTest::new_arm(0b1110_00_1_1010_1_0000_1111_0000_00010100)
             .setup(&|cpu| cpu.reg.r[0] = 15)
@@ -647,7 +701,7 @@ mod tests {
             .assert_carry()
             .run();
 
-        // CMN{cond}{P} Rn,Op2
+        // CMN{cond} Rn,Op2
         // AL R0,#3
         InstrTest::new_arm(0b1110_00_1_1011_1_0000_0000_0000_00000011)
             .setup(&|cpu| cpu.reg.r[0] = -15 as _)
@@ -715,6 +769,202 @@ mod tests {
         // AL R14,#0
         InstrTest::new_arm(0b1110_00_1_1111_0_0000_1110_0000_00000001)
             .assert_r(14, u32::MAX.with_bit(0, false))
+            .run();
+    }
+
+    #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn execute_arm_multiply() {
+        // MUL{cond}{S} Rd,Rm,Rs
+        // AL S R14,R2,R0
+        InstrTest::new_arm(0b1110_000_0000_1_1110_0000_0000_1001_0010)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 200_123;
+                cpu.reg.r[2] = 12_024;
+            })
+            .assert_r(0, 200_123)
+            .assert_r(2, 12_024)
+            .assert_r(14, 200_123 * 12_024)
+            .assert_negative()
+            .run();
+
+        // AL R14,R2,R0
+        InstrTest::new_arm(0b1110_000_0000_0_1110_0000_0000_1001_0010)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 200_123;
+                cpu.reg.r[2] = 12_024;
+            })
+            .assert_r(0, 200_123)
+            .assert_r(2, 12_024)
+            .assert_r(14, 200_123 * 12_024)
+            .run();
+
+        // MLA{cond}{S} Rd,Rm,Rs,Rn
+        // AL S R14,R2,R0,R3
+        InstrTest::new_arm(0b1110_000_0001_1_1110_0011_0000_1001_0010)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 200_123;
+                cpu.reg.r[2] = 12_024;
+                cpu.reg.r[3] = 1337;
+            })
+            .assert_r(0, 200_123)
+            .assert_r(2, 12_024)
+            .assert_r(3, 1337)
+            .assert_r(14, 200_123 * 12_024 + 1337)
+            .assert_negative()
+            .run();
+
+        // AL R14,R2,R0
+        InstrTest::new_arm(0b1110_000_0001_0_1110_0011_0000_1001_0010)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 200_123;
+                cpu.reg.r[2] = 12_024;
+                cpu.reg.r[3] = 1337;
+            })
+            .assert_r(0, 200_123)
+            .assert_r(2, 12_024)
+            .assert_r(3, 1337)
+            .assert_r(14, 200_123 * 12_024 + 1337)
+            .run();
+
+        // UMULL{cond}{S} RdLo,RdHi,Rs,Rn
+        // AL S R2,R14,R0,R3
+        #[allow(clippy::cast_lossless)]
+        InstrTest::new_arm(0b1110_000_0100_1_1110_0010_0000_1001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 30;
+                cpu.reg.r[3] = -2 as _;
+            })
+            .assert_r(0, 30)
+            .assert_r(3, -2 as _)
+            .assert_r(2, (30u64 * (-2i32 as u32 as u64)).bits(..32) as _)
+            .assert_r(14, (30u64 * (-2i32 as u32 as u64)).bits(32..) as _)
+            .run();
+
+        // AL S R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0100_1_1110_0010_0000_1001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 200_123;
+                cpu.reg.r[3] = 10_712;
+            })
+            .assert_r(0, 200_123)
+            .assert_r(3, 10_712)
+            .assert_r(2, (200_123 * 10_712).bits(..32))
+            .assert_r(14, (200_123 * 10_712).bits(32..))
+            .run();
+
+        // AL S R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0100_1_1110_0010_0000_1001_0011)
+            .setup(&|cpu| cpu.reg.r[0] = 200_123)
+            .assert_r(0, 200_123)
+            .assert_zero()
+            .run();
+
+        // AL R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0100_0_1110_0010_0000_1001_0011)
+            .setup(&|cpu| cpu.reg.r[0] = 200_123)
+            .assert_r(0, 200_123)
+            .run();
+
+        // UMLAL{cond}{S} RdLo,RdHi,Rs,Rn
+        // AL S R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0101_1_1110_0010_0000_1001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 3;
+                cpu.reg.r[3] = 2;
+                cpu.reg.r[2] = u32::MAX - 6;
+                cpu.reg.r[14] = u32::MAX;
+            })
+            .assert_r(0, 3)
+            .assert_r(3, 2)
+            .assert_r(2, u32::MAX)
+            .assert_r(14, u32::MAX)
+            .assert_negative()
+            .run();
+
+        // AL S R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0101_1_1110_0010_0000_1001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 3;
+                cpu.reg.r[3] = 2;
+                cpu.reg.r[2] = 13;
+                cpu.reg.r[14] = u32::MAX.with_bit(31, false);
+            })
+            .assert_r(0, 3)
+            .assert_r(3, 2)
+            .assert_r(2, 19)
+            .assert_r(14, u32::MAX.with_bit(31, false))
+            .run();
+
+        // AL R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0101_1_1110_0010_0000_1001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 3;
+                cpu.reg.r[3] = 2;
+                cpu.reg.r[2] = u32::MAX - 6;
+                cpu.reg.r[14] = u32::MAX;
+            })
+            .assert_r(0, 3)
+            .assert_r(3, 2)
+            .assert_r(2, u32::MAX)
+            .assert_r(14, u32::MAX)
+            .assert_negative()
+            .run();
+
+        // SMULL{cond}{S} RdLo,RdHi,Rs,Rn
+        // AL S R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0110_1_1110_0010_0000_1001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 30;
+                cpu.reg.r[3] = -2 as _;
+            })
+            .assert_r(0, 30)
+            .assert_r(3, -2 as _)
+            .assert_r(2, -60 as _)
+            .assert_r(14, u32::MAX)
+            .assert_negative()
+            .run();
+
+        // AL R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0110_0_1110_0010_0000_1001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = 30;
+                cpu.reg.r[3] = -2 as _;
+            })
+            .assert_r(0, 30)
+            .assert_r(3, -2 as _)
+            .assert_r(2, -60 as _)
+            .assert_r(14, u32::MAX)
+            .run();
+
+        // SMLAL{cond}{S} RdLo,RdHi,Rs,Rn
+        // AL S R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0111_1_1110_0010_0000_1001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = -30 as _;
+                cpu.reg.r[3] = -2 as _;
+                cpu.reg.r[2] = -71 as _;
+                cpu.reg.r[14] = u32::MAX;
+            })
+            .assert_r(0, -30 as _)
+            .assert_r(3, -2 as _)
+            .assert_r(2, -11 as _)
+            .assert_r(14, u32::MAX)
+            .assert_negative()
+            .run();
+
+        // AL R2,R14,R0,R3
+        InstrTest::new_arm(0b1110_000_0111_0_1110_0010_0000_1001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[0] = -30 as _;
+                cpu.reg.r[3] = -2 as _;
+                cpu.reg.r[2] = -71 as _;
+                cpu.reg.r[14] = u32::MAX;
+            })
+            .assert_r(0, -30 as _)
+            .assert_r(3, -2 as _)
+            .assert_r(2, -11 as _)
+            .assert_r(14, u32::MAX)
             .run();
     }
 }

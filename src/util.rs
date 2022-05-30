@@ -1,5 +1,5 @@
 #[macro_export]
-macro_rules! sign_extend {
+macro_rules! arbitrary_sign_extend {
     ($result_type:ty, $x:expr, $bitcount:expr) => {{
         i64::from($x)
             .wrapping_shl(64 - $bitcount)
@@ -7,6 +7,6 @@ macro_rules! sign_extend {
     }};
 
     ($x:expr, $bitcount:expr) => {
-        sign_extend!(_, $x, $bitcount)
+        arbitrary_sign_extend!(_, $x, $bitcount)
     };
 }

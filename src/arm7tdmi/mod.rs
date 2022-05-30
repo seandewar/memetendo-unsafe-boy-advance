@@ -1,7 +1,5 @@
-mod arm;
-mod op;
+mod isa;
 mod reg;
-mod thumb;
 
 use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX};
 
@@ -243,26 +241,33 @@ mod tests {
     #[test]
     fn step_works() {
         let mut bus = VecBus(vec![0; 102]);
-        bus.write_hword(0, 0b001_00_101_01100101); // MOV R5,#101
-        bus.write_hword(2, 0b010001_11_0_0_101_000); // BX R5
+        bus.write_word(0, 0b1110_00_1_1101_0_0000_0000_0000_00001001); // MOVAL R0,#(8 OR 1)
+        bus.write_word(4, 0b1110_00010010111111111111_0001_0000); // BXAL R0
+        bus.write_hword(8, 0b001_00_101_01100101); // MOV R5,#101
+        bus.write_hword(10, 0b010001_11_0_0_101_000); // BX R5
         bus.write_hword(100, 0b001_00_001_00100001); // MOV R1,#33
 
         let mut cpu = Cpu::new();
         cpu.reset(&bus);
-        cpu.execute_bx(&bus, 1); // Act like the CPU started in THUMB mode.
-        assert_eq!(4, cpu.reg.r[PC_INDEX]);
+        assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
+
+        cpu.step(&mut bus);
+        assert_eq!(8 | 1, cpu.reg.r[0]);
+
+        cpu.step(&mut bus);
+        assert_eq!(8 + 4, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
 
         cpu.step(&mut bus);
-        assert_eq!(6, cpu.reg.r[PC_INDEX]);
+        assert_eq!(10 + 4, cpu.reg.r[PC_INDEX]);
         assert_eq!(101, cpu.reg.r[5]);
 
         cpu.step(&mut bus);
-        assert_eq!(104, cpu.reg.r[PC_INDEX]);
+        assert_eq!(100 + 4, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
 
         cpu.step(&mut bus);
-        assert_eq!(106, cpu.reg.r[PC_INDEX]);
+        assert_eq!(102 + 4, cpu.reg.r[PC_INDEX]);
         assert_eq!(33, cpu.reg.r[1]);
     }
 }
