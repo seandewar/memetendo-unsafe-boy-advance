@@ -98,12 +98,6 @@ impl Cpu {
         }
         .wrapping_add(instr_size * 2);
     }
-
-    fn set_cpsr(&mut self, cpsr: u32) {
-        if self.reg.set_cpsr(cpsr).is_err() {
-            self.run_state = RunState::Hung;
-        }
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, EnumIter, Debug)]
@@ -142,7 +136,7 @@ impl Cpu {
     fn enter_exception(&mut self, bus: &impl Bus, exception: Exception) {
         let old_cpsr = self.reg.cpsr;
 
-        self.reg.set_mode(exception.entry_mode());
+        self.reg.change_mode(exception.entry_mode());
         self.reg.cpsr.fiq_disabled |= exception.disables_fiq();
         self.reg.cpsr.irq_disabled = true;
         self.reg.cpsr.state = OperationState::Arm;
@@ -165,29 +159,9 @@ mod tests {
 
     use strum::IntoEnumIterator;
 
-    #[test]
-    fn set_cpsr_works() {
-        let mut cpu = Cpu::new();
-        cpu.reset(&NullBus);
-
-        cpu.set_cpsr(OperationMode::Abort.psr().with_bit(5, true));
-        assert_eq!(RunState::Running, cpu.run_state);
-        assert_eq!(OperationMode::Abort, cpu.reg.cpsr.mode());
-        assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
-
-        cpu.set_cpsr(OperationMode::UndefinedInstr.psr());
-        assert_eq!(RunState::Running, cpu.run_state);
-        assert_eq!(OperationMode::UndefinedInstr, cpu.reg.cpsr.mode());
-        assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
-
-        // invalid cpsr mode should hang
-        cpu.set_cpsr(0);
-        assert_eq!(RunState::Hung, cpu.run_state);
-    }
-
     fn assert_exception_result(cpu: &mut Cpu, exception: Exception, old_reg: Registers) {
         assert_eq!(RunState::Running, cpu.run_state);
-        assert_eq!(exception.entry_mode(), cpu.reg.cpsr.mode());
+        assert_eq!(exception.entry_mode(), cpu.reg.cpsr.mode);
         assert_eq!(
             exception.disables_fiq() || old_reg.cpsr.fiq_disabled,
             cpu.reg.cpsr.fiq_disabled
@@ -214,7 +188,9 @@ mod tests {
     #[test]
     fn reset_works() {
         let mut cpu = Cpu::new();
-        cpu.set_cpsr(0b1111_1111.with_bits(28.., 0b1111));
+
+        cpu.reg.cpsr.mode = OperationMode::Abort;
+        cpu.reg.cpsr.set_flags_from_bits(0b1010 << 28);
         cpu.reg.r[PC_INDEX] = 0xbeef;
         let old_reg = cpu.reg;
 
@@ -222,10 +198,10 @@ mod tests {
         assert_exception_result(&mut cpu, Exception::Reset, old_reg);
 
         // condition flags should be preserved by reset
-        assert!(cpu.reg.cpsr.negative);
-        assert!(cpu.reg.cpsr.zero);
+        assert!(cpu.reg.cpsr.signed);
+        assert!(!cpu.reg.cpsr.zero);
         assert!(cpu.reg.cpsr.carry);
-        assert!(cpu.reg.cpsr.overflow);
+        assert!(!cpu.reg.cpsr.overflow);
     }
 
     #[test]

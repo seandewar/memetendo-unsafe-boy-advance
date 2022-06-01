@@ -6,21 +6,19 @@ use intbits::Bits;
 use crate::bus::{Bus, BusAlignedExt};
 
 use super::{
-    reg::{StatusRegister, LR_INDEX, PC_INDEX, SP_INDEX},
+    reg::{OperationMode, StatusRegister, LR_INDEX, PC_INDEX, SP_INDEX},
     Cpu, OperationState,
 };
 
 impl StatusRegister {
-    #[allow(clippy::cast_possible_wrap)]
     fn set_nz_from_word(&mut self, result: u32) {
         self.zero = result == 0;
-        self.negative = (result as i32).is_negative();
+        self.signed = result.bit(31);
     }
 
-    #[allow(clippy::cast_possible_wrap)]
     fn set_nz_from_dword(&mut self, result: u64) {
         self.zero = result == 0;
-        self.negative = (result as i64).is_negative();
+        self.signed = result.bit(63);
     }
 }
 
@@ -384,9 +382,9 @@ impl Cpu {
             // CC/LO
             3 => !self.reg.cpsr.carry,
             // MI
-            4 => self.reg.cpsr.negative,
+            4 => self.reg.cpsr.signed,
             // PL
-            5 => !self.reg.cpsr.negative,
+            5 => !self.reg.cpsr.signed,
             // VS
             6 => self.reg.cpsr.overflow,
             // VC
@@ -396,13 +394,13 @@ impl Cpu {
             // LS
             9 => !self.reg.cpsr.carry || self.reg.cpsr.zero,
             // GE
-            10 => self.reg.cpsr.negative == self.reg.cpsr.overflow,
+            10 => self.reg.cpsr.signed == self.reg.cpsr.overflow,
             // LT
-            11 => self.reg.cpsr.negative != self.reg.cpsr.overflow,
+            11 => self.reg.cpsr.signed != self.reg.cpsr.overflow,
             // GT
-            12 => !self.reg.cpsr.zero && (self.reg.cpsr.negative == self.reg.cpsr.overflow),
+            12 => !self.reg.cpsr.zero && (self.reg.cpsr.signed == self.reg.cpsr.overflow),
             // LE
-            13 => self.reg.cpsr.zero || (self.reg.cpsr.negative != self.reg.cpsr.overflow),
+            13 => self.reg.cpsr.zero || (self.reg.cpsr.signed != self.reg.cpsr.overflow),
             // AL (Always) or Undefined in Thumb (TODO: how does it act?)
             14 => true,
             // Reserved (TODO: acts like Never in ARMv1,v2?)
@@ -431,6 +429,41 @@ impl Cpu {
         self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
         self.execute_branch(bus, self.reg.r[PC_INDEX], addr_offset);
     }
+
+    fn execute_mrs(&self, use_spsr: bool) -> u32 {
+        // TODO: No SPSR exists in User & System mode. What happens if we attempt access?
+        if use_spsr {
+            self.reg.spsr.bits()
+        } else {
+            self.reg.cpsr.bits()
+        }
+    }
+
+    fn execute_msr(&mut self, use_spsr: bool, write_flags: bool, write_control: bool, value: u32) {
+        if use_spsr {
+            // TODO: No SPSR exists in User & System mode. What happens if we attempt access?
+            if write_control {
+                // TODO: Possibly invalid mode; what's the real behaviour?
+                let _ = self.reg.spsr.set_control_from_bits(value);
+            }
+            if write_flags {
+                self.reg.spsr.set_flags_from_bits(value);
+            }
+        } else {
+            if write_control && self.reg.cpsr.mode != OperationMode::User {
+                if let Some(new_mode) = OperationMode::from_bits(value) {
+                    self.reg.change_mode(new_mode);
+                    self.reg.cpsr.set_control_from_bits(value).unwrap();
+                } else {
+                    // TODO: Invalid mode; what's the real behaviour?
+                    let _ = self.reg.cpsr.set_control_from_bits(value);
+                }
+            }
+            if write_flags {
+                self.reg.cpsr.set_flags_from_bits(value);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -450,7 +483,7 @@ mod tests {
         instr: u32,
 
         asserted_rs: [u32; 16],
-        assert_negative: bool,
+        assert_signed: bool,
         assert_zero: bool,
         assert_carry: bool,
         assert_overflow: bool,
@@ -468,7 +501,7 @@ mod tests {
                 state,
                 instr,
                 asserted_rs,
-                assert_negative: false,
+                assert_signed: false,
                 assert_zero: false,
                 assert_carry: false,
                 assert_overflow: false,
@@ -506,7 +539,7 @@ mod tests {
             }
 
             assert_eq!(cpu.reg.r.0, self.asserted_rs);
-            assert_eq!(cpu.reg.cpsr.negative, self.assert_negative, "negative flag");
+            assert_eq!(cpu.reg.cpsr.signed, self.assert_signed, "signed flag");
             assert_eq!(cpu.reg.cpsr.zero, self.assert_zero, "zero flag");
             assert_eq!(cpu.reg.cpsr.carry, self.assert_carry, "carry flag");
             assert_eq!(cpu.reg.cpsr.overflow, self.assert_overflow, "overflow flag");
@@ -529,48 +562,56 @@ mod tests {
         #[must_use]
         pub fn setup(mut self, setup_fn: &'a dyn Fn(&mut Cpu)) -> Self {
             self.setup_fn = Some(setup_fn);
+
             self
         }
 
         #[must_use]
         pub fn assert_r(mut self, index: usize, r: u32) -> Self {
             self.asserted_rs[index] = r;
+
             self
         }
 
         #[must_use]
-        pub fn assert_negative(mut self) -> Self {
-            self.assert_negative = true;
+        pub fn assert_signed(mut self) -> Self {
+            self.assert_signed = true;
+
             self
         }
 
         #[must_use]
         pub fn assert_zero(mut self) -> Self {
             self.assert_zero = true;
+
             self
         }
 
         #[must_use]
         pub fn assert_carry(mut self) -> Self {
             self.assert_carry = true;
+
             self
         }
 
         #[must_use]
         pub fn assert_overflow(mut self) -> Self {
             self.assert_overflow = true;
+
             self
         }
 
         #[must_use]
         pub fn assert_irq_enabled(mut self) -> Self {
             self.assert_irq_disabled = false;
+
             self
         }
 
         #[must_use]
         pub fn assert_fiq_enabled(mut self) -> Self {
             self.assert_fiq_disabled = false;
+
             self
         }
     }

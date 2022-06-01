@@ -428,7 +428,7 @@ mod tests {
         InstrTest::new_thumb(0b000_00_00000_000_000) // R0,R0,#0
             .setup(&|cpu| cpu.reg.r[0] = u32::MAX)
             .assert_r(0, u32::MAX)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // LSR{S} Rd,Rs,#Offset
@@ -460,7 +460,7 @@ mod tests {
         InstrTest::new_thumb(0b000_10_11111_111_111) // R7,R7,#31
             .setup(&|cpu| cpu.reg.r[7] = 1 << 31)
             .assert_r(7, u32::MAX)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b000_10_00001_101_000) // R0,R5,#1
@@ -473,7 +473,7 @@ mod tests {
         InstrTest::new_thumb(0b000_10_00000_111_111) // R7,R7,#32
             .setup(&|cpu| cpu.reg.r[7] = 1 << 31)
             .assert_r(7, u32::MAX)
-            .assert_negative()
+            .assert_signed()
             .assert_carry()
             .run();
     }
@@ -516,7 +516,7 @@ mod tests {
             .assert_r(0, -5 as _)
             .assert_r(1, -10 as _)
             .assert_r(2, -15 as _)
-            .assert_negative()
+            .assert_signed()
             .assert_carry()
             .run();
 
@@ -560,7 +560,7 @@ mod tests {
             .assert_r(0, 5)
             .assert_r(1, -10 as _)
             .assert_r(2, -15 as _)
-            .assert_negative()
+            .assert_signed()
             .assert_carry()
             .run();
 
@@ -572,7 +572,7 @@ mod tests {
             .assert_r(0, 1)
             .assert_r(1, i32::MIN as u32 + 1)
             .assert_r(2, i32::MIN as _)
-            .assert_negative()
+            .assert_signed()
             .assert_carry()
             .run();
 
@@ -594,7 +594,7 @@ mod tests {
     fn execute_thumb3() {
         // MOV{S} Rd,#nn
         InstrTest::new_thumb(0b001_00_101_11111111) // R5,#255
-            .setup(&|cpu| cpu.reg.cpsr.negative = true)
+            .setup(&|cpu| cpu.reg.cpsr.signed = true)
             .assert_r(5, 255)
             .run();
 
@@ -627,7 +627,7 @@ mod tests {
         InstrTest::new_thumb(0b001_11_011_00001111) // R3,#15
             .setup(&|cpu| cpu.reg.r[3] = 10)
             .assert_r(3, -5 as _)
-            .assert_negative()
+            .assert_signed()
             .run();
     }
 
@@ -657,7 +657,7 @@ mod tests {
             })
             .assert_r(1, i32::MIN as _)
             .assert_r(5, 1 << 31)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // EOR{S} Rd,Rs
@@ -686,7 +686,7 @@ mod tests {
             })
             .assert_r(1, u32::MAX)
             .assert_r(7, 1 << 31)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // LSL{S} Rd,Rs
@@ -767,7 +767,7 @@ mod tests {
             })
             .assert_r(0, u32::MAX)
             .assert_r(1, 32)
-            .assert_negative()
+            .assert_signed()
             .assert_carry()
             .run();
 
@@ -778,7 +778,7 @@ mod tests {
             })
             .assert_r(0, u32::MAX)
             .assert_r(1, 33)
-            .assert_negative()
+            .assert_signed()
             .assert_carry()
             .run();
 
@@ -789,7 +789,7 @@ mod tests {
             })
             .assert_r(0, u32::MAX)
             .assert_r(1, u8::MAX.into())
-            .assert_negative()
+            .assert_signed()
             .assert_carry()
             .run();
 
@@ -851,7 +851,7 @@ mod tests {
             .assert_r(0, u32::MAX)
             .assert_r(7, -2 as _)
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b010000_0101_000_111) // R7,R0
@@ -863,7 +863,7 @@ mod tests {
             .assert_r(0, u32::MAX)
             .assert_r(7, -1 as _)
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b010000_0101_000_111) // R7,R0
@@ -875,7 +875,7 @@ mod tests {
             .assert_r(0, u32::MAX)
             .assert_r(7, -1 as _)
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b010000_0101_000_111) // R7,R0
@@ -957,7 +957,7 @@ mod tests {
             .assert_r(0, 2)
             .assert_r(1, (0b11 << 30) | 0b11)
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b010000_0111_000_001) // R1,R0
@@ -1013,7 +1013,7 @@ mod tests {
             })
             .assert_r(0, 1 << 31)
             .assert_r(1, u32::MAX)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // NEG{S} Rd,Rs
@@ -1021,7 +1021,7 @@ mod tests {
             .setup(&|cpu| cpu.reg.r[3] = 30)
             .assert_r(3, 30)
             .assert_r(7, -30 as _)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b010000_1001_011_111) // R7,R3
@@ -1040,7 +1040,7 @@ mod tests {
             .setup(&|cpu| cpu.reg.r[3] = i32::MIN as _)
             .assert_r(3, i32::MIN as _)
             .assert_r(7, i32::MIN as _)
-            .assert_negative()
+            .assert_signed()
             .assert_overflow()
             .run();
 
@@ -1063,7 +1063,7 @@ mod tests {
             })
             .assert_r(3, 30)
             .assert_r(4, 20)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b010000_1010_011_100) // R4,R3
@@ -1095,7 +1095,7 @@ mod tests {
             })
             .assert_r(3, -30 as _)
             .assert_r(4, 20)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b010000_1011_011_100) // R4,R3
@@ -1125,7 +1125,7 @@ mod tests {
         InstrTest::new_thumb(0b010000_1100_100_100) // R4,R4
             .setup(&|cpu| cpu.reg.r[4] = u32::MAX)
             .assert_r(4, u32::MAX)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // MUL{S} Rd,Rs
@@ -1154,7 +1154,7 @@ mod tests {
             })
             .assert_r(0, -112 as _)
             .assert_r(1, 14)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b010000_1101_001_000) // R0,R1
@@ -1192,7 +1192,7 @@ mod tests {
             })
             .assert_r(0, 1 << 31)
             .assert_r(1, u32::MAX >> 1)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // MVN{S} Rd,Rs
@@ -1205,7 +1205,7 @@ mod tests {
             .setup(&|cpu| cpu.reg.r[3] = 0b1111_0000)
             .assert_r(0, !0b1111_0000)
             .assert_r(3, 0b1111_0000)
-            .assert_negative()
+            .assert_signed()
             .run();
     }
 
@@ -1267,7 +1267,7 @@ mod tests {
             })
             .assert_r(1, 15)
             .assert_r(13, 20)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b010001_01_1_1_010_111) // PC,R10
@@ -1742,9 +1742,9 @@ mod tests {
 
         // BMI label
         InstrTest::new_thumb(0b1101_0100_00000000) // #0
-            .setup(&|cpu| cpu.reg.cpsr.negative = true)
+            .setup(&|cpu| cpu.reg.cpsr.signed = true)
             .assert_r(PC_INDEX, 4 + 4)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         InstrTest::new_thumb(0b1101_0100_00000000) // #0
@@ -1756,8 +1756,8 @@ mod tests {
             .run();
 
         InstrTest::new_thumb(0b1101_0101_00000010) // #4
-            .setup(&|cpu| cpu.reg.cpsr.negative = true)
-            .assert_negative()
+            .setup(&|cpu| cpu.reg.cpsr.signed = true)
+            .assert_signed()
             .run();
 
         // BVS label
@@ -1822,11 +1822,11 @@ mod tests {
         // BGE label
         InstrTest::new_thumb(0b1101_1010_00000011) // #6
             .setup(&|cpu| {
-                cpu.reg.cpsr.negative = true;
+                cpu.reg.cpsr.signed = true;
                 cpu.reg.cpsr.overflow = true;
             })
             .assert_r(PC_INDEX, 4 + 6 + 4)
-            .assert_negative()
+            .assert_signed()
             .assert_overflow()
             .run();
 
@@ -1842,10 +1842,10 @@ mod tests {
         // BLT label
         InstrTest::new_thumb(0b1101_1011_00000011) // #6
             .setup(&|cpu| {
-                cpu.reg.cpsr.negative = true;
+                cpu.reg.cpsr.signed = true;
                 cpu.reg.cpsr.overflow = true;
             })
-            .assert_negative()
+            .assert_signed()
             .assert_overflow()
             .run();
 
@@ -1853,19 +1853,19 @@ mod tests {
             .run();
 
         InstrTest::new_thumb(0b1101_1011_00000011) // #6
-            .setup(&|cpu| cpu.reg.cpsr.negative = true)
+            .setup(&|cpu| cpu.reg.cpsr.signed = true)
             .assert_r(PC_INDEX, 4 + 6 + 4)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // BGT label
         InstrTest::new_thumb(0b1101_1100_00000011) // #6
             .setup(&|cpu| {
-                cpu.reg.cpsr.negative = true;
+                cpu.reg.cpsr.signed = true;
                 cpu.reg.cpsr.overflow = true;
             })
             .assert_r(PC_INDEX, 4 + 6 + 4)
-            .assert_negative()
+            .assert_signed()
             .assert_overflow()
             .run();
 
@@ -1881,10 +1881,10 @@ mod tests {
         // BLE label
         InstrTest::new_thumb(0b1101_1101_00000011) // #6
             .setup(&|cpu| {
-                cpu.reg.cpsr.negative = true;
+                cpu.reg.cpsr.signed = true;
                 cpu.reg.cpsr.overflow = true;
             })
-            .assert_negative()
+            .assert_signed()
             .assert_overflow()
             .run();
 
@@ -1926,13 +1926,13 @@ mod tests {
 
         InstrTest::new_thumb(0b11100_01111111111) // #2046
             .setup(&|cpu| {
-                cpu.reg.cpsr.negative = true;
+                cpu.reg.cpsr.signed = true;
                 cpu.reg.cpsr.zero = true;
                 cpu.reg.cpsr.carry = true;
                 cpu.reg.cpsr.overflow = true;
             })
             .assert_r(PC_INDEX, 4 + 2046 + 4)
-            .assert_negative()
+            .assert_signed()
             .assert_zero()
             .assert_carry()
             .assert_overflow()

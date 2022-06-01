@@ -14,8 +14,8 @@ pub(super) enum OperationMode {
     Interrupt = 0b10010,
     Supervisor = 0b10011,
     Abort = 0b10111,
-    System = 0b11011,
-    UndefinedInstr = 0b11111,
+    UndefinedInstr = 0b11011,
+    System = 0b11111,
 }
 
 impl Default for OperationMode {
@@ -25,8 +25,13 @@ impl Default for OperationMode {
 }
 
 impl OperationMode {
-    pub(super) fn psr(self) -> u32 {
+    pub(super) fn bits(self) -> u32 {
         self as _
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    pub(super) fn from_bits(bits: u32) -> Option<Self> {
+        Self::from_repr(bits.bits(..5) as _)
     }
 }
 
@@ -81,22 +86,7 @@ impl OperationMode {
 }
 
 impl Registers {
-    pub(super) fn set_cpsr(&mut self, cpsr: u32) -> Result<(), ()> {
-        #[allow(clippy::cast_possible_truncation)]
-        self.set_mode(OperationMode::from_repr(cpsr.bits(..5) as _).ok_or(())?);
-        self.cpsr.state = OperationState::from_repr((cpsr & (1 << 5)) as _).unwrap();
-
-        self.cpsr.negative = cpsr.bit(31);
-        self.cpsr.zero = cpsr.bit(30);
-        self.cpsr.carry = cpsr.bit(29);
-        self.cpsr.overflow = cpsr.bit(28);
-        self.cpsr.irq_disabled = cpsr.bit(7);
-        self.cpsr.fiq_disabled = cpsr.bit(6);
-
-        Ok(())
-    }
-
-    pub(super) fn set_mode(&mut self, mode: OperationMode) {
+    pub(super) fn change_mode(&mut self, mode: OperationMode) {
         self.change_bank(mode);
         self.cpsr.mode = mode;
     }
@@ -121,7 +111,7 @@ impl Registers {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub(super) enum OperationState {
     Arm = 0,
@@ -135,7 +125,7 @@ impl Default for OperationState {
 }
 
 impl OperationState {
-    fn psr(self) -> u32 {
+    fn bits(self) -> u32 {
         self as _
     }
 
@@ -150,36 +140,47 @@ impl OperationState {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct StatusRegister {
-    pub(super) negative: bool,
+    pub(super) state: OperationState,
+    pub(super) mode: OperationMode,
+
+    pub(super) signed: bool,
     pub(super) zero: bool,
     pub(super) carry: bool,
     pub(super) overflow: bool,
     pub(super) irq_disabled: bool,
     pub(super) fiq_disabled: bool,
-
-    pub(super) state: OperationState,
-    mode: OperationMode,
 }
 
 impl StatusRegister {
-    pub(super) fn psr(self) -> u32 {
+    pub(super) fn bits(self) -> u32 {
         let mut psr = 0;
 
-        psr |= self.state.psr();
-        psr |= self.mode.psr();
-
-        psr.set_bit(31, self.negative);
+        psr.set_bit(31, self.signed);
         psr.set_bit(30, self.zero);
         psr.set_bit(29, self.carry);
         psr.set_bit(28, self.overflow);
+
         psr.set_bit(7, self.irq_disabled);
         psr.set_bit(6, self.fiq_disabled);
+        psr |= self.state.bits();
+        psr |= self.mode.bits();
 
         psr
     }
 
-    pub(super) fn mode(self) -> OperationMode {
-        self.mode
+    pub(super) fn set_flags_from_bits(&mut self, bits: u32) {
+        self.signed = bits.bit(31);
+        self.zero = bits.bit(30);
+        self.carry = bits.bit(29);
+        self.overflow = bits.bit(28);
+    }
+
+    pub(super) fn set_control_from_bits(&mut self, bits: u32) -> Result<OperationMode, ()> {
+        self.irq_disabled = bits.bit(7);
+        self.fiq_disabled = bits.bit(6);
+        self.mode = OperationMode::from_bits(bits).ok_or(())?;
+
+        Ok(self.mode)
     }
 }
 
@@ -196,16 +197,16 @@ mod tests {
     }
 
     #[test]
-    fn set_mode_works() {
+    fn change_mode_works() {
         let mut reg = Registers::default();
-        reg.set_mode(OperationMode::User);
+        reg.change_mode(OperationMode::User);
 
-        assert_eq!(OperationMode::User, reg.cpsr.mode());
+        assert_eq!(OperationMode::User, reg.cpsr.mode);
 
         reg.r.0 = [1337; 16];
-        reg.set_mode(OperationMode::UndefinedInstr);
+        reg.change_mode(OperationMode::UndefinedInstr);
 
-        assert_eq!(OperationMode::UndefinedInstr, reg.cpsr.mode());
+        assert_eq!(OperationMode::UndefinedInstr, reg.cpsr.mode);
         let old_bank = reg.banks[OperationMode::User.bank_index()];
         assert_eq!(1337, old_bank.sp);
         assert_eq!(1337, old_bank.lr);
@@ -213,9 +214,9 @@ mod tests {
         reg.r[13..=14].fill(1234);
         let undef_spsr_zero = reg.spsr.zero;
         reg.spsr.zero = !reg.spsr.zero;
-        reg.set_mode(OperationMode::FastInterrupt);
+        reg.change_mode(OperationMode::FastInterrupt);
 
-        assert_eq!(OperationMode::FastInterrupt, reg.cpsr.mode());
+        assert_eq!(OperationMode::FastInterrupt, reg.cpsr.mode);
         let old_bank = reg.banks[OperationMode::UndefinedInstr.bank_index()];
         assert_eq!(1234, old_bank.sp);
         assert_eq!(1234, old_bank.lr);
@@ -225,10 +226,10 @@ mod tests {
 
         reg.r[8..=12].fill(0xeeee);
         reg.r[13..=14].fill(0xaaaa);
-        reg.set_mode(OperationMode::User);
+        reg.change_mode(OperationMode::User);
 
         // been in usr mode already, so should also have the register values from when we started
-        assert_eq!(OperationMode::User, reg.cpsr.mode());
+        assert_eq!(OperationMode::User, reg.cpsr.mode);
         assert_eq!([1337; 2], reg.r[13..=14]);
         assert_eq!([0xeeee; 5], reg.fiq_r8_12_bank);
         let old_bank = reg.banks[OperationMode::FastInterrupt.bank_index()];
@@ -238,9 +239,9 @@ mod tests {
         // no need to do banking when switching to the same mode, or when switching between usr and
         // sys modes (they share the same "bank", which is actually no bank; that's an
         // implementation detail)
-        reg.set_mode(OperationMode::System);
+        reg.change_mode(OperationMode::System);
 
-        assert_eq!(OperationMode::System, reg.cpsr.mode());
+        assert_eq!(OperationMode::System, reg.cpsr.mode);
         assert_eq!([1337; 2], reg.r[13..=14]);
         let bank = reg.banks[OperationMode::System.bank_index()];
         assert_eq!(1337, bank.sp);

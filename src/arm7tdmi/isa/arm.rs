@@ -29,6 +29,7 @@ impl Cpu {
         match instr.bits(..28) {
             "0001_0010_1111_1111_1111_????_????" => self.execute_arm_bx(bus, instr),
             "000?_????_????_????_????_1001_????" => self.execute_arm_multiply(instr),
+            "00?1_0??0_????_????_????_????_????" => self.execute_arm_psr_transfer(instr),
             "1111_????_????_????_????_????_????" => {
                 self.enter_exception(bus, Exception::SoftwareInterrupt);
             }
@@ -220,6 +221,34 @@ impl Cpu {
             };
         }
     }
+
+    /// PSR transfer.
+    fn execute_arm_psr_transfer(&mut self, instr: u32) {
+        // TODO: 1S
+        let use_spsr = instr.bit(22);
+
+        if instr.bit(21) {
+            // MSR{cond} Psr{_field},Op
+            let value = if instr.bit(25) {
+                // Immediate operand.
+                #[allow(clippy::cast_possible_truncation)]
+                self.execute_ror(
+                    false,
+                    false,
+                    instr.bits(0..8),
+                    2 * (instr.bits(8..12) as u8),
+                )
+            } else {
+                // Register operand.
+                self.reg.r[r_index(instr, 0)]
+            };
+
+            self.execute_msr(use_spsr, instr.bit(19), instr.bit(16), value);
+        } else {
+            // MRS{cond} Rd,Psr
+            self.reg.r[r_index(instr, 12)] = self.execute_mrs(use_spsr);
+        }
+    }
 }
 
 #[allow(
@@ -229,7 +258,10 @@ impl Cpu {
 )]
 #[cfg(test)]
 mod tests {
-    use crate::arm7tdmi::{isa::tests::InstrTest, reg::LR_INDEX};
+    use crate::arm7tdmi::{
+        isa::tests::InstrTest,
+        reg::{OperationMode, LR_INDEX},
+    };
 
     use super::*;
 
@@ -333,7 +365,7 @@ mod tests {
             .setup(&|cpu| cpu.reg.r[0] = u32::MAX)
             .assert_r(0, u32::MAX)
             .assert_r(14, 0b11.with_bits(26.., 0b10_0001))
-            .assert_negative()
+            .assert_signed()
             .assert_carry()
             .run();
 
@@ -366,7 +398,7 @@ mod tests {
             .assert_r(9, 0b11 << 30)
             .assert_r(11, 0b111)
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL S R9,R0,R11,LSL #0
@@ -425,7 +457,7 @@ mod tests {
             .assert_r(9, 0b111 << 29)
             .assert_r(11, u32::MAX)
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL S R9,R0,R11,ASR #0
@@ -438,7 +470,7 @@ mod tests {
             .assert_r(9, u32::MAX)
             .assert_r(11, 1 << 31)
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL S R9,R0,R11,ROR #3
@@ -451,7 +483,7 @@ mod tests {
             .assert_r(9, 0b1010.with_bits(29.., 0b101))
             .assert_r(11, 0b101_0101)
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL S R9,R0,R11,ROR #0
@@ -477,7 +509,7 @@ mod tests {
             .assert_r(9, 0b10_1010.with_bit(31, true))
             .assert_r(11, 0b101_0101)
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL S R9,R0,R15,LSL #1
@@ -506,7 +538,7 @@ mod tests {
             .assert_r(5, u32::MAX)
             .assert_r(9, u32::MAX.with_bit(0, false))
             .assert_carry()
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // For the next few tests, PC should read an extra instr ahead; PC+12 in total.
@@ -543,7 +575,7 @@ mod tests {
             .setup(&|cpu| cpu.reg.r[0] = 0b1100_0011.with_bit(31, true))
             .assert_r(0, 0b1100_0011.with_bit(31, true))
             .assert_r(14, 0b110_1001.with_bit(31, true))
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R14,R0,#10101010b
@@ -559,7 +591,7 @@ mod tests {
             .setup(&|cpu| cpu.reg.r[0] = 15)
             .assert_r(0, 15)
             .assert_r(14, -5 as _)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R14,R0,#20
@@ -591,7 +623,7 @@ mod tests {
             .setup(&|cpu| cpu.reg.r[0] = -15 as _)
             .assert_r(0, -15 as _)
             .assert_r(14, -12 as _)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R14,R0,#3
@@ -610,7 +642,7 @@ mod tests {
             })
             .assert_r(0, -15 as _)
             .assert_r(14, -11 as _)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R14,R0,#3
@@ -630,7 +662,7 @@ mod tests {
             .setup(&|cpu| cpu.reg.r[0] = 15)
             .assert_r(0, 15)
             .assert_r(14, -6 as _)
-            .assert_negative()
+            .assert_signed()
             .assert_carry()
             .run();
 
@@ -690,7 +722,7 @@ mod tests {
         InstrTest::new_arm(0b1110_00_1_1010_1_0000_1111_0000_00010100)
             .setup(&|cpu| cpu.reg.r[0] = 15)
             .assert_r(0, 15)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R0,#20
@@ -706,7 +738,7 @@ mod tests {
         InstrTest::new_arm(0b1110_00_1_1011_1_0000_0000_0000_00000011)
             .setup(&|cpu| cpu.reg.r[0] = -15 as _)
             .assert_r(0, -15 as _)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R0,#15
@@ -723,7 +755,7 @@ mod tests {
             .setup(&|cpu| cpu.reg.r[0] = 0b1100_0011.with_bit(31, true))
             .assert_r(0, 0b1100_0011.with_bit(31, true))
             .assert_r(PC_INDEX, 0b1110_1000.with_bit(31, true) + 8)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R14,R0,#10101010b
@@ -763,7 +795,7 @@ mod tests {
         // AL S R14,#1
         InstrTest::new_arm(0b1110_00_1_1111_1_0000_1110_0000_00000001)
             .assert_r(14, u32::MAX.with_bit(0, false))
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R14,#0
@@ -785,7 +817,7 @@ mod tests {
             .assert_r(0, 200_123)
             .assert_r(2, 12_024)
             .assert_r(14, 200_123 * 12_024)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R14,R2,R0
@@ -811,7 +843,7 @@ mod tests {
             .assert_r(2, 12_024)
             .assert_r(3, 1337)
             .assert_r(14, 200_123 * 12_024 + 1337)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R14,R2,R0
@@ -879,7 +911,7 @@ mod tests {
             .assert_r(3, 2)
             .assert_r(2, u32::MAX)
             .assert_r(14, u32::MAX)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL S R2,R14,R0,R3
@@ -908,7 +940,7 @@ mod tests {
             .assert_r(3, 2)
             .assert_r(2, u32::MAX)
             .assert_r(14, u32::MAX)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // SMULL{cond}{S} RdLo,RdHi,Rs,Rn
@@ -922,7 +954,7 @@ mod tests {
             .assert_r(3, -2 as _)
             .assert_r(2, -60 as _)
             .assert_r(14, u32::MAX)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R2,R14,R0,R3
@@ -950,7 +982,7 @@ mod tests {
             .assert_r(3, -2 as _)
             .assert_r(2, -11 as _)
             .assert_r(14, u32::MAX)
-            .assert_negative()
+            .assert_signed()
             .run();
 
         // AL R2,R14,R0,R3
@@ -966,5 +998,109 @@ mod tests {
             .assert_r(2, -11 as _)
             .assert_r(14, u32::MAX)
             .run();
+    }
+
+    #[test]
+    fn execute_arm_psr_transfer() {
+        // MRS{cond} Rd,Psr
+        // AL R11,CPSR
+        InstrTest::new_arm(0b1110_00_0_10_0_0_0_1111_1011_000000000000)
+            .assert_r(11, 0b11_0_10011) // Supervisor (SVC) mode, ARM state, IRQ & FIQ disabled
+            .run();
+
+        // AL R14,CPSR
+        InstrTest::new_arm(0b1110_00_0_10_0_0_0_1111_1110_000000000000)
+            .setup(&|cpu| {
+                cpu.reg.cpsr.mode = OperationMode::System;
+                cpu.reg.cpsr.fiq_disabled = false;
+                cpu.reg.cpsr.signed = true;
+                cpu.reg.cpsr.carry = true;
+            })
+            .assert_r(14, 0b10_0_11111.with_bits(28.., 0b1010))
+            .assert_fiq_enabled()
+            .assert_signed()
+            .assert_carry()
+            .run();
+
+        // AL R7,SPSR_svc
+        InstrTest::new_arm(0b1110_00_0_10_1_0_0_1111_0111_000000000000)
+            .setup(&|cpu| {
+                cpu.reg.spsr.mode = OperationMode::System;
+                cpu.reg.spsr.irq_disabled = true;
+                cpu.reg.spsr.fiq_disabled = false;
+                cpu.reg.spsr.signed = true;
+                cpu.reg.spsr.carry = true;
+            })
+            .assert_r(7, 0b10_0_11111.with_bits(28.., 0b1010))
+            .run();
+
+        // MSR{cond} Psr{_field},Op
+        // AL CPSR_f,#0101b,ROR #4
+        let cpu = InstrTest::new_arm(0b1110_00_1_10_0_1_0_1000_1111_0010_00000101)
+            .assert_zero()
+            .assert_overflow()
+            .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::Supervisor);
+
+        // AL SPSR_svc_f,#0101b,ROR #4
+        let cpu = InstrTest::new_arm(0b1110_00_1_10_1_1_0_1000_1111_0010_00000101).run();
+
+        assert!(cpu.reg.spsr.zero);
+        assert!(cpu.reg.spsr.overflow);
+        assert!(!cpu.reg.spsr.signed);
+        assert!(!cpu.reg.spsr.carry);
+        assert!(!cpu.reg.spsr.irq_disabled);
+        assert!(!cpu.reg.spsr.fiq_disabled);
+
+        // AL CPSR_c,#01110000b
+        let cpu = InstrTest::new_arm(0b1110_00_1_10_0_1_0_0001_1111_0000_01110000)
+            .assert_irq_enabled()
+            .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::User);
+
+        // AL SPSR_svc_fc,#11110000b
+        let cpu = InstrTest::new_arm(0b1110_00_1_10_1_1_0_1001_1111_0000_11110000).run();
+
+        assert!(!cpu.reg.spsr.zero);
+        assert!(!cpu.reg.spsr.overflow);
+        assert!(!cpu.reg.spsr.signed);
+        assert!(!cpu.reg.spsr.carry);
+        assert!(cpu.reg.spsr.irq_disabled);
+        assert!(cpu.reg.spsr.fiq_disabled);
+        assert_eq!(cpu.reg.spsr.mode, OperationMode::User);
+
+        // AL CPSR_f,R10
+        let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_1000_1111_00000000_1010)
+            .setup(&|cpu| cpu.reg.r[10] = 0b00_1_11111.with_bits(28.., 0b1010))
+            .assert_r(10, 0b00_1_11111.with_bits(28.., 0b1010))
+            .assert_signed()
+            .assert_carry()
+            .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::Supervisor);
+
+        // AL CPSR_c,R10
+        let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_0001_1111_00000000_1010)
+            .setup(&|cpu| cpu.reg.r[10] = 0b00_1_11111.with_bits(28.., 0b1010))
+            .assert_r(10, 0b00_1_11111.with_bits(28.., 0b1010))
+            .assert_irq_enabled()
+            .assert_fiq_enabled()
+            .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::System);
+
+        // AL CPSR_fc,R10
+        let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_1001_1111_00000000_1010)
+            .setup(&|cpu| cpu.reg.r[10] = 0b00_1_11111.with_bits(28.., 0b1010))
+            .assert_r(10, 0b00_1_11111.with_bits(28.., 0b1010))
+            .assert_signed()
+            .assert_carry()
+            .assert_irq_enabled()
+            .assert_fiq_enabled()
+            .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::System);
     }
 }
