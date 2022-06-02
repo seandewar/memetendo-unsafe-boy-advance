@@ -32,13 +32,13 @@ impl<T: Bus> BusExt for T {
 
     #[allow(clippy::cast_possible_truncation)]
     fn write_hword(&mut self, addr: u32, value: u16) {
-        self.write_byte(addr, value.bits(..8) as _);
+        self.write_byte(addr, value as u8);
         self.write_byte(addr.wrapping_add(1), value.bits(8..) as _);
     }
 
     #[allow(clippy::cast_possible_truncation)]
     fn write_word(&mut self, addr: u32, value: u32) {
-        self.write_hword(addr, value.bits(..16) as _);
+        self.write_hword(addr, value as u16);
         self.write_hword(addr.wrapping_add(2), value.bits(16..) as _);
     }
 }

@@ -93,8 +93,8 @@ impl Registers {
 
     fn change_bank(&mut self, mode: OperationMode) {
         let old_bank_index = self.cpsr.mode.bank_index();
-        let bank_index = mode.bank_index();
-        if old_bank_index == bank_index {
+        let new_bank_index = mode.bank_index();
+        if old_bank_index == new_bank_index {
             return;
         }
 
@@ -105,9 +105,9 @@ impl Registers {
         self.banks[old_bank_index].lr = self.r[LR_INDEX];
         self.banks[old_bank_index].spsr = self.spsr;
 
-        self.r[SP_INDEX] = self.banks[bank_index].sp;
-        self.r[LR_INDEX] = self.banks[bank_index].lr;
-        self.spsr = self.banks[bank_index].spsr;
+        self.r[SP_INDEX] = self.banks[new_bank_index].sp;
+        self.r[LR_INDEX] = self.banks[new_bank_index].lr;
+        self.spsr = self.banks[new_bank_index].spsr;
     }
 }
 
@@ -154,7 +154,6 @@ pub(super) struct StatusRegister {
 impl StatusRegister {
     pub(super) fn bits(self) -> u32 {
         let mut psr = 0;
-
         psr.set_bit(31, self.signed);
         psr.set_bit(30, self.zero);
         psr.set_bit(29, self.carry);

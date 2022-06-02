@@ -261,6 +261,27 @@ impl Cpu {
         result
     }
 
+    fn execute_shift_operand(
+        &mut self,
+        op: u8,
+        update_cond: bool,
+        special_zero_offset: bool,
+        value: u32,
+        offset: u8,
+    ) -> u32 {
+        match op {
+            // LSL Rm,#nn
+            0 => self.execute_lsl(update_cond, value, offset),
+            // LSR Rm,#nn
+            1 => self.execute_lsr(update_cond, special_zero_offset, value, offset),
+            // ASR Rm,#nn
+            2 => self.execute_asr(update_cond, special_zero_offset, value, offset),
+            // ROR Rm,#nn
+            3 => self.execute_ror(update_cond, special_zero_offset, value, offset),
+            _ => unreachable!(),
+        }
+    }
+
     fn execute_bx(&mut self, bus: &impl Bus, addr: u32) {
         self.reg.cpsr.state = if addr.bit(0) {
             OperationState::Thumb
@@ -284,12 +305,15 @@ impl Cpu {
     }
 
     fn execute_ldr(bus: &impl Bus, addr: u32) -> u32 {
-        bus.read_word_aligned(addr)
+        let value = bus.read_word_aligned(addr);
+
+        value.rotate_right(8 * (addr & 0b11))
     }
 
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
     fn execute_ldrh_or_ldsh(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
-        // TODO: emulate weird misaligned read behaviour? (LDRH Rd,[odd] -> LDRH Rd,[odd-1] ROR 8)
+        // TODO: emulate weird misaligned read behaviour?
+        //       (LDRH Rd,[odd] -> LDRH Rd,[odd-1] ROR 8)
         let result = bus.read_hword_aligned(addr);
 
         if sign_extend {
@@ -311,7 +335,8 @@ impl Cpu {
     }
 
     fn execute_stmia(&mut self, bus: &mut impl Bus, r_base_addr: usize, mut r_list: u8) {
-        // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
+        // TODO: emulate weird invalid r_list behaviour?
+        //       (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
             if r_list.bit(0) {
                 bus.write_word_aligned(self.reg.r[r_base_addr], self.reg.r[r]);
@@ -322,7 +347,8 @@ impl Cpu {
     }
 
     fn execute_ldmia(&mut self, bus: &impl Bus, r_base_addr: usize, mut r_list: u8) {
-        // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
+        // TODO: emulate weird invalid r_list behaviour?
+        //       (empty r_list, r_list with r_base_addr)
         for r in 0..8 {
             if r_list.bit(0) {
                 self.reg.r[r] = bus.read_word_aligned(self.reg.r[r_base_addr]);

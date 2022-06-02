@@ -113,7 +113,7 @@ impl Cpu {
         //       1S+mI: MUL (m=1..4; depending on MSBs of incoming Rd value)
         let r_dst = r_index(instr, 0);
         let value = self.reg.r[r_index(instr, 3)];
-        let offset = value.bits(..8) as u8;
+        let offset = value as u8;
 
         match instr.bits(6..10) {
             // AND{S} Rd,Rs
@@ -324,7 +324,7 @@ impl Cpu {
     fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: nS+1N+1I (POP), (n+1)S+2N+1I (POP PC), or (n-1)S+2N (PUSH)
         #[allow(clippy::cast_possible_truncation)]
-        let r_list = instr.bits(..8) as u8;
+        let r_list = instr as u8;
         let push_lr_or_pop_pc = instr.bit(8);
 
         if instr.bit(11) {
@@ -340,7 +340,7 @@ impl Cpu {
     fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: nS+1N+1I for LDM, or (n-1)S+2N for STM
         #[allow(clippy::cast_possible_truncation)]
-        let r_list = instr.bits(..8) as u8;
+        let r_list = instr as u8;
         let r_base = r_index(instr, 8);
 
         if instr.bit(11) {
@@ -358,11 +358,7 @@ impl Cpu {
         // TODO: 2S+1N if true (jumped) or 1S if false
         if self.meets_condition(instr.bits(8..12) as u8) {
             // B{cond} label
-            self.execute_branch(
-                bus,
-                self.reg.r[PC_INDEX],
-                2 * i32::from(instr.bits(..8) as i8),
-            );
+            self.execute_branch(bus, self.reg.r[PC_INDEX], 2 * i32::from(instr as i8));
         }
     }
 
@@ -1378,10 +1374,20 @@ mod tests {
         // LDR Rd,[Rb,Ro]
         InstrTest::new_thumb(0b0101_10_0_010_001_000) // R0,[R1,R2]
             .setup(&|cpu| {
-                cpu.reg.r[1] = 7;
+                cpu.reg.r[1] = 4;
                 cpu.reg.r[2] = 8;
             })
             .assert_r(0, 0xabcd_ef01)
+            .assert_r(1, 4)
+            .assert_r(2, 8)
+            .run_with_bus(&mut bus);
+
+        InstrTest::new_thumb(0b0101_10_0_010_001_000) // R0,[R1,R2]
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 7;
+                cpu.reg.r[2] = 8;
+            })
+            .assert_r(0, 0xcdef_01ab) // 3-byte misaligned read
             .assert_r(1, 7)
             .assert_r(2, 8)
             .run_with_bus(&mut bus);
@@ -1544,8 +1550,14 @@ mod tests {
         // LDR Rd,[SP,#nn]
         InstrTest::new_thumb(0b1001_1_000_00000100) // R0,[SP,#16]
             .setup(&|cpu| cpu.reg.r[SP_INDEX] = 1)
-            .assert_r(0, 0xabcd_ef01)
+            .assert_r(0, 0x01ab_cdef) // misaligned read by 1 byte
             .assert_r(SP_INDEX, 1)
+            .run_with_bus(&mut bus);
+
+        InstrTest::new_thumb(0b1001_1_000_00000001) // R0,[SP,#4]
+            .setup(&|cpu| cpu.reg.r[SP_INDEX] = 12)
+            .assert_r(0, 0xabcd_ef01)
+            .assert_r(SP_INDEX, 12)
             .run_with_bus(&mut bus);
     }
 

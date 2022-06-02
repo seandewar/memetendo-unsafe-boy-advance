@@ -3,7 +3,6 @@ mod reg;
 
 use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX};
 
-use intbits::Bits;
 use strum_macros::EnumIter;
 
 use crate::bus::Bus;
@@ -53,7 +52,7 @@ impl Cpu {
             OperationState::Arm => self.execute_arm(bus, instr),
             OperationState::Thumb => {
                 #[allow(clippy::cast_possible_truncation)]
-                self.execute_thumb(bus, instr.bits(..16) as _);
+                self.execute_thumb(bus, instr as u16);
             }
         }
     }

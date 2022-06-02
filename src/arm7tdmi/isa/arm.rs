@@ -4,7 +4,7 @@ use intbits::Bits;
 use crate::{
     arbitrary_sign_extend,
     arm7tdmi::{
-        reg::{OperationState, PC_INDEX},
+        reg::{OperationMode, OperationState, PC_INDEX},
         Cpu, Exception,
     },
     bus::Bus,
@@ -28,17 +28,17 @@ impl Cpu {
         #[bitmatch]
         match instr.bits(..28) {
             "0001_0010_1111_1111_1111_????_????" => self.execute_arm_bx(bus, instr),
-            "000?_????_????_????_????_1001_????" => self.execute_arm_multiply(instr),
+            "0000_????_????_????_????_1001_????" => self.execute_arm_multiply(instr),
             "00?1_0??0_????_????_????_????_????" => self.execute_arm_psr_transfer(instr),
             "1111_????_????_????_????_????_????" => {
                 self.enter_exception(bus, Exception::SoftwareInterrupt);
             }
-            "011?_????_????_????_????_????_????" => {
+            "011?_????_????_????_????_???1_????" => {
                 self.enter_exception(bus, Exception::UndefinedInstr);
             }
             "101?_????_????_????_????_????_????" => self.execute_arm_b_bl(bus, instr),
             "00??_????_????_????_????_????_????" => self.execute_arm_data_processing(bus, instr),
-            // TODO: implement others
+            "01??_????_????_????_????_????_????" => self.execute_arm_single_transfer(bus, instr),
             _ => self.enter_exception(bus, Exception::UndefinedInstr),
         }
     }
@@ -71,16 +71,16 @@ impl Cpu {
         // TODO: do these instructions act weird when, e.g, reserved bits are set?
         let update_cond = instr.bit(20);
         let r_value1 = r_index(instr, 16);
-        let mut value1 = self.reg.r[r_value1];
         let r_dst = r_index(instr, 12);
 
+        let mut value1 = self.reg.r[r_value1];
         let value2 = if instr.bit(25) {
             // Operand 2 is an ROR'd immediate value.
             #[allow(clippy::cast_possible_truncation)]
             self.execute_ror(
                 update_cond,
                 false,
-                instr.bits(0..8),
+                instr.bits(..8),
                 2 * (instr.bits(8..12) as u8),
             )
         } else {
@@ -89,7 +89,7 @@ impl Cpu {
 
             #[allow(clippy::cast_possible_truncation)]
             let offset = if offset_from_reg {
-                self.reg.r[r_index(instr, 8)].bits(..8) as u8
+                self.reg.r[r_index(instr, 8)] as u8
             } else {
                 instr.bits(7..12) as u8
             };
@@ -107,17 +107,14 @@ impl Cpu {
                 }
             }
 
-            match instr.bits(5..7) {
-                // LSL{S} Op2,#nn
-                0 => self.execute_lsl(update_cond, value2, offset),
-                // LSR{S} Op2,#nn
-                1 => self.execute_lsr(update_cond, !offset_from_reg, value2, offset),
-                // ASR{S} Op2,#nn
-                2 => self.execute_asr(update_cond, !offset_from_reg, value2, offset),
-                // ROR{S} Op2,#nn
-                3 => self.execute_ror(update_cond, !offset_from_reg, value2, offset),
-                _ => unreachable!(),
-            }
+            #[allow(clippy::cast_possible_truncation)]
+            self.execute_shift_operand(
+                instr.bits(5..7) as _,
+                update_cond,
+                !offset_from_reg,
+                value2,
+                offset,
+            )
         };
 
         let op = instr.bits(21..25);
@@ -208,7 +205,7 @@ impl Cpu {
                 _ => unreachable!(),
             };
 
-            self.reg.r[r_accum_or_lo] = result.bits(..32) as u32;
+            self.reg.r[r_accum_or_lo] = result as u32;
             self.reg.r[r_dst_or_hi] = result.bits(32..) as u32;
         } else {
             // 32-bit result written to Rd.
@@ -228,25 +225,96 @@ impl Cpu {
         let use_spsr = instr.bit(22);
 
         if instr.bit(21) {
-            // MSR{cond} Psr{_field},Op
             let value = if instr.bit(25) {
                 // Immediate operand.
                 #[allow(clippy::cast_possible_truncation)]
-                self.execute_ror(
-                    false,
-                    false,
-                    instr.bits(0..8),
-                    2 * (instr.bits(8..12) as u8),
-                )
+                self.execute_ror(false, false, instr.bits(..8), 2 * (instr.bits(8..12) as u8))
             } else {
                 // Register operand.
                 self.reg.r[r_index(instr, 0)]
             };
 
+            // MSR{cond} Psr{_field},Op
             self.execute_msr(use_spsr, instr.bit(19), instr.bit(16), value);
         } else {
             // MRS{cond} Rd,Psr
             self.reg.r[r_index(instr, 12)] = self.execute_mrs(use_spsr);
+        }
+    }
+
+    /// Single data transfer.
+    fn execute_arm_single_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
+        // TODO: For normal LDR: 1S+1N+1I. For LDR PC: 2S+2N+1I. For STR: 2N.
+        #[allow(clippy::cast_possible_truncation)]
+        let offset = if instr.bit(25) {
+            // Register offset shifted by immediate.
+            let shift_offset = instr.bits(7..12) as u8;
+            let value = self.reg.r[r_index(instr, 0)];
+
+            self.execute_shift_operand(instr.bits(5..7) as _, false, true, value, shift_offset)
+        } else {
+            // Immediate offset.
+            instr.bits(..12)
+        };
+
+        let preindex = instr.bit(24);
+        let transfer_byte = instr.bit(22);
+        let force_user = !preindex && instr.bit(21);
+        let load = instr.bit(20);
+
+        let r_base_addr = r_index(instr, 16);
+        let r_src_or_dst = r_index(instr, 12);
+
+        let base_addr = self.reg.r[r_base_addr];
+        let final_addr = if instr.bit(23) {
+            base_addr.wrapping_add(offset)
+        } else {
+            base_addr.wrapping_sub(offset)
+        };
+        let transfer_addr = if preindex { final_addr } else { base_addr };
+
+        let saved_mode = self.reg.cpsr.mode;
+        if force_user {
+            self.reg.change_mode(OperationMode::User);
+        }
+
+        if load {
+            // LDR{cond}{B}{T} Rd,<Address>
+            self.reg.r[r_src_or_dst] = if transfer_byte {
+                Self::execute_ldrb_or_ldsb(bus, transfer_addr, false)
+            } else {
+                Self::execute_ldr(bus, transfer_addr)
+            };
+
+            if r_src_or_dst == PC_INDEX {
+                self.reload_pipeline(bus);
+            }
+        } else {
+            let mut value = self.reg.r[r_src_or_dst];
+            if r_src_or_dst == PC_INDEX {
+                // PC reads as an extra instruction ahead here. (PC+12)
+                value = value.wrapping_add(self.reg.cpsr.state.instr_size());
+            }
+
+            // STR{cond}{B}{T} Rd,<Address>
+            if transfer_byte {
+                #[allow(clippy::cast_possible_truncation)]
+                Self::execute_strb(bus, transfer_addr, value as u8);
+            } else {
+                Self::execute_str(bus, transfer_addr, value);
+            }
+        }
+
+        if force_user {
+            self.reg.change_mode(saved_mode);
+        }
+
+        if (instr.bit(21) || !preindex) && !(load && r_base_addr == r_src_or_dst) {
+            // Write-back to Rn.
+            self.reg.r[r_base_addr] = final_addr;
+            if r_base_addr == PC_INDEX {
+                self.reload_pipeline(bus);
+            }
         }
     }
 }
@@ -258,9 +326,12 @@ impl Cpu {
 )]
 #[cfg(test)]
 mod tests {
-    use crate::arm7tdmi::{
-        isa::tests::InstrTest,
-        reg::{OperationMode, LR_INDEX},
+    use crate::{
+        arm7tdmi::{
+            isa::tests::InstrTest,
+            reg::{OperationMode, LR_INDEX},
+        },
+        bus::{tests::VecBus, BusExt},
     };
 
     use super::*;
@@ -340,6 +411,8 @@ mod tests {
     #[test]
     fn execute_arm_data_processing_decode() {
         // AND{cond}{S} Rd,Rn,Op2; mostly test argument decoding and handling here.
+        // This also includes offset shifting opcodes.
+
         // AL S R14,R0,#10101010b
         InstrTest::new_arm(0b1110_00_1_0000_1_0000_1110_0000_10101010)
             .setup(&|cpu| cpu.reg.r[0] = 0b1100_0011)
@@ -869,7 +942,7 @@ mod tests {
             })
             .assert_r(0, 30)
             .assert_r(3, -2 as _)
-            .assert_r(2, (30u64 * (-2i32 as u32 as u64)).bits(..32) as _)
+            .assert_r(2, (30u64 * (-2i32 as u32 as u64)) as u32)
             .assert_r(14, (30u64 * (-2i32 as u32 as u64)).bits(32..) as _)
             .run();
 
@@ -881,7 +954,7 @@ mod tests {
             })
             .assert_r(0, 200_123)
             .assert_r(3, 10_712)
-            .assert_r(2, (200_123 * 10_712).bits(..32))
+            .assert_r(2, (200_123 * 10_712) as u32)
             .assert_r(14, (200_123 * 10_712).bits(32..))
             .run();
 
@@ -1115,5 +1188,154 @@ mod tests {
             .run();
 
         assert_eq!(cpu.reg.cpsr.mode, OperationMode::User);
+    }
+
+    #[test]
+    fn execute_arm_single_transfer() {
+        let mut bus = VecBus(vec![0; 100]);
+        bus.write_word(4, 0xfefe_dede);
+        bus.write_word(12, 0xbeef_feeb);
+        bus.write_word(20, 0xabcd_ef98);
+
+        // LDR{cond}{B}{T} Rd,<Address>
+        // AL R12,[R1],<#+8>
+        InstrTest::new_arm(0b1110_01_0010_0_1_0001_1100_000000001000)
+            .setup(&|cpu| cpu.reg.r[1] = 12)
+            .assert_r(1, 20)
+            .assert_r(12, 0xbeef_feeb)
+            .run_with_bus(&mut bus);
+
+        // AL R12,[R1],<#-8>
+        InstrTest::new_arm(0b1110_01_0000_0_1_0001_1100_000000001000)
+            .setup(&|cpu| cpu.reg.r[1] = 12)
+            .assert_r(1, 4)
+            .assert_r(12, 0xbeef_feeb)
+            .run_with_bus(&mut bus);
+
+        // AL R12,[R1],+R7,LSR #2
+        InstrTest::new_arm(0b1110_01_1010_0_1_0001_1100_00010_01_0_0111)
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 12;
+                cpu.reg.r[7] = 8 << 2;
+            })
+            .assert_r(1, 20)
+            .assert_r(7, 8 << 2)
+            .assert_r(12, 0xbeef_feeb)
+            .run_with_bus(&mut bus);
+
+        // AL R12,[R1],-R7,LSR #2
+        InstrTest::new_arm(0b1110_01_1000_0_1_0001_1100_00010_01_0_0111)
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 12;
+                cpu.reg.r[7] = 8 << 2;
+            })
+            .assert_r(1, 4)
+            .assert_r(7, 8 << 2)
+            .assert_r(12, 0xbeef_feeb)
+            .run_with_bus(&mut bus);
+
+        // AL T R12,[R1],-R7,LSR #2
+        InstrTest::new_arm(0b1110_01_1000_1_1_0001_1100_00010_01_0_0111)
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 12;
+                cpu.reg.r[7] = 8 << 2;
+            })
+            .assert_r(1, 4)
+            .assert_r(7, 8 << 2)
+            .assert_r(12, 0xbeef_feeb)
+            .run_with_bus(&mut bus);
+
+        // AL B R12,[R1],-R7,LSR #2
+        InstrTest::new_arm(0b1110_01_1001_0_1_0001_1100_00010_01_0_0111)
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 12;
+                cpu.reg.r[7] = 8 << 2;
+            })
+            .assert_r(1, 4)
+            .assert_r(7, 8 << 2)
+            .assert_r(12, 0xeb)
+            .run_with_bus(&mut bus);
+
+        // AL R12,[R1,-R7,LSR #2]
+        InstrTest::new_arm(0b1110_01_1100_0_1_0001_1100_00010_01_0_0111)
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 12;
+                cpu.reg.r[7] = 8 << 2;
+            })
+            .assert_r(1, 12)
+            .assert_r(7, 8 << 2)
+            .assert_r(12, 0xfefe_dede)
+            .run_with_bus(&mut bus);
+
+        // AL R12,[R1,-R7,LSR #2]!
+        InstrTest::new_arm(0b1110_01_1100_1_1_0001_1100_00010_01_0_0111)
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 12;
+                cpu.reg.r[7] = 8 << 2;
+            })
+            .assert_r(1, 4)
+            .assert_r(7, 8 << 2)
+            .assert_r(12, 0xfefe_dede)
+            .run_with_bus(&mut bus);
+
+        // AL R12,[R15,+R7,LSR #2]!
+        InstrTest::new_arm(0b1110_01_1110_1_1_1111_1100_00010_01_0_0111)
+            .setup(&|cpu| {
+                cpu.reg.r[PC_INDEX] = 12;
+                cpu.reg.r[7] = 8 << 2;
+            })
+            .assert_r(PC_INDEX, 20 + 8)
+            .assert_r(7, 8 << 2)
+            .assert_r(12, 0xabcd_ef98)
+            .run_with_bus(&mut bus);
+
+        // AL R15,[R1,+R7,LSR #2]!
+        InstrTest::new_arm(0b1110_01_1110_1_1_0001_1111_00010_01_0_0111)
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 12;
+                cpu.reg.r[7] = 8 << 2;
+            })
+            .assert_r(1, 20)
+            .assert_r(7, 8 << 2)
+            .assert_r(PC_INDEX, 0xabcd_ef98 + 8)
+            .run_with_bus(&mut bus);
+
+        // AL R15,[R15,+R7,LSR #2]!
+        InstrTest::new_arm(0b1110_01_1110_1_1_1111_1111_00010_01_0_0111)
+            .setup(&|cpu| {
+                cpu.reg.r[PC_INDEX] = 12;
+                cpu.reg.r[7] = 8 << 2;
+            })
+            .assert_r(PC_INDEX, 0xabcd_ef98 + 8)
+            .assert_r(7, 8 << 2)
+            .run_with_bus(&mut bus);
+
+        // STR{cond}{B}{T} Rd,<Address>
+        // Decoding is already mostly tested for above, and the shared code for STR instructions
+        // are already tested for in Thumb tests.
+
+        // AL R15,[R1,<#+24>]!
+        InstrTest::new_arm(0b1110_01_0110_1_0_0001_1111_000000011000)
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 8;
+                cpu.reg.r[PC_INDEX] = 0x1337_7331;
+            })
+            .assert_r(1, 32)
+            .assert_r(PC_INDEX, 0x1337_7331)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(32), 0x1337_7331 + 4);
+
+        // AL B R15,[R1,<#+24>]!
+        InstrTest::new_arm(0b1110_01_0111_1_0_0001_1111_000000011000)
+            .setup(&|cpu| {
+                cpu.reg.r[1] = 16;
+                cpu.reg.r[PC_INDEX] = 0x1337_7331;
+            })
+            .assert_r(1, 40)
+            .assert_r(PC_INDEX, 0x1337_7331)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(40), 0x31 + 4);
     }
 }
