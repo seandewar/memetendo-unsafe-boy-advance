@@ -1102,5 +1102,18 @@ mod tests {
             .run();
 
         assert_eq!(cpu.reg.cpsr.mode, OperationMode::System);
+
+        // AL CPSR_fc,R10
+        let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_1001_1111_00000000_1010)
+            .setup(&|cpu| {
+                cpu.reg.cpsr.mode = OperationMode::User;
+                cpu.reg.r[10] = 0b00_1_11111.with_bits(28.., 0b1010);
+            })
+            .assert_r(10, 0b00_1_11111.with_bits(28.., 0b1010))
+            .assert_signed()
+            .assert_carry()
+            .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::User);
     }
 }
