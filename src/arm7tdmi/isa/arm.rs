@@ -1011,7 +1011,7 @@ mod tests {
         // AL R14,CPSR
         InstrTest::new_arm(0b1110_00_0_10_0_0_0_1111_1110_000000000000)
             .setup(&|cpu| {
-                cpu.reg.cpsr.mode = OperationMode::System;
+                cpu.reg.change_mode(OperationMode::System);
                 cpu.reg.cpsr.fiq_disabled = false;
                 cpu.reg.cpsr.signed = true;
                 cpu.reg.cpsr.carry = true;
@@ -1106,7 +1106,7 @@ mod tests {
         // AL CPSR_fc,R10
         let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_1001_1111_00000000_1010)
             .setup(&|cpu| {
-                cpu.reg.cpsr.mode = OperationMode::User;
+                cpu.reg.change_mode(OperationMode::User);
                 cpu.reg.r[10] = 0b00_1_11111.with_bits(28.., 0b1010);
             })
             .assert_r(10, 0b00_1_11111.with_bits(28.., 0b1010))

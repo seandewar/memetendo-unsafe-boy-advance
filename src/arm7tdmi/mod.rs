@@ -189,7 +189,7 @@ mod tests {
     fn reset_works() {
         let mut cpu = Cpu::new();
 
-        cpu.reg.cpsr.mode = OperationMode::Abort;
+        cpu.reg.change_mode(OperationMode::Abort);
         cpu.reg.cpsr.set_flags_from_bits(0b1010 << 28);
         cpu.reg.r[PC_INDEX] = 0xbeef;
         let old_reg = cpu.reg;

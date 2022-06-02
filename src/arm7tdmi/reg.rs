@@ -140,15 +140,15 @@ impl OperationState {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct StatusRegister {
-    pub(super) state: OperationState,
-    pub(super) mode: OperationMode,
-
     pub(super) signed: bool,
     pub(super) zero: bool,
     pub(super) carry: bool,
     pub(super) overflow: bool,
+
     pub(super) irq_disabled: bool,
     pub(super) fiq_disabled: bool,
+    pub(super) state: OperationState,
+    pub(super) mode: OperationMode,
 }
 
 impl StatusRegister {
@@ -207,6 +207,7 @@ mod tests {
         reg.change_mode(OperationMode::UndefinedInstr);
 
         assert_eq!(OperationMode::UndefinedInstr, reg.cpsr.mode);
+
         let old_bank = reg.banks[OperationMode::User.bank_index()];
         assert_eq!(1337, old_bank.sp);
         assert_eq!(1337, old_bank.lr);
@@ -217,32 +218,34 @@ mod tests {
         reg.change_mode(OperationMode::FastInterrupt);
 
         assert_eq!(OperationMode::FastInterrupt, reg.cpsr.mode);
+
         let old_bank = reg.banks[OperationMode::UndefinedInstr.bank_index()];
         assert_eq!(1234, old_bank.sp);
         assert_eq!(1234, old_bank.lr);
         assert_ne!(undef_spsr_zero, old_bank.spsr.zero);
-        // should have temporarily saved r8-r12 for later restoration
+        // Should have temporarily saved r8-r12 for later restoration
         assert_eq!([1337; 5], reg.fiq_r8_12_bank);
 
         reg.r[8..=12].fill(0xeeee);
         reg.r[13..=14].fill(0xaaaa);
         reg.change_mode(OperationMode::User);
 
-        // been in usr mode already, so should also have the register values from when we started
+        // Been in usr mode already, so should also have the register values from when we started
         assert_eq!(OperationMode::User, reg.cpsr.mode);
         assert_eq!([1337; 2], reg.r[13..=14]);
         assert_eq!([0xeeee; 5], reg.fiq_r8_12_bank);
+
         let old_bank = reg.banks[OperationMode::FastInterrupt.bank_index()];
         assert_eq!(0xaaaa, old_bank.sp);
         assert_eq!(0xaaaa, old_bank.lr);
 
-        // no need to do banking when switching to the same mode, or when switching between usr and
-        // sys modes (they share the same "bank", which is actually no bank; that's an
-        // implementation detail)
+        // No need to do banking when switching to the same mode, or when switching between usr and
+        // sys modes (they share the same "bank", which is actually no bank; that's an impl detail)
         reg.change_mode(OperationMode::System);
 
         assert_eq!(OperationMode::System, reg.cpsr.mode);
         assert_eq!([1337; 2], reg.r[13..=14]);
+
         let bank = reg.banks[OperationMode::System.bank_index()];
         assert_eq!(1337, bank.sp);
         assert_eq!(1337, bank.lr);
