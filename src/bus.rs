@@ -84,6 +84,8 @@ impl Bus for GbaBus {
 
 #[cfg(test)]
 pub(super) mod tests {
+    use std::cell::Cell;
+
     use super::*;
 
     #[derive(Debug)]
@@ -98,19 +100,66 @@ pub(super) mod tests {
     }
 
     #[derive(Debug)]
-    pub struct VecBus(pub Vec<u8>);
+    pub struct VecBus {
+        buf: Vec<u8>,
+        allow_oob: bool,
+        did_oob: Cell<bool>,
+    }
+
+    impl VecBus {
+        pub fn new(len: usize) -> Self {
+            Self {
+                buf: vec![0; len],
+                allow_oob: false,
+                did_oob: Cell::new(false),
+            }
+        }
+
+        pub fn assert_oob(&mut self, f: &impl Fn(&mut Self)) {
+            assert!(!self.allow_oob, "cannot call assert_oob recursively");
+
+            self.allow_oob = true;
+            self.did_oob.set(false);
+            f(self);
+
+            assert!(
+                self.did_oob.get(),
+                "expected oob VecBus access, but there was none"
+            );
+            self.allow_oob = false;
+        }
+    }
 
     impl Bus for VecBus {
         fn read_byte(&self, addr: u32) -> u8 {
-            self.0
+            self.buf
                 .get(usize::try_from(addr).unwrap())
                 .copied()
-                .unwrap_or(0xff)
+                .unwrap_or_else(|| {
+                    self.did_oob.set(true);
+                    assert!(
+                        self.allow_oob,
+                        "oob VecBus read at address {:#010x} (len {})",
+                        addr,
+                        self.buf.len()
+                    );
+
+                    0xaa
+                })
         }
 
         fn write_byte(&mut self, addr: u32, value: u8) {
-            if let Some(v) = self.0.get_mut(usize::try_from(addr).unwrap()) {
+            if let Some(v) = self.buf.get_mut(usize::try_from(addr).unwrap()) {
                 *v = value;
+            } else {
+                self.did_oob.set(true);
+                assert!(
+                    self.allow_oob,
+                    "oob VecBus write at address {:#010x} (value {}, len {})",
+                    addr,
+                    value,
+                    self.buf.len()
+                );
             }
         }
     }

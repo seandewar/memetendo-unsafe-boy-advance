@@ -1309,7 +1309,7 @@ mod tests {
 
     #[test]
     fn execute_thumb6() {
-        let mut bus = VecBus(vec![0; 88]);
+        let mut bus = VecBus::new(88);
         bus.write_word(52, 0xdead_beef);
         bus.write_word(84, 0xbead_feed);
 
@@ -1327,7 +1327,7 @@ mod tests {
 
     #[test]
     fn execute_thumb7() {
-        let mut bus = VecBus(vec![0; 88]);
+        let mut bus = VecBus::new(88);
 
         // STR Rd,[Rb,Ro]
         InstrTest::new_thumb(0b0101_00_0_010_001_000) // R0,[R1,R2]
@@ -1406,7 +1406,7 @@ mod tests {
 
     #[test]
     fn execute_thumb8() {
-        let mut bus = VecBus(vec![0; 30]);
+        let mut bus = VecBus::new(30);
         bus.write_byte(0, 0b0111_1110);
         bus.write_byte(21, !1);
         bus.write_hword(26, 1 << 15);
@@ -1466,7 +1466,7 @@ mod tests {
 
     #[test]
     fn execute_thumb9() {
-        let mut bus = VecBus(vec![0; 40]);
+        let mut bus = VecBus::new(40);
 
         // STR Rd,[Rb,#nn]
         InstrTest::new_thumb(0b011_00_00110_001_000) // R0,[R1,#24]
@@ -1509,7 +1509,7 @@ mod tests {
 
     #[test]
     fn execute_thumb10() {
-        let mut bus = VecBus(vec![0; 40]);
+        let mut bus = VecBus::new(40);
 
         // STRH Rd,[Rb,#nn]
         InstrTest::new_thumb(0b1000_0_00101_001_000) // R0,[R1,#10]
@@ -1533,7 +1533,7 @@ mod tests {
 
     #[test]
     fn execute_thumb11() {
-        let mut bus = VecBus(vec![0; 40]);
+        let mut bus = VecBus::new(40);
 
         // STR Rd,[SP,#nn]
         InstrTest::new_thumb(0b1001_0_000_00000010) // R0,[SP,#8]
@@ -1610,7 +1610,7 @@ mod tests {
 
     #[test]
     fn execute_thumb14() {
-        let mut bus = VecBus(vec![0; 40]);
+        let mut bus = VecBus::new(48);
 
         // PUSH {Rlist}{LR}
         InstrTest::new_thumb(0b1011_0_10_0_10001001) // {R0,R3,R7}
@@ -1663,7 +1663,7 @@ mod tests {
 
     #[test]
     fn execute_thumb15() {
-        let mut bus = VecBus(vec![0; 40]);
+        let mut bus = VecBus::new(40);
 
         // STMIA Rb!,{Rlist}
         InstrTest::new_thumb(0b1100_0_101_10001001) // R5!,{R0,R3,R7}

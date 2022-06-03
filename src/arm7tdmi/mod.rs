@@ -215,7 +215,7 @@ mod tests {
     #[allow(clippy::unusual_byte_groupings)]
     #[test]
     fn step_works() {
-        let mut bus = VecBus(vec![0; 102]);
+        let mut bus = VecBus::new(110);
         bus.write_word(0, 0b1110_00_1_1101_0_0000_0000_0000_00001001); // MOVAL R0,#(8 OR 1)
         bus.write_word(4, 0b1110_00010010111111111111_0001_0000); // BXAL R0
         bus.write_hword(8, 0b001_00_101_01100101); // MOV R5,#101

@@ -30,6 +30,9 @@ impl Cpu {
             "0001_0010_1111_1111_1111_????_????" => self.execute_arm_bx(bus, instr),
             "0000_????_????_????_????_1001_????" => self.execute_arm_multiply(instr),
             "00?1_0??0_????_????_????_????_????" => self.execute_arm_psr_transfer(instr),
+            "000?_????_????_????_????_1??1_????" => {
+                self.execute_arm_hword_and_signed_transfer(bus, instr);
+            }
             "1111_????_????_????_????_????_????" => {
                 self.enter_exception(bus, Exception::SoftwareInterrupt);
             }
@@ -245,6 +248,14 @@ impl Cpu {
     /// Single data transfer.
     fn execute_arm_single_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
         // TODO: For normal LDR: 1S+1N+1I. For LDR PC: 2S+2N+1I. For STR: 2N.
+        let preindex = instr.bit(24);
+        let transfer_byte = instr.bit(22);
+        let force_user = !preindex && instr.bit(21);
+        let load = instr.bit(20);
+
+        let r_base_addr = r_index(instr, 16);
+        let r_src_or_dst = r_index(instr, 12);
+
         #[allow(clippy::cast_possible_truncation)]
         let offset = if instr.bit(25) {
             // Register offset shifted by immediate.
@@ -256,14 +267,6 @@ impl Cpu {
             // Immediate offset.
             instr.bits(..12)
         };
-
-        let preindex = instr.bit(24);
-        let transfer_byte = instr.bit(22);
-        let force_user = !preindex && instr.bit(21);
-        let load = instr.bit(20);
-
-        let r_base_addr = r_index(instr, 16);
-        let r_src_or_dst = r_index(instr, 12);
 
         let base_addr = self.reg.r[r_base_addr];
         let final_addr = if instr.bit(23) {
@@ -307,6 +310,71 @@ impl Cpu {
 
         if force_user {
             self.reg.change_mode(saved_mode);
+        }
+
+        if (instr.bit(21) || !preindex) && !(load && r_base_addr == r_src_or_dst) {
+            // Write-back to Rn.
+            self.reg.r[r_base_addr] = final_addr;
+            if r_base_addr == PC_INDEX {
+                self.reload_pipeline(bus);
+            }
+        }
+    }
+
+    /// Half-word and signed data transfer.
+    fn execute_arm_hword_and_signed_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
+        // TODO: For Normal LDR, 1S+1N+1I. For LDR PC, 2S+2N+1I. For STRH 2N.
+        let preindex = instr.bit(24);
+        let load = instr.bit(20);
+
+        let r_base_addr = r_index(instr, 16);
+        let r_src_or_dst = r_index(instr, 12);
+
+        let offset = if instr.bit(22) {
+            // Immediate offset.
+            instr.bits(..4).with_bits(4.., instr.bits(8..12))
+        } else {
+            // Register offset.
+            self.reg.r[r_index(instr, 0)]
+        };
+
+        let base_addr = self.reg.r[r_base_addr];
+        let final_addr = if instr.bit(23) {
+            base_addr.wrapping_add(offset)
+        } else {
+            base_addr.wrapping_sub(offset)
+        };
+        let transfer_addr = if preindex { final_addr } else { base_addr };
+
+        let op = instr.bits(5..7);
+        if load {
+            self.reg.r[r_src_or_dst] = match op {
+                // Reserved. TODO: how does it behave?
+                0 => self.reg.r[r_src_or_dst],
+                // LDR{cond}H Rd,<Address>
+                1 => Self::execute_ldrh_or_ldsh(bus, transfer_addr, false),
+                // LDR{cond}SB Rd,<Address>
+                2 => Self::execute_ldrb_or_ldsb(bus, transfer_addr, true),
+                // LDR{cond}SH Rd,<Address>
+                3 => Self::execute_ldrh_or_ldsh(bus, transfer_addr, true),
+                _ => unreachable!(),
+            };
+
+            if r_src_or_dst == PC_INDEX {
+                self.reload_pipeline(bus);
+            }
+        } else {
+            let mut value = self.reg.r[r_src_or_dst];
+            if r_src_or_dst == PC_INDEX {
+                // PC reads as an extra instruction ahead here. (PC+12)
+                value = value.wrapping_add(self.reg.cpsr.state.instr_size());
+            }
+
+            if op == 1 {
+                // STR{cond}H Rd,<Address>; other opcodes are reserved.
+                #[allow(clippy::cast_possible_truncation)]
+                Self::execute_strh(bus, transfer_addr, value as u16);
+            }
         }
 
         if (instr.bit(21) || !preindex) && !(load && r_base_addr == r_src_or_dst) {
@@ -1192,7 +1260,7 @@ mod tests {
 
     #[test]
     fn execute_arm_single_transfer() {
-        let mut bus = VecBus(vec![0; 100]);
+        let mut bus = VecBus::new(100);
         bus.write_word(4, 0xfefe_dede);
         bus.write_word(12, 0xbeef_feeb);
         bus.write_word(20, 0xabcd_ef98);
@@ -1290,25 +1358,29 @@ mod tests {
             .run_with_bus(&mut bus);
 
         // AL R15,[R1,+R7,LSR #2]!
-        InstrTest::new_arm(0b1110_01_1110_1_1_0001_1111_00010_01_0_0111)
-            .setup(&|cpu| {
-                cpu.reg.r[1] = 12;
-                cpu.reg.r[7] = 8 << 2;
-            })
-            .assert_r(1, 20)
-            .assert_r(7, 8 << 2)
-            .assert_r(PC_INDEX, 0xabcd_ef98 + 8)
-            .run_with_bus(&mut bus);
+        bus.assert_oob(&|bus| {
+            InstrTest::new_arm(0b1110_01_1110_1_1_0001_1111_00010_01_0_0111)
+                .setup(&|cpu| {
+                    cpu.reg.r[1] = 12;
+                    cpu.reg.r[7] = 8 << 2;
+                })
+                .assert_r(1, 20)
+                .assert_r(7, 8 << 2)
+                .assert_r(PC_INDEX, 0xabcd_ef98 + 8)
+                .run_with_bus(bus);
+        });
 
         // AL R15,[R15,+R7,LSR #2]!
-        InstrTest::new_arm(0b1110_01_1110_1_1_1111_1111_00010_01_0_0111)
-            .setup(&|cpu| {
-                cpu.reg.r[PC_INDEX] = 12;
-                cpu.reg.r[7] = 8 << 2;
-            })
-            .assert_r(PC_INDEX, 0xabcd_ef98 + 8)
-            .assert_r(7, 8 << 2)
-            .run_with_bus(&mut bus);
+        bus.assert_oob(&|bus| {
+            InstrTest::new_arm(0b1110_01_1110_1_1_1111_1111_00010_01_0_0111)
+                .setup(&|cpu| {
+                    cpu.reg.r[PC_INDEX] = 12;
+                    cpu.reg.r[7] = 8 << 2;
+                })
+                .assert_r(PC_INDEX, 0xabcd_ef98 + 8)
+                .assert_r(7, 8 << 2)
+                .run_with_bus(bus);
+        });
 
         // STR{cond}{B}{T} Rd,<Address>
         // Decoding is already mostly tested for above, and the shared code for STR instructions
@@ -1337,5 +1409,94 @@ mod tests {
             .run_with_bus(&mut bus);
 
         assert_eq!(bus.read_word(40), 0x31 + 4);
+    }
+
+    #[test]
+    fn execute_arm_hword_and_signed_transfer() {
+        let mut bus = VecBus::new(44);
+        bus.write_word(0, 0xceec_0a0c);
+        bus.write_word(4, 0xfefe_dede);
+        bus.write_word(12, 0xbeef_feeb);
+        bus.write_word(20, 0xabcd_ef98);
+
+        // LDR{cond}H Rd,<Address>
+        // AL H R5,[R8],-R1
+        InstrTest::new_arm(0b1110_000_000_0_1_1000_0101_0000_1_01_1_0001)
+            .setup(&|cpu| {
+                cpu.reg.r[8] = 22;
+                cpu.reg.r[1] = 8;
+            })
+            .assert_r(8, 14)
+            .assert_r(1, 8)
+            .assert_r(5, 0xabcd)
+            .run_with_bus(&mut bus);
+
+        // AL H R5,[R8],<#+18>
+        InstrTest::new_arm(0b1110_000_011_0_1_1000_0101_0001_1_01_1_0010)
+            .setup(&|cpu| cpu.reg.r[8] = 2)
+            .assert_r(8, 20)
+            .assert_r(5, 0xceec)
+            .run_with_bus(&mut bus);
+
+        // LDR{cond}SB Rd,<Address>
+        // AL SB R5,[R8,-R1]
+        InstrTest::new_arm(0b1110_000_100_0_1_1000_0101_0000_1_10_1_0001)
+            .setup(&|cpu| {
+                cpu.reg.r[8] = 22;
+                cpu.reg.r[1] = 19;
+            })
+            .assert_r(8, 22)
+            .assert_r(1, 19)
+            .assert_r(5, 0xffff_ffce)
+            .run_with_bus(&mut bus);
+
+        // AL SB R5,[R8,-R1]!
+        InstrTest::new_arm(0b1110_000_100_1_1_1000_0101_0000_1_10_1_0001)
+            .setup(&|cpu| {
+                cpu.reg.r[8] = 22;
+                cpu.reg.r[1] = 17;
+            })
+            .assert_r(8, 5)
+            .assert_r(1, 17)
+            .assert_r(5, 0xffff_ffde)
+            .run_with_bus(&mut bus);
+
+        // LDR{cond}SH Rd,<Address>
+        // AL SH R5,[R15,<#+7>]!
+        #[allow(clippy::cast_sign_loss)]
+        InstrTest::new_arm(0b1110_000_111_1_1_1111_0101_0000_1_11_1_0111)
+            .setup(&|cpu| cpu.reg.r[PC_INDEX] = -7i32 as u32)
+            .assert_r(5, 0x0a0c)
+            .run_with_bus(&mut bus);
+
+        // AL SH R15,[R3,<#+6>]
+        bus.assert_oob(&|bus| {
+            InstrTest::new_arm(0b1110_000_111_0_1_0011_1111_0000_1_11_1_0110)
+                .setup(&|cpu| cpu.reg.r[3] = 8)
+                .assert_r(3, 8)
+                .assert_r(PC_INDEX, (0xffff_beef & !0b11) + 8)
+                .run_with_bus(bus);
+        });
+
+        // STR{cond}H Rd,<Address>
+        // AL H R15,[R3,<#+12>]!
+        InstrTest::new_arm(0b1110_000_111_1_0_0011_1111_0000_1_01_1_1100)
+            .setup(&|cpu| {
+                cpu.reg.r[3] = 8;
+                cpu.reg.r[PC_INDEX] = 0x20;
+            })
+            .assert_r(3, 20)
+            .assert_r(PC_INDEX, 0x20)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(20), 0xabcd_0020 + 4);
+
+        // AL H R15,[R15,<#+6>]!
+        InstrTest::new_arm(0b1110_000_111_1_0_1111_1111_0000_1_01_1_0110)
+            .setup(&|cpu| cpu.reg.r[PC_INDEX] = 0x20)
+            .assert_r(PC_INDEX, (0x26 & !0b11) + 8)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(0x20 + 6), 0x000_0020 + 4);
     }
 }
