@@ -4,7 +4,7 @@ use intbits::Bits;
 use crate::{
     arbitrary_sign_extend,
     arm7tdmi::{
-        reg::{OperationState, PC_INDEX, SP_INDEX},
+        reg::{OperationState, LR_INDEX, PC_INDEX, SP_INDEX},
         Cpu, Exception,
     },
     bus::Bus,
@@ -323,33 +323,34 @@ impl Cpu {
     /// Thumb.14: Push or pop registers.
     fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: nS+1N+1I (POP), (n+1)S+2N+1I (POP PC), or (n-1)S+2N (PUSH)
+        let pop = instr.bit(11);
         #[allow(clippy::cast_possible_truncation)]
-        let r_list = instr as u8;
-        let push_lr_or_pop_pc = instr.bit(8);
+        let r_list =
+            u16::from(instr as u8).with_bit(if pop { PC_INDEX } else { LR_INDEX }, instr.bit(8));
 
-        if instr.bit(11) {
-            // POP {Rlist}{PC}
-            self.execute_pop(bus, r_list, push_lr_or_pop_pc);
+        self.reg.r[SP_INDEX] = if pop {
+            // POP {Rlist}{PC} (LDMFD)
+            self.execute_ldm(bus, false, true, self.reg.r[SP_INDEX], r_list)
         } else {
-            // PUSH {Rlist}{LR}
-            self.execute_push(bus, r_list, push_lr_or_pop_pc);
-        }
+            // PUSH {Rlist}{LR} (STMFD)
+            self.execute_stm(bus, true, false, self.reg.r[SP_INDEX], r_list)
+        };
     }
 
     /// Thumb.15: Multiple load or store.
     fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) {
         // TODO: nS+1N+1I for LDM, or (n-1)S+2N for STM
         #[allow(clippy::cast_possible_truncation)]
-        let r_list = instr as u8;
+        let r_list = (instr as u8).into();
         let r_base = r_index(instr, 8);
 
-        if instr.bit(11) {
+        self.reg.r[r_base] = if instr.bit(11) {
             // LDMIA Rb!,{Rlist}
-            self.execute_ldmia(bus, r_base, r_list);
+            self.execute_ldm(bus, false, true, self.reg.r[r_base], r_list)
         } else {
             // STMIA Rb!,{Rlist}
-            self.execute_stmia(bus, r_base, r_list);
-        }
+            self.execute_stm(bus, false, true, self.reg.r[r_base], r_list)
+        };
     }
 
     /// Thumb.16: Conditional branch.

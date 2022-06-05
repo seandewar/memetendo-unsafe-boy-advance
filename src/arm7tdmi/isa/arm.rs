@@ -39,6 +39,7 @@ impl Cpu {
             "011?_????_????_????_????_???1_????" => {
                 self.enter_exception(bus, Exception::UndefinedInstr);
             }
+            "100?_????_????_????_????_????_????" => self.execute_arm_block_transfer(bus, instr),
             "101?_????_????_????_????_????_????" => self.execute_arm_b_bl(bus, instr),
             "00??_????_????_????_????_????_????" => self.execute_arm_data_processing(bus, instr),
             "01??_????_????_????_????_????_????" => self.execute_arm_single_transfer(bus, instr),
@@ -383,6 +384,48 @@ impl Cpu {
             if r_base_addr == PC_INDEX {
                 self.reload_pipeline(bus);
             }
+        }
+    }
+
+    /// Block data transfer.
+    fn execute_arm_block_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
+        // TODO: For normal LDM, nS+1N+1I. For LDM PC, (n+1)S+2N+1I. For STM (n-1)S+2N. Where n is
+        //       the number of words transferred.
+        let preindex = instr.bit(24);
+        let ascend = instr.bit(23);
+        let load_psr_or_force_user = instr.bit(22);
+
+        let r_base_addr = r_index(instr, 16);
+        #[allow(clippy::cast_possible_truncation)]
+        let r_list = instr as u16;
+
+        let final_addr = if instr.bit(20) {
+            if load_psr_or_force_user && r_list.bit(PC_INDEX) {
+                self.reg.cpsr = self.reg.spsr;
+            }
+
+            // LDM{cond}{amod} Rn{!},<Rlist>{^}
+            self.execute_ldm(bus, preindex, ascend, self.reg.r[r_base_addr], r_list)
+        } else {
+            let saved_mode = self.reg.cpsr.mode;
+            if load_psr_or_force_user {
+                self.reg.change_mode(OperationMode::User);
+            }
+
+            // STM{cond}{amod} Rn{!},<Rlist>{^}
+            let final_addr =
+                self.execute_stm(bus, preindex, ascend, self.reg.r[r_base_addr], r_list);
+
+            if load_psr_or_force_user {
+                self.reg.change_mode(saved_mode);
+            }
+
+            final_addr
+        };
+
+        if instr.bit(21) {
+            // Write-back to Rn. (cannot be R15)
+            self.reg.r[r_base_addr] = final_addr;
         }
     }
 }
@@ -1498,5 +1541,167 @@ mod tests {
             .run_with_bus(&mut bus);
 
         assert_eq!(bus.read_word(0x20 + 6), 0x000_0020 + 4);
+    }
+
+    #[test]
+    fn execute_arm_block_transfer() {
+        // Shared parts of these instrs are tested in Thumb's STMIA, LDMIA, PUSH and POP tests.
+        let mut bus = VecBus::new(44);
+        bus.write_word(0, 0xceec_0a0c);
+        bus.write_word(4, 0xfefe_dede);
+        bus.write_word(12, 0xbeef_feeb);
+        bus.write_word(20, 0xabcd_ef98);
+
+        // LDM{cond}{amod} Rn{!},<Rlist>{^}
+        // AL DA R5,{R0,R2,R8,R12}
+        InstrTest::new_arm(0b1110_100_0000_1_0101_0001000100000101)
+            .setup(&|cpu| cpu.reg.r[5] = 20)
+            .assert_r(5, 20)
+            .assert_r(2, 0xbeef_feeb)
+            .assert_r(12, 0xabcd_ef98)
+            .run_with_bus(&mut bus);
+
+        // AL DA R5!,{R0,R2,R8,R12}
+        InstrTest::new_arm(0b1110_100_0001_1_0101_0001000100000101)
+            .setup(&|cpu| cpu.reg.r[5] = 20)
+            .assert_r(5, 4)
+            .assert_r(2, 0xbeef_feeb)
+            .assert_r(12, 0xabcd_ef98)
+            .run_with_bus(&mut bus);
+
+        // AL DA R5!,{R0,R2,R8,R12,R15}
+        bus.assert_oob(&|bus| {
+            InstrTest::new_arm(0b1110_100_0001_1_0101_1001000100000101)
+                .setup(&|cpu| cpu.reg.r[5] = 20)
+                .assert_r(0, 0xfefe_dede)
+                .assert_r(8, 0xbeef_feeb)
+                .assert_r(15, (0xabcd_ef98 & !0b11) + 8)
+                .run_with_bus(bus);
+        });
+
+        // AL DA R5!,{R0,R2,R8,R12,R15}^
+        bus.assert_oob(&|bus| {
+            InstrTest::new_arm(0b1110_100_0011_1_0101_1001000100000101)
+                .setup(&|cpu| {
+                    cpu.reg.spsr.irq_disabled = true;
+                    cpu.reg.spsr.fiq_disabled = true;
+                    cpu.reg.spsr.overflow = true;
+                    cpu.reg.cpsr.signed = true;
+                    cpu.reg.r[5] = 20;
+                })
+                .assert_r(0, 0xfefe_dede)
+                .assert_r(8, 0xbeef_feeb)
+                .assert_r(15, (0xabcd_ef98 & !0b11) + 8)
+                .assert_overflow()
+                .run_with_bus(bus);
+        });
+
+        // AL DB R5!,{R0,R2,R8,R12}
+        InstrTest::new_arm(0b1110_100_1001_1_0101_0001000100000101)
+            .setup(&|cpu| cpu.reg.r[5] = 20)
+            .assert_r(5, 4)
+            .assert_r(0, 0xfefe_dede)
+            .assert_r(8, 0xbeef_feeb)
+            .run_with_bus(&mut bus);
+
+        // AL IA R5!,{R0,R2,R8,R12}
+        InstrTest::new_arm(0b1110_100_0101_1_0101_0001000100000101)
+            .assert_r(5, 16)
+            .assert_r(0, 0xceec_0a0c)
+            .assert_r(2, 0xfefe_dede)
+            .assert_r(12, 0xbeef_feeb)
+            .run_with_bus(&mut bus);
+
+        // AL IB R5!,{R0,R2,R8,R12}
+        InstrTest::new_arm(0b1110_100_1101_1_0101_0001000100000101)
+            .assert_r(5, 16)
+            .assert_r(0, 0xfefe_dede)
+            .assert_r(8, 0xbeef_feeb)
+            .run_with_bus(&mut bus);
+
+        // STM{cond}{amod} Rn{!},<Rlist>{^}
+        // AL DA R5,{R0,R2,R8,R12}
+        InstrTest::new_arm(0b1110_100_0000_0_0101_0001000100000101)
+            .setup(&|cpu| {
+                cpu.reg.r[5] = 40;
+                cpu.reg.r[0] = 0x1234_5678;
+                cpu.reg.r[2] = 0xf001_100e;
+                cpu.reg.r[8] = 0x0010_9910;
+                cpu.reg.r[12] = 0x7373_3737;
+            })
+            .assert_r(5, 40)
+            .assert_r(0, 0x1234_5678)
+            .assert_r(2, 0xf001_100e)
+            .assert_r(8, 0x0010_9910)
+            .assert_r(12, 0x7373_3737)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(40), 0x7373_3737);
+        assert_eq!(bus.read_word(36), 0x0010_9910);
+        assert_eq!(bus.read_word(32), 0xf001_100e);
+        assert_eq!(bus.read_word(28), 0x1234_5678);
+
+        // AL DA R5!,{R0,R2}
+        InstrTest::new_arm(0b1110_100_0001_0_0101_0000000000000101)
+            .setup(&|cpu| {
+                cpu.reg.r[5] = 40;
+                cpu.reg.r[0] = 0x1239_9678;
+                cpu.reg.r[2] = 0xf009_900e;
+            })
+            .assert_r(5, 32)
+            .assert_r(0, 0x1239_9678)
+            .assert_r(2, 0xf009_900e)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(40), 0xf009_900e);
+        assert_eq!(bus.read_word(36), 0x1239_9678);
+
+        // AL DB R5!,{R0,R2}
+        InstrTest::new_arm(0b1110_100_1001_0_0101_0000000000000101)
+            .setup(&|cpu| {
+                cpu.reg.r[5] = 40;
+                cpu.reg.r[0] = 0x0012_3456;
+                cpu.reg.r[2] = 0x9876_5000;
+            })
+            .assert_r(5, 32)
+            .assert_r(0, 0x0012_3456)
+            .assert_r(2, 0x9876_5000)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(36), 0x9876_5000);
+        assert_eq!(bus.read_word(32), 0x0012_3456);
+
+        // AL IA R5!,{R13,R14}
+        InstrTest::new_arm(0b1110_100_0101_0_0101_0110000000000000)
+            .setup(&|cpu| {
+                cpu.reg.r[5] = 32;
+                cpu.reg.r[13] = 0x7171_1616;
+                cpu.reg.r[14] = 0xfefe_afaf;
+            })
+            .assert_r(5, 40)
+            .assert_r(13, 0x7171_1616)
+            .assert_r(14, 0xfefe_afaf)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(32), 0x7171_1616);
+        assert_eq!(bus.read_word(36), 0xfefe_afaf);
+
+        // AL IB R5,{R0,R13,R14}^
+        InstrTest::new_arm(0b1110_100_1110_0_0101_0110000000000001)
+            .setup(&|cpu| {
+                cpu.reg.r[5] = 28;
+                cpu.reg.r[0] = 0x0101_0101;
+                cpu.reg.r[13] = 0xe0a1_2ee3;
+                cpu.reg.r[14] = 0xeeee_eeee;
+            })
+            .assert_r(5, 28)
+            .assert_r(0, 0x0101_0101)
+            .assert_r(13, 0xe0a1_2ee3)
+            .assert_r(14, 0xeeee_eeee)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(32), 0x0101_0101);
+        assert_eq!(bus.read_word(36), 0);
+        assert_eq!(bus.read_word(40), 0);
     }
 }

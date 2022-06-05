@@ -6,7 +6,7 @@ use intbits::Bits;
 use crate::bus::{Bus, BusAlignedExt};
 
 use super::{
-    reg::{OperationMode, StatusRegister, LR_INDEX, PC_INDEX, SP_INDEX},
+    reg::{OperationMode, StatusRegister, LR_INDEX, PC_INDEX},
     Cpu, OperationState,
 };
 
@@ -282,14 +282,108 @@ impl Cpu {
         }
     }
 
-    fn execute_bx(&mut self, bus: &impl Bus, addr: u32) {
-        self.reg.cpsr.state = if addr.bit(0) {
-            OperationState::Thumb
-        } else {
-            OperationState::Arm
-        };
-        self.reg.r[PC_INDEX] = addr;
-        self.reload_pipeline(bus);
+    fn meets_condition(&self, cond: u8) -> bool {
+        match cond {
+            // EQ
+            0 => self.reg.cpsr.zero,
+            // NE
+            1 => !self.reg.cpsr.zero,
+            // CS/HS
+            2 => self.reg.cpsr.carry,
+            // CC/LO
+            3 => !self.reg.cpsr.carry,
+            // MI
+            4 => self.reg.cpsr.signed,
+            // PL
+            5 => !self.reg.cpsr.signed,
+            // VS
+            6 => self.reg.cpsr.overflow,
+            // VC
+            7 => !self.reg.cpsr.overflow,
+            // HI
+            8 => self.reg.cpsr.carry && !self.reg.cpsr.zero,
+            // LS
+            9 => !self.reg.cpsr.carry || self.reg.cpsr.zero,
+            // GE
+            10 => self.reg.cpsr.signed == self.reg.cpsr.overflow,
+            // LT
+            11 => self.reg.cpsr.signed != self.reg.cpsr.overflow,
+            // GT
+            12 => !self.reg.cpsr.zero && (self.reg.cpsr.signed == self.reg.cpsr.overflow),
+            // LE
+            13 => self.reg.cpsr.zero || (self.reg.cpsr.signed != self.reg.cpsr.overflow),
+            // AL (Always, or Undefined in Thumb; TODO: how does it act?)
+            14 => true,
+            // Reserved (TODO: acts like Never in ARMv1,v2?)
+            15 => false,
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn rlist_for_each(
+    preindex: bool,
+    ascend: bool,
+    base_addr: u32,
+    mut r_list: u16,
+    f: &mut impl FnMut(u32, usize),
+) -> u32 {
+    // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
+
+    // Descending transfers work by calculating the final address ahead of time, then by starting
+    // an ascending transfer from there. We also need to invert indexing order to compensate.
+    let desc_final_addr = base_addr.wrapping_sub(4 * r_list.count_ones());
+    let mut addr = if ascend { base_addr } else { desc_final_addr };
+    let preindex = preindex ^ !ascend;
+
+    for r in 0..16 {
+        if r_list.bit(0) {
+            if preindex {
+                addr = addr.wrapping_add(4);
+            }
+            f(addr, r);
+            if !preindex {
+                addr = addr.wrapping_add(4);
+            }
+        }
+        r_list >>= 1;
+    }
+
+    if ascend {
+        addr
+    } else {
+        desc_final_addr
+    }
+}
+
+impl Cpu {
+    fn execute_stm(
+        &mut self,
+        bus: &mut impl Bus,
+        preindex: bool,
+        ascend: bool,
+        base_addr: u32,
+        r_list: u16,
+    ) -> u32 {
+        rlist_for_each(preindex, ascend, base_addr, r_list, &mut |addr, r| {
+            bus.write_word_aligned(addr, self.reg.r[r]);
+        })
+    }
+
+    fn execute_ldm(
+        &mut self,
+        bus: &impl Bus,
+        preindex: bool,
+        ascend: bool,
+        base_addr: u32,
+        r_list: u16,
+    ) -> u32 {
+        rlist_for_each(preindex, ascend, base_addr, r_list, &mut |addr, r| {
+            self.reg.r[r] = bus.read_word_aligned(addr);
+            if r == PC_INDEX {
+                self.reload_pipeline(bus);
+            }
+        })
     }
 
     fn execute_str(bus: &mut impl Bus, addr: u32, value: u32) {
@@ -334,105 +428,20 @@ impl Cpu {
         }
     }
 
-    fn execute_stmia(&mut self, bus: &mut impl Bus, r_base_addr: usize, mut r_list: u8) {
-        // TODO: emulate weird invalid r_list behaviour?
-        //       (empty r_list, r_list with r_base_addr)
-        for r in 0..8 {
-            if r_list.bit(0) {
-                bus.write_word_aligned(self.reg.r[r_base_addr], self.reg.r[r]);
-                self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
-            }
-            r_list >>= 1;
-        }
-    }
-
-    fn execute_ldmia(&mut self, bus: &impl Bus, r_base_addr: usize, mut r_list: u8) {
-        // TODO: emulate weird invalid r_list behaviour?
-        //       (empty r_list, r_list with r_base_addr)
-        for r in 0..8 {
-            if r_list.bit(0) {
-                self.reg.r[r] = bus.read_word_aligned(self.reg.r[r_base_addr]);
-                self.reg.r[r_base_addr] = self.reg.r[r_base_addr].wrapping_add(4);
-            }
-            r_list >>= 1;
-        }
-    }
-
-    fn execute_push(&mut self, bus: &mut impl Bus, mut r_list: u8, push_lr: bool) {
-        // TODO: emulate weird r_list behaviour when its 0?
-        if push_lr {
-            self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
-            bus.write_word_aligned(self.reg.r[SP_INDEX], self.reg.r[LR_INDEX]);
-        }
-
-        for r in (0..8).rev() {
-            if r_list.bit(7) {
-                self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_sub(4);
-                bus.write_word_aligned(self.reg.r[SP_INDEX], self.reg.r[r]);
-            }
-            r_list <<= 1;
-        }
-    }
-
-    fn execute_pop(&mut self, bus: &impl Bus, mut r_list: u8, pop_pc: bool) {
-        // TODO: emulate weird r_list behaviour when its 0?
-        for r in 0..8 {
-            if r_list.bit(0) {
-                self.reg.r[r] = bus.read_word_aligned(self.reg.r[SP_INDEX]);
-                self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
-            }
-            r_list >>= 1;
-        }
-
-        if pop_pc {
-            self.reg.r[PC_INDEX] = bus.read_word_aligned(self.reg.r[SP_INDEX]);
-            self.reg.r[SP_INDEX] = self.reg.r[SP_INDEX].wrapping_add(4);
-            self.reload_pipeline(bus);
-        }
-    }
-
     #[allow(clippy::cast_sign_loss)]
     fn execute_branch(&mut self, bus: &impl Bus, base_addr: u32, addr_offset: i32) {
         self.reg.r[PC_INDEX] = base_addr.wrapping_add(addr_offset as _);
         self.reload_pipeline(bus);
     }
 
-    fn meets_condition(&self, cond: u8) -> bool {
-        match cond {
-            // EQ
-            0 => self.reg.cpsr.zero,
-            // NE
-            1 => !self.reg.cpsr.zero,
-            // CS/HS
-            2 => self.reg.cpsr.carry,
-            // CC/LO
-            3 => !self.reg.cpsr.carry,
-            // MI
-            4 => self.reg.cpsr.signed,
-            // PL
-            5 => !self.reg.cpsr.signed,
-            // VS
-            6 => self.reg.cpsr.overflow,
-            // VC
-            7 => !self.reg.cpsr.overflow,
-            // HI
-            8 => self.reg.cpsr.carry && !self.reg.cpsr.zero,
-            // LS
-            9 => !self.reg.cpsr.carry || self.reg.cpsr.zero,
-            // GE
-            10 => self.reg.cpsr.signed == self.reg.cpsr.overflow,
-            // LT
-            11 => self.reg.cpsr.signed != self.reg.cpsr.overflow,
-            // GT
-            12 => !self.reg.cpsr.zero && (self.reg.cpsr.signed == self.reg.cpsr.overflow),
-            // LE
-            13 => self.reg.cpsr.zero || (self.reg.cpsr.signed != self.reg.cpsr.overflow),
-            // AL (Always) or Undefined in Thumb (TODO: how does it act?)
-            14 => true,
-            // Reserved (TODO: acts like Never in ARMv1,v2?)
-            15 => false,
-            _ => unreachable!(),
-        }
+    fn execute_bx(&mut self, bus: &impl Bus, addr: u32) {
+        self.reg.cpsr.state = if addr.bit(0) {
+            OperationState::Thumb
+        } else {
+            OperationState::Arm
+        };
+        self.reg.r[PC_INDEX] = addr;
+        self.reload_pipeline(bus);
     }
 
     fn execute_thumb_bl(&mut self, bus: &impl Bus, hi_part: bool, addr_offset_part: u16) {
