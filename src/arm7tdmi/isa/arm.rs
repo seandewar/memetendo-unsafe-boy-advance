@@ -28,6 +28,7 @@ impl Cpu {
         #[bitmatch]
         match instr.bits(..28) {
             "0001_0010_1111_1111_1111_????_????" => self.execute_arm_bx(bus, instr),
+            "0001_0?00_????_????_0000_1001_????" => self.execute_arm_swap(bus, instr),
             "0000_????_????_????_????_1001_????" => self.execute_arm_multiply(instr),
             "00?1_0??0_????_????_????_????_????" => self.execute_arm_psr_transfer(instr),
             "000?_????_????_????_????_1??1_????" => {
@@ -43,6 +44,10 @@ impl Cpu {
             "101?_????_????_????_????_????_????" => self.execute_arm_b_bl(bus, instr),
             "00??_????_????_????_????_????_????" => self.execute_arm_data_processing(bus, instr),
             "01??_????_????_????_????_????_????" => self.execute_arm_single_transfer(bus, instr),
+            "1100_010?_????_????_????_???0_????" => {} // N/A Coprocessor double register transfer
+            "1110_????_????_????_????_???0_????" => {} // N/A Coprocessor data operations
+            "1110_????_????_????_????_???1_????" => {} // N/A Coprocessor register transfer
+            "110?_????_????_????_????_????_????" => {} // N/A Coprocessor data transfer
             _ => self.enter_exception(bus, Exception::UndefinedInstr),
         }
     }
@@ -427,6 +432,22 @@ impl Cpu {
             // Write-back to Rn. (cannot be R15)
             self.reg.r[r_base_addr] = final_addr;
         }
+    }
+
+    /// Single data swap.
+    fn execute_arm_swap(&mut self, bus: &mut impl Bus, instr: u32) {
+        // TODO: 1S+2N+1I. That is, 2N data cycles, 1S code cycle, plus 1I.
+        let base_addr = self.reg.r[r_index(instr, 16)];
+        let value = self.reg.r[r_index(instr, 0)];
+
+        self.reg.r[r_index(instr, 12)] = if instr.bit(22) {
+            // SWP{cond}B Rd,Rm,[Rn]
+            #[allow(clippy::cast_possible_truncation)]
+            Self::execute_swpb(bus, base_addr, value as u8).into()
+        } else {
+            // SWP{cond} Rd,Rm,[Rn]
+            Self::execute_swp(bus, base_addr, value)
+        };
     }
 }
 
@@ -1703,5 +1724,98 @@ mod tests {
         assert_eq!(bus.read_word(32), 0x0101_0101);
         assert_eq!(bus.read_word(36), 0);
         assert_eq!(bus.read_word(40), 0);
+    }
+
+    #[test]
+    fn execute_arm_swap() {
+        let mut bus = VecBus::new(12);
+        bus.write_word(4, 9876);
+
+        // SWP{cond}{B} Rd,Rm,[Rn]
+        // AL R14,R3,R5
+        InstrTest::new_arm(0b1110_00010_0_00_0101_1110_00001001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[5] = 4;
+                cpu.reg.r[3] = 1337;
+            })
+            .assert_r(5, 4)
+            .assert_r(3, 1337)
+            .assert_r(14, 9876)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(4), 1337);
+
+        // AL R14,R14,R5
+        InstrTest::new_arm(0b1110_00010_0_00_0101_1110_00001001_1110)
+            .setup(&|cpu| {
+                cpu.reg.r[5] = 4;
+                cpu.reg.r[14] = 0xcaab_feeb;
+            })
+            .assert_r(5, 4)
+            .assert_r(14, 1337)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(4), 0xcaab_feeb);
+
+        // AL R14,R5,R5
+        InstrTest::new_arm(0b1110_00010_0_00_0101_1110_00001001_0101)
+            .setup(&|cpu| cpu.reg.r[5] = 4)
+            .assert_r(5, 4)
+            .assert_r(14, 0xcaab_feeb)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(4), 4);
+
+        // AL R5,R5,R5
+        bus.write_word(4, 0x9e9e_aeae);
+        InstrTest::new_arm(0b1110_00010_0_00_0101_0101_00001001_0101)
+            .setup(&|cpu| cpu.reg.r[5] = 4)
+            .assert_r(5, 0x9e9e_aeae)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_word(4), 4);
+
+        // AL B R14,R3,R5
+        InstrTest::new_arm(0b1110_00010_1_00_0101_1110_00001001_0011)
+            .setup(&|cpu| {
+                cpu.reg.r[5] = 4;
+                cpu.reg.r[3] = 0x1337;
+            })
+            .assert_r(5, 4)
+            .assert_r(3, 0x1337)
+            .assert_r(14, 4)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_byte(4), 0x37);
+
+        // AL B R14,R14,R5
+        InstrTest::new_arm(0b1110_00010_1_00_0101_1110_00001001_1110)
+            .setup(&|cpu| {
+                cpu.reg.r[5] = 4;
+                cpu.reg.r[14] = 0xcaab_feeb;
+            })
+            .assert_r(5, 4)
+            .assert_r(14, 0x37)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_byte(4), 0xeb);
+
+        // AL B R14,R5,R5
+        InstrTest::new_arm(0b1110_00010_1_00_0101_1110_00001001_0101)
+            .setup(&|cpu| cpu.reg.r[5] = 4)
+            .assert_r(5, 4)
+            .assert_r(14, 0xeb)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_byte(4), 4);
+
+        // AL B R5,R5,R5
+        bus.write_word(4, 0x9e9e_aeae);
+        InstrTest::new_arm(0b1110_00010_1_00_0101_0101_00001001_0101)
+            .setup(&|cpu| cpu.reg.r[5] = 4)
+            .assert_r(5, 0xae)
+            .run_with_bus(&mut bus);
+
+        assert_eq!(bus.read_byte(4), 4);
     }
 }

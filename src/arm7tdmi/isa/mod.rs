@@ -428,6 +428,20 @@ impl Cpu {
         }
     }
 
+    fn execute_swp(bus: &mut impl Bus, addr: u32, value: u32) -> u32 {
+        let old_value = Self::execute_ldr(bus, addr);
+        bus.write_word_aligned(addr, value);
+
+        old_value
+    }
+
+    fn execute_swpb(bus: &mut impl Bus, addr: u32, value: u8) -> u8 {
+        let old_value = bus.read_byte(addr);
+        bus.write_byte(addr, value);
+
+        old_value
+    }
+
     #[allow(clippy::cast_sign_loss)]
     fn execute_branch(&mut self, bus: &impl Bus, base_addr: u32, addr_offset: i32) {
         self.reg.r[PC_INDEX] = base_addr.wrapping_add(addr_offset as _);
