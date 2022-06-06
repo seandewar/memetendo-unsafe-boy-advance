@@ -2,10 +2,8 @@ mod isa;
 mod reg;
 
 use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX};
-
-use strum_macros::EnumIter;
-
 use crate::bus::Bus;
+use strum_macros::EnumIter;
 
 #[derive(Default, Debug)]
 pub struct Cpu {
@@ -27,7 +25,6 @@ impl Default for RunState {
 }
 
 impl Cpu {
-    #[allow(unused)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -43,12 +40,22 @@ impl Cpu {
         self.reg.r[LR_INDEX] = 0;
     }
 
+    pub fn skip_bios(&mut self, bus: &impl Bus) {
+        self.reg.change_mode(OperationMode::System);
+        self.reg.r[PC_INDEX] = 0x0800_0000;
+        self.reload_pipeline(bus);
+        self.step_pipeline(bus);
+        // TODO: set spsrs, LR
+    }
+
     pub fn step(&mut self, bus: &mut impl Bus) {
         if self.run_state != RunState::Running {
             return;
         }
 
         let instr = self.pipeline_instrs[0];
+        println!("{:08x} => {:08x}", self.reg.r[PC_INDEX], instr);
+
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),
             OperationState::Thumb => {
@@ -60,7 +67,8 @@ impl Cpu {
     }
 
     fn step_pipeline(&mut self, bus: &impl Bus) {
-        use crate::bus::BusExt; // PC is forcibly aligned anyway
+        use crate::bus::BusExt; // PC is forcibly aligned below, so this is fine.
+
         self.reg.r[PC_INDEX] &= match self.reg.cpsr.state {
             OperationState::Thumb => !1,
             OperationState::Arm => !0b11,
@@ -115,7 +123,7 @@ impl Exception {
     }
 
     fn disables_fiq(self) -> bool {
-        matches!(self, Self::Reset | Self::FastInterrupt)
+        self == Self::Reset || self == Self::FastInterrupt
     }
 }
 
@@ -138,12 +146,10 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     use crate::bus::{
         tests::{NullBus, VecBus},
         BusExt,
     };
-
     use strum::IntoEnumIterator;
 
     fn assert_exception_result(cpu: &mut Cpu, exception: Exception, old_reg: Registers) {

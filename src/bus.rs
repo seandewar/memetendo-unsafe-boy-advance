@@ -2,6 +2,11 @@
 
 use intbits::Bits;
 
+use crate::{
+    cart::Cartridge,
+    gba::{ExternalWram, InternalWram},
+};
+
 pub trait Bus {
     fn read_byte(&self, addr: u32) -> u8;
     fn write_byte(&mut self, addr: u32, value: u8);
@@ -69,16 +74,65 @@ impl<T: Bus> BusAlignedExt for T {
     }
 }
 
-#[derive(Default, Debug)]
-pub struct GbaBus;
+#[derive(Debug)]
+pub(super) struct GbaBus<'a> {
+    pub(super) iwram: &'a mut InternalWram,
+    pub(super) ewram: &'a mut ExternalWram,
+    pub(super) cart: &'a Cartridge,
+}
 
-impl Bus for GbaBus {
-    fn read_byte(&self, _addr: u32) -> u8 {
-        todo!()
+impl GbaBus<'_> {
+    fn read_rom(&self, addr: u32) -> u8 {
+        self.cart
+            .rom()
+            .get((addr & 0x01ff_ffff) as usize)
+            .copied()
+            .unwrap_or(0xff)
+    }
+}
+
+impl Bus for GbaBus<'_> {
+    fn read_byte(&self, addr: u32) -> u8 {
+        match addr {
+            // BIOS
+            0x0000_0000..=0x0000_3fff => 0xff, // TODO
+            // External WRAM
+            0x0200_0000..=0x0203_ffff => self.ewram.0[(addr & 0x3_ffff) as usize],
+            // Internal WRAM
+            0x0300_0000..=0x0300_7fff => self.iwram.0[(addr & 0x7fff) as usize],
+            // I/O Registers
+            0x0400_0000..=0x0400_03fe => 0xff, // TODO
+            // Palette RAM
+            0x0500_0000..=0x0500_03ff => 0xff, // TODO
+            // VRAM
+            0x0600_0000..=0x0601_7fff => 0xff, // TODO
+            // OAM
+            0x0700_0000..=0x0700_03ff => 0xff, // TODO
+            // ROM Mirror; TODO: Wait state 0
+            0x0800_0000..=0x09ff_ffff => self.read_rom(addr),
+            // ROM Mirror; TODO: Wait state 1
+            0x0a00_0000..=0x0bff_ffff => self.read_rom(addr),
+            // ROM Mirror; TODO: Wait state 2
+            0x0c00_0000..=0x0dff_ffff => self.read_rom(addr),
+            // SRAM
+            0x0e00_0000..=0x0e00_ffff => 0xff, // TODO
+            // Unused (TODO: what is the behaviour? Probably open bus)
+            _ => 0xff,
+        }
     }
 
-    fn write_byte(&mut self, _addr: u32, _value: u8) {
-        todo!()
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        match addr {
+            // External WRAM
+            0x0200_0000..=0x0203_ffff => {
+                self.ewram.0[(addr & 0x3_ffff) as usize] = value;
+                println!("ewram! {}", value);
+            }
+            // Internal WRAM
+            0x0300_0000..=0x0300_7fff => self.iwram.0[(addr & 0x7fff) as usize] = value,
+            // Read-only or Unused
+            _ => {}
+        }
     }
 }
 
@@ -132,24 +186,21 @@ pub(super) mod tests {
 
     impl Bus for VecBus {
         fn read_byte(&self, addr: u32) -> u8 {
-            self.buf
-                .get(usize::try_from(addr).unwrap())
-                .copied()
-                .unwrap_or_else(|| {
-                    self.did_oob.set(true);
-                    assert!(
-                        self.allow_oob,
-                        "oob VecBus read at address {:#010x} (len {})",
-                        addr,
-                        self.buf.len()
-                    );
+            self.buf.get(addr as usize).copied().unwrap_or_else(|| {
+                self.did_oob.set(true);
+                assert!(
+                    self.allow_oob,
+                    "oob VecBus read at address {:#010x} (len {})",
+                    addr,
+                    self.buf.len()
+                );
 
-                    0xaa
-                })
+                0xaa
+            })
         }
 
         fn write_byte(&mut self, addr: u32, value: u8) {
-            if let Some(v) = self.buf.get_mut(usize::try_from(addr).unwrap()) {
+            if let Some(v) = self.buf.get_mut(addr as usize) {
                 *v = value;
             } else {
                 self.did_oob.set(true);

@@ -17,7 +17,7 @@ fn r_index(instr: u32, pos: u8) -> usize {
 impl Cpu {
     #[bitmatch]
     pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl Bus, instr: u32) {
-        assert!(self.reg.cpsr.state == OperationState::Arm);
+        debug_assert!(self.reg.cpsr.state == OperationState::Arm);
 
         #[allow(clippy::cast_possible_truncation)]
         if !self.meets_condition(instr.bits(28..) as u8) {
@@ -406,7 +406,7 @@ impl Cpu {
 
         let final_addr = if instr.bit(20) {
             if load_psr_or_force_user && r_list.bit(PC_INDEX) {
-                self.reg.cpsr = self.reg.spsr;
+                self.execute_msr(false, true, true, self.reg.spsr.bits());
             }
 
             // LDM{cond}{amod} Rn{!},<Rlist>{^}
@@ -1607,8 +1607,9 @@ mod tests {
 
         // AL DA R5!,{R0,R2,R8,R12,R15}^
         bus.assert_oob(&|bus| {
-            InstrTest::new_arm(0b1110_100_0011_1_0101_1001000100000101)
+            let cpu = InstrTest::new_arm(0b1110_100_0011_1_0101_1001000100000101)
                 .setup(&|cpu| {
+                    cpu.reg.spsr.mode = OperationMode::Abort;
                     cpu.reg.spsr.irq_disabled = true;
                     cpu.reg.spsr.fiq_disabled = true;
                     cpu.reg.spsr.overflow = true;
@@ -1620,6 +1621,8 @@ mod tests {
                 .assert_r(15, (0xabcd_ef98 & !0b11) + 8)
                 .assert_overflow()
                 .run_with_bus(bus);
+
+            assert_eq!(cpu.reg.cpsr.mode, OperationMode::Abort);
         });
 
         // AL DB R5!,{R0,R2,R8,R12}
