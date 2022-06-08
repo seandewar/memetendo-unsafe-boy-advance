@@ -18,7 +18,6 @@ pub struct Cpu {
 enum RunState {
     NotRunning,
     Running,
-    Hung,
 }
 
 impl Default for RunState {
@@ -73,7 +72,7 @@ impl Cpu {
         instr
     }
 
-    /// NOTE: also aligns PC.
+    /// Forcibly aligns the PC and reloads the instruction pipeline.
     fn reload_pipeline(&mut self, bus: &impl Bus) {
         use crate::bus::BusExt; // Reads are already aligned.
 

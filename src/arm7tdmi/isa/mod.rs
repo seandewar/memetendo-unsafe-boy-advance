@@ -587,7 +587,7 @@ mod tests {
                 OperationState::Arm => cpu.execute_arm(bus, self.instr),
             }
 
-            assert_eq!(cpu.reg.r.0, self.asserted_rs);
+            assert_eq!(cpu.reg.r, self.asserted_rs);
             assert_eq!(cpu.reg.cpsr.signed, self.assert_signed, "signed flag");
             assert_eq!(cpu.reg.cpsr.zero, self.assert_zero, "zero flag");
             assert_eq!(cpu.reg.cpsr.carry, self.assert_carry, "carry flag");

@@ -1,8 +1,3 @@
-use std::{
-    ops::{Index, IndexMut},
-    slice::SliceIndex,
-};
-
 use intbits::Bits;
 use strum_macros::FromRepr;
 
@@ -35,30 +30,13 @@ impl OperationMode {
     }
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) struct GeneralRegisters(pub(crate) [u32; 16]);
-
 pub(super) const SP_INDEX: usize = 13;
 pub(super) const LR_INDEX: usize = 14;
 pub(super) const PC_INDEX: usize = 15;
 
-impl<I: SliceIndex<[u32]>> Index<I> for GeneralRegisters {
-    type Output = I::Output;
-
-    fn index(&self, index: I) -> &Self::Output {
-        Index::index(&self.0, index)
-    }
-}
-
-impl<I: SliceIndex<[u32]>> IndexMut<I> for GeneralRegisters {
-    fn index_mut(&mut self, index: I) -> &mut Self::Output {
-        IndexMut::index_mut(&mut self.0, index)
-    }
-}
-
 #[derive(Default, Copy, Clone, Debug)]
 pub(super) struct Registers {
-    pub(super) r: GeneralRegisters,
+    pub(super) r: [u32; 16],
     pub(super) cpsr: StatusRegister,
     pub(super) spsr: StatusRegister,
     banks: [Bank; 6],
@@ -202,7 +180,7 @@ mod tests {
 
         assert_eq!(OperationMode::User, reg.cpsr.mode);
 
-        reg.r.0 = [1337; 16];
+        reg.r = [1337; 16];
         reg.change_mode(OperationMode::UndefinedInstr);
 
         assert_eq!(OperationMode::UndefinedInstr, reg.cpsr.mode);
