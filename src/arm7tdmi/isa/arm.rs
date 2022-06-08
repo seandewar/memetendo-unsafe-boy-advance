@@ -1451,28 +1451,32 @@ mod tests {
         // are already tested for in Thumb tests.
 
         // AL R15,[R1,<#+24>]!
-        InstrTest::new_arm(0b1110_01_0110_1_0_0001_1111_000000011000)
-            .setup(&|cpu| {
-                cpu.reg.r[1] = 8;
-                cpu.reg.r[PC_INDEX] = 0x1337_7331;
-            })
-            .assert_r(1, 32)
-            .assert_r(PC_INDEX, 0x1337_7331)
-            .run_with_bus(&mut bus);
+        bus.assert_oob(&|bus| {
+            InstrTest::new_arm(0b1110_01_0110_1_0_0001_1111_000000011000)
+                .setup(&|cpu| {
+                    cpu.reg.r[1] = 8;
+                    cpu.reg.r[PC_INDEX] = 0x1337_7330;
+                })
+                .assert_r(1, 32)
+                .assert_r(PC_INDEX, 0x1337_7330 + 4)
+                .run_with_bus(bus);
+        });
 
-        assert_eq!(bus.read_word(32), 0x1337_7331 + 4);
+        assert_eq!(bus.read_word(32), 0x1337_7330 + 4);
 
         // AL B R15,[R1,<#+24>]!
-        InstrTest::new_arm(0b1110_01_0111_1_0_0001_1111_000000011000)
-            .setup(&|cpu| {
-                cpu.reg.r[1] = 16;
-                cpu.reg.r[PC_INDEX] = 0x1337_7331;
-            })
-            .assert_r(1, 40)
-            .assert_r(PC_INDEX, 0x1337_7331)
-            .run_with_bus(&mut bus);
+        bus.assert_oob(&|bus| {
+            InstrTest::new_arm(0b1110_01_0111_1_0_0001_1111_000000011000)
+                .setup(&|cpu| {
+                    cpu.reg.r[1] = 16;
+                    cpu.reg.r[PC_INDEX] = 0x1337_7330;
+                })
+                .assert_r(1, 40)
+                .assert_r(PC_INDEX, 0x1337_7330 + 4)
+                .run_with_bus(bus);
+        });
 
-        assert_eq!(bus.read_word(40), 0x31 + 4);
+        assert_eq!(bus.read_word(40), 0x30 + 4);
     }
 
     #[test]
@@ -1530,6 +1534,7 @@ mod tests {
         #[allow(clippy::cast_sign_loss)]
         InstrTest::new_arm(0b1110_000_111_1_1_1111_0101_0000_1_11_1_0111)
             .setup(&|cpu| cpu.reg.r[PC_INDEX] = -7i32 as u32)
+            .assert_r(PC_INDEX, 8)
             .assert_r(5, 0x0a0c)
             .run_with_bus(&mut bus);
 
@@ -1550,7 +1555,7 @@ mod tests {
                 cpu.reg.r[PC_INDEX] = 0x20;
             })
             .assert_r(3, 20)
-            .assert_r(PC_INDEX, 0x20)
+            .assert_r(PC_INDEX, 0x24)
             .run_with_bus(&mut bus);
 
         assert_eq!(bus.read_word(20), 0xabcd_0020 + 4);

@@ -1273,7 +1273,7 @@ mod tests {
                 cpu.reg.r[10] = 10;
             })
             .assert_r(10, 10)
-            .assert_r(PC_INDEX, 10)
+            .assert_r(PC_INDEX, 12)
             .assert_zero()
             .assert_carry()
             .run();
@@ -1322,7 +1322,7 @@ mod tests {
         InstrTest::new_thumb(0b01001_000_00010000) // R0,[PC,#64]
             .setup(&|cpu| cpu.reg.r[PC_INDEX] = 20)
             .assert_r(0, 0xbead_feed)
-            .assert_r(PC_INDEX, 20)
+            .assert_r(PC_INDEX, 22)
             .run_with_bus(&mut bus);
     }
 
@@ -1568,12 +1568,12 @@ mod tests {
         InstrTest::new_thumb(0b1010_0_000_11001000) // R0,[PC,#200]
             .setup(&|cpu| cpu.reg.r[PC_INDEX] = 20)
             .assert_r(0, 220)
-            .assert_r(PC_INDEX, 20)
+            .assert_r(PC_INDEX, 22)
             .run();
 
         InstrTest::new_thumb(0b1010_0_000_00000000) // R0,[PC,#0]
             .setup(&|cpu| cpu.reg.r[PC_INDEX] = 0)
-            .assert_r(PC_INDEX, 0)
+            .assert_r(PC_INDEX, 2)
             .run();
 
         // ADD Rd,[SP,#nn]

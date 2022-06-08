@@ -34,7 +34,9 @@ impl Cpu {
 
     pub fn reset(&mut self, bus: &impl Bus) {
         self.run_state = RunState::Running;
+
         self.enter_exception(bus, Exception::Reset);
+        self.step_pipeline(bus);
 
         // Values other than PC and CPSR are considered indeterminate after a reset.
         // enter_exception gives LR an ugly value here; set it to zero for consistency.
@@ -46,7 +48,7 @@ impl Cpu {
             return;
         }
 
-        let instr = self.flush_pipeline(bus);
+        let instr = self.pipeline_instrs[0];
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),
             OperationState::Thumb => {
@@ -54,47 +56,34 @@ impl Cpu {
                 self.execute_thumb(bus, instr as u16);
             }
         }
+        self.step_pipeline(bus);
     }
 
-    fn flush_pipeline(&mut self, bus: &impl Bus) -> u32 {
-        use crate::bus::BusExt; // PC should already be aligned.
-
-        let instr_size = self.reg.cpsr.state.instr_size();
-        let instr = self.pipeline_instrs[0];
+    fn step_pipeline(&mut self, bus: &impl Bus) {
+        use crate::bus::BusExt; // PC is forcibly aligned anyway
+        self.reg.r[PC_INDEX] &= match self.reg.cpsr.state {
+            OperationState::Thumb => !1,
+            OperationState::Arm => !0b11,
+        };
 
         self.pipeline_instrs[0] = self.pipeline_instrs[1];
         self.pipeline_instrs[1] = match self.reg.cpsr.state {
             OperationState::Thumb => bus.read_hword(self.reg.r[PC_INDEX]).into(),
             OperationState::Arm => bus.read_word(self.reg.r[PC_INDEX]),
         };
-        self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(instr_size);
-
-        instr
-    }
-
-    /// Forcibly aligns the PC and reloads the instruction pipeline.
-    fn reload_pipeline(&mut self, bus: &impl Bus) {
-        use crate::bus::BusExt; // Reads are already aligned.
 
         let instr_size = self.reg.cpsr.state.instr_size();
+        self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(instr_size);
+    }
 
-        self.reg.r[PC_INDEX] = match self.reg.cpsr.state {
-            OperationState::Thumb => {
-                let pc = self.reg.r[PC_INDEX] & !1;
-                self.pipeline_instrs[0] = bus.read_hword(pc).into();
-                self.pipeline_instrs[1] = bus.read_hword(pc.wrapping_add(instr_size)).into();
-
-                pc
-            }
-            OperationState::Arm => {
-                let pc = self.reg.r[PC_INDEX] & !0b11;
-                self.pipeline_instrs[0] = bus.read_word(pc);
-                self.pipeline_instrs[1] = bus.read_word(pc.wrapping_add(instr_size));
-
-                pc
-            }
-        }
-        .wrapping_add(instr_size * 2);
+    /// Forcibly aligns the PC and flushes the instruction pipeline, then fetches the next
+    /// instruction at the PC, then advances the PC by one instruction.
+    ///
+    /// NOTE: The next instruction in the pipeline will be 0, as it is expected that
+    /// `step_pipeline()` will be called before getting the next instruction from the pipeline.
+    fn reload_pipeline(&mut self, bus: &impl Bus) {
+        self.pipeline_instrs[0] = 0;
+        self.step_pipeline(bus);
     }
 }
 
@@ -180,6 +169,7 @@ mod tests {
     fn test_exception(cpu: &mut Cpu, exception: Exception) {
         let old_reg = cpu.reg;
         cpu.enter_exception(&NullBus, exception);
+        cpu.step_pipeline(&NullBus);
         assert_exception_result(cpu, exception, old_reg);
     }
 
@@ -223,9 +213,11 @@ mod tests {
 
         let mut cpu = Cpu::new();
         cpu.reset(&bus);
+        assert_eq!(8, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
 
         cpu.step(&mut bus);
+        assert_eq!(4 + 8, cpu.reg.r[PC_INDEX]);
         assert_eq!(8 | 1, cpu.reg.r[0]);
 
         cpu.step(&mut bus);

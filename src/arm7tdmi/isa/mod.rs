@@ -543,7 +543,7 @@ mod tests {
     impl InstrTest<'_> {
         fn new(state: OperationState, instr: u32) -> Self {
             let mut asserted_rs = [0; 16];
-            asserted_rs[PC_INDEX] = 2 * state.instr_size();
+            asserted_rs[PC_INDEX] = 3 * state.instr_size();
 
             Self {
                 setup_fn: None,
@@ -577,6 +577,7 @@ mod tests {
 
             if self.state == OperationState::Thumb {
                 cpu.execute_bx(bus, 1); // Enter Thumb mode.
+                cpu.step_pipeline(bus);
             }
             if let Some(setup_fn) = self.setup_fn {
                 setup_fn(&mut cpu);
@@ -586,6 +587,7 @@ mod tests {
                 OperationState::Thumb => cpu.execute_thumb(bus, self.instr.try_into().unwrap()),
                 OperationState::Arm => cpu.execute_arm(bus, self.instr),
             }
+            cpu.step_pipeline(bus);
 
             assert_eq!(cpu.reg.r, self.asserted_rs);
             assert_eq!(cpu.reg.cpsr.signed, self.assert_signed, "signed flag");
