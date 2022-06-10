@@ -1,7 +1,7 @@
 mod isa;
 mod reg;
 
-use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX};
+use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX, SP_INDEX};
 use crate::bus::Bus;
 use strum_macros::EnumIter;
 
@@ -41,10 +41,20 @@ impl Cpu {
     }
 
     pub fn skip_bios(&mut self, bus: &impl Bus) {
+        self.reg.change_mode(OperationMode::Supervisor);
+        self.reg.r[SP_INDEX] = 0x0300_7fe0;
+
+        self.reg.change_mode(OperationMode::FastInterrupt);
+        self.reg.r[SP_INDEX] = 0x0300_7fa0;
+
+        self.reg.change_mode(OperationMode::User);
+        self.reg.r[SP_INDEX] = 0x0300_7f00;
+
         self.reg.change_mode(OperationMode::System);
         self.reg.r[PC_INDEX] = 0x0800_0000;
         self.reload_pipeline(bus);
         self.step_pipeline(bus);
+
         // TODO: set spsrs, LR
     }
 
@@ -54,7 +64,16 @@ impl Cpu {
         }
 
         let instr = self.pipeline_instrs[0];
-        println!("{:08x} => {:08x}", self.reg.r[PC_INDEX], instr);
+
+        let s = self
+            .reg
+            .r
+            .iter()
+            .copied()
+            .map(|x| format!("{x:0x}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        //println!("{:08x} => {instr:08x} : [{s}]", self.reg.r[PC_INDEX]);
 
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),

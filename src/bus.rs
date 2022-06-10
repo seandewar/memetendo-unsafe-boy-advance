@@ -2,10 +2,7 @@
 
 use intbits::Bits;
 
-use crate::{
-    cart::Cartridge,
-    gba::{ExternalWram, InternalWram},
-};
+use crate::{cart::Cartridge, video::VideoController};
 
 pub trait Bus {
     fn read_byte(&self, addr: u32) -> u8;
@@ -74,11 +71,11 @@ impl<T: Bus> BusAlignedExt for T {
     }
 }
 
-#[derive(Debug)]
 pub(super) struct GbaBus<'a> {
-    pub(super) iwram: &'a mut InternalWram,
-    pub(super) ewram: &'a mut ExternalWram,
-    pub(super) cart: &'a Cartridge,
+    pub iwram: &'a mut Box<[u8]>,
+    pub ewram: &'a mut Box<[u8]>,
+    pub video: &'a mut VideoController,
+    pub cart: &'a Cartridge,
 }
 
 impl GbaBus<'_> {
@@ -89,6 +86,26 @@ impl GbaBus<'_> {
             .copied()
             .unwrap_or(0xff)
     }
+
+    fn read_io(&self, addr: u32) -> u8 {
+        match addr & 0x3ff {
+            // DISPCNT
+            #[allow(clippy::cast_possible_truncation)]
+            0 => self.video.dispcnt as u8,
+            #[allow(clippy::cast_possible_truncation)]
+            1 => self.video.dispcnt.bits(8..) as u8,
+            _ => 0xff,
+        }
+    }
+
+    fn write_io(&mut self, addr: u32, value: u8) {
+        match addr & 0x3ff {
+            // DISPCNT
+            0 => self.video.dispcnt.set_bits(..8, value.into()),
+            1 => self.video.dispcnt.set_bits(8.., value.into()),
+            _ => {}
+        }
+    }
 }
 
 impl Bus for GbaBus<'_> {
@@ -97,17 +114,17 @@ impl Bus for GbaBus<'_> {
             // BIOS
             0x0000_0000..=0x0000_3fff => 0xff, // TODO
             // External WRAM
-            0x0200_0000..=0x0203_ffff => self.ewram.0[(addr & 0x3_ffff) as usize],
+            0x0200_0000..=0x0203_ffff => self.ewram[(addr & 0x3_ffff) as usize],
             // Internal WRAM
-            0x0300_0000..=0x0300_7fff => self.iwram.0[(addr & 0x7fff) as usize],
+            0x0300_0000..=0x0300_7fff => self.iwram[(addr & 0x7fff) as usize],
             // I/O Registers
-            0x0400_0000..=0x0400_03fe => 0xff, // TODO
+            0x0400_0000..=0x0400_03fe => self.read_io(addr),
             // Palette RAM
-            0x0500_0000..=0x0500_03ff => 0xff, // TODO
+            0x0500_0000..=0x0500_03ff => self.video.palette_ram[(addr & 0x3ff) as usize],
             // VRAM
-            0x0600_0000..=0x0601_7fff => 0xff, // TODO
+            0x0600_0000..=0x0601_7fff => self.video.vram[(addr & 0x1_7fff) as usize],
             // OAM
-            0x0700_0000..=0x0700_03ff => 0xff, // TODO
+            0x0700_0000..=0x0700_03ff => self.video.oam[(addr & 0x3ff) as usize],
             // ROM Mirror; TODO: Wait state 0
             0x0800_0000..=0x09ff_ffff => self.read_rom(addr),
             // ROM Mirror; TODO: Wait state 1
@@ -124,12 +141,17 @@ impl Bus for GbaBus<'_> {
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
             // External WRAM
-            0x0200_0000..=0x0203_ffff => {
-                self.ewram.0[(addr & 0x3_ffff) as usize] = value;
-                println!("ewram! {}", value);
-            }
+            0x0200_0000..=0x0203_ffff => self.ewram[(addr & 0x3_ffff) as usize] = value,
             // Internal WRAM
-            0x0300_0000..=0x0300_7fff => self.iwram.0[(addr & 0x7fff) as usize] = value,
+            0x0300_0000..=0x0300_7fff => self.iwram[(addr & 0x7fff) as usize] = value,
+            // I/O Registers
+            0x0400_0000..=0x0400_03fe => self.write_io(addr, value),
+            // Palette RAM
+            0x0500_0000..=0x0500_03ff => self.video.palette_ram[(addr & 0x3ff) as usize] = value,
+            // VRAM
+            0x0600_0000..=0x0601_7fff => self.video.vram[(addr & 0x1_7fff) as usize] = value,
+            // OAM
+            0x0700_0000..=0x0700_03ff => self.video.oam[(addr & 0x3ff) as usize] = value,
             // Read-only or Unused
             _ => {}
         }

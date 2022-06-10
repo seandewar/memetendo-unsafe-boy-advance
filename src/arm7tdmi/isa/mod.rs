@@ -43,7 +43,9 @@ fn execute_sub_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) ->
 
     // c is our implementation detail; it's not expected to overflow.
     let result = execute_add_impl(cpu, update_cond, a, b_neg as _, -(c as i32) as _);
-    cpu.reg.cpsr.overflow |= update_cond && overflow;
+    if update_cond {
+        cpu.reg.cpsr.overflow = overflow;
+    }
 
     result
 }
@@ -180,12 +182,16 @@ impl Cpu {
         };
 
         let mut result = value;
-        result = result.checked_shr(offset - 1).unwrap_or(0);
+        if offset > 0 {
+            result = result.checked_shr(offset - 1).unwrap_or(0);
+        }
         if update_cond {
             self.reg.cpsr.carry = result.bit(0);
         }
 
-        result >>= 1;
+        if offset > 0 {
+            result >>= 1;
+        }
         if update_cond {
             self.reg.cpsr.set_nz_from_word(result);
         }
@@ -216,12 +222,17 @@ impl Cpu {
             0
         };
 
-        result = result.checked_shr(offset - 1).unwrap_or(overflow_result);
+        if offset > 0 {
+            result = result.checked_shr(offset - 1).unwrap_or(overflow_result);
+        }
         if update_cond {
             self.reg.cpsr.carry = result.bit(0);
         }
 
-        let result = (result >> 1) as u32;
+        let mut result = result as u32;
+        if offset > 0 {
+            result >>= 1;
+        }
         if update_cond {
             self.reg.cpsr.set_nz_from_word(result);
         }
