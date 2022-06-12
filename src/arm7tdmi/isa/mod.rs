@@ -175,23 +175,22 @@ impl Cpu {
         value: u32,
         offset: u8,
     ) -> u32 {
-        let offset = if special_zero_offset && offset == 0 {
-            32 // #0 works like #32
-        } else {
-            offset.into()
-        };
-
         let mut result = value;
-        if offset > 1 {
-            result = result.checked_shr(offset - 1).unwrap_or(0);
-        }
 
         if offset > 0 {
+            result = result.checked_shr(u32::from(offset) - 1).unwrap_or(0);
             if update_cond {
                 self.reg.cpsr.carry = result.bit(0);
             }
             result >>= 1;
+        } else if special_zero_offset {
+            // #0 works like #32
+            if update_cond {
+                self.reg.cpsr.carry = result.bit(31);
+            }
+            result = 0;
         }
+
         if update_cond {
             self.reg.cpsr.set_nz_from_word(result);
         }
@@ -207,29 +206,29 @@ impl Cpu {
         value: u32,
         offset: u8,
     ) -> u32 {
-        let offset = if special_zero_offset && offset == 0 {
-            32 // #0 works like #32
-        } else {
-            offset.into()
-        };
-
+        let mut result = value as i32;
         // A value shifted 32 or more times is either 0 or has all bits set depending on the
         // initial value of the sign bit (due to sign extension)
-        let mut result = value as i32;
         let overflow_result = if result.is_negative() {
             u32::MAX as i32
         } else {
             0
         };
 
-        if offset > 1 {
-            result = result.checked_shr(offset - 1).unwrap_or(overflow_result);
-        }
         if offset > 0 {
+            result = result
+                .checked_shr(u32::from(offset) - 1)
+                .unwrap_or(overflow_result);
             if update_cond {
                 self.reg.cpsr.carry = result.bit(0);
             }
             result >>= 1;
+        } else if special_zero_offset {
+            // #0 works like #32
+            if update_cond {
+                self.reg.cpsr.carry = result.bit(31);
+            }
+            result = overflow_result;
         }
 
         let result = result as u32;
