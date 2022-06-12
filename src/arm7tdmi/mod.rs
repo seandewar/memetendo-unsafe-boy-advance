@@ -41,21 +41,23 @@ impl Cpu {
     }
 
     pub fn skip_bios(&mut self, bus: &impl Bus) {
+        self.reg.r[..=12].fill(0);
+
+        // TODO: spsr_svc = 0
         self.reg.change_mode(OperationMode::Supervisor);
         self.reg.r[SP_INDEX] = 0x0300_7fe0;
+        self.reg.r[LR_INDEX] = 0;
 
-        self.reg.change_mode(OperationMode::FastInterrupt);
+        // TODO: spsr_irq = 0
+        self.reg.change_mode(OperationMode::Interrupt);
         self.reg.r[SP_INDEX] = 0x0300_7fa0;
-
-        self.reg.change_mode(OperationMode::User);
-        self.reg.r[SP_INDEX] = 0x0300_7f00;
+        self.reg.r[LR_INDEX] = 0;
 
         self.reg.change_mode(OperationMode::System);
+        self.reg.r[SP_INDEX] = 0x0300_7f00;
         self.reg.r[PC_INDEX] = 0x0800_0000;
         self.reload_pipeline(bus);
         self.step_pipeline(bus);
-
-        // TODO: set spsrs, LR
     }
 
     pub fn step(&mut self, bus: &mut impl Bus) {

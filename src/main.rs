@@ -126,7 +126,7 @@ fn main() -> Result<()> {
     context.win_canvas.clear();
     context.win_canvas.present();
 
-    let mut gba = Box::new(Gba::new(&cart));
+    let mut gba = Gba::new(&cart);
     gba.reset();
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;

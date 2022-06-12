@@ -1,6 +1,11 @@
 # Memetendo Unsafe Boy Advance
 
-nothing to see here yet; I'll be working on this in my spare time :)
+Nothing to see here yet; I'll be working on this in my spare time :)
+
+## Status
+
+Currently passes all of the pre-generated CPU instruction tests in the
+[FuzzARM suite](https://github.com/DenSinH/FuzzARM)!
 
 ## What's with the name?
 

@@ -39,24 +39,13 @@ fn execute_add_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, carry: boo
     result
 }
 
-fn execute_sub_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, carry: bool) -> u32 {
-    let result = execute_add_impl(cpu, update_cond, a, !b, !carry);
-
-    #[allow(clippy::cast_possible_wrap)]
-    if update_cond && b as i32 == i32::MIN {
-        cpu.reg.cpsr.overflow = true;
-    }
-
-    result
-}
-
 impl Cpu {
     fn execute_add(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
         execute_add_impl(self, update_cond, a, b, false)
     }
 
     fn execute_sub(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
-        execute_sub_impl(self, update_cond, a, b, false)
+        execute_add_impl(self, update_cond, a, !b, true)
     }
 
     fn execute_adc(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
@@ -64,7 +53,7 @@ impl Cpu {
     }
 
     fn execute_sbc(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
-        execute_sub_impl(self, update_cond, a, b, !self.reg.cpsr.carry)
+        execute_add_impl(self, update_cond, a, !b, self.reg.cpsr.carry)
     }
 
     fn execute_mla(&mut self, update_cond: bool, a: u32, b: u32, accum: u32) -> u32 {

@@ -40,7 +40,14 @@ impl<'a> Gba<'a> {
     pub fn reset(&mut self) {
         let bus = &bus!(self);
         self.cpu.reset(bus);
-        self.cpu.skip_bios(bus); // TODO
+    }
+
+    pub fn reset_and_skip_bios(&mut self) {
+        self.reset();
+        let bus = &bus!(self);
+        self.cpu.skip_bios(bus);
+
+        self.iwram[0x7e00..].fill(0);
     }
 
     pub fn step(&mut self, screen: &mut impl Screen) {

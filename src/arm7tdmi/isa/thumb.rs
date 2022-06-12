@@ -574,6 +574,14 @@ mod tests {
             .assert_carry()
             .run();
 
+        InstrTest::new_thumb(0b00011_01_000_001_010) // R2,R1,R0
+            .setup(&|cpu| cpu.reg.r[0] = 1 << 31)
+            .assert_r(0, 1 << 31)
+            .assert_r(2, 1 << 31)
+            .assert_signed()
+            .assert_overflow()
+            .run();
+
         // ADD{S} Rd,Rs,#nn
         InstrTest::new_thumb(0b00011_10_101_000_000) // R0,R0,#5
             .setup(&|cpu| cpu.reg.r[0] = 10)
