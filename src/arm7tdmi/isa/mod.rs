@@ -481,7 +481,7 @@ impl Cpu {
     fn execute_mrs(&self, use_spsr: bool) -> u32 {
         // TODO: No SPSR exists in User & System mode. What happens if we attempt access?
         if use_spsr {
-            self.reg.spsr.bits()
+            self.reg.spsr
         } else {
             self.reg.cpsr.bits()
         }
@@ -491,11 +491,10 @@ impl Cpu {
         if use_spsr {
             // TODO: No SPSR exists in User & System mode. What happens if we attempt access?
             if write_control {
-                // TODO: Possibly invalid mode; what's the real behaviour?
-                let _ = self.reg.spsr.set_control_from_bits(value);
+                self.reg.spsr.set_bits(..8, value.bits(..8));
             }
             if write_flags {
-                self.reg.spsr.set_flags_from_bits(value);
+                self.reg.spsr.set_bits(28.., value.bits(28..));
             }
         } else {
             if write_control && self.reg.cpsr.mode != OperationMode::User {

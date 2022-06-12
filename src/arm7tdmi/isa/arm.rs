@@ -406,7 +406,7 @@ impl Cpu {
 
         let final_addr = if instr.bit(20) {
             if load_psr_or_force_user && r_list.bit(PC_INDEX) {
-                self.execute_msr(false, true, true, self.reg.spsr.bits());
+                self.execute_msr(false, true, true, self.reg.spsr);
             }
 
             // LDM{cond}{amod} Rn{!},<Rlist>{^}
@@ -461,7 +461,7 @@ mod tests {
     use crate::{
         arm7tdmi::{
             isa::tests::InstrTest,
-            reg::{OperationMode, LR_INDEX},
+            reg::{OperationMode, StatusRegister, LR_INDEX},
         },
         bus::{tests::VecBus, BusExt},
     };
@@ -1229,11 +1229,15 @@ mod tests {
         // AL R7,SPSR_svc
         InstrTest::new_arm(0b1110_00_0_10_1_0_0_1111_0111_000000000000)
             .setup(&|cpu| {
-                cpu.reg.spsr.mode = OperationMode::System;
-                cpu.reg.spsr.irq_disabled = true;
-                cpu.reg.spsr.fiq_disabled = false;
-                cpu.reg.spsr.signed = true;
-                cpu.reg.spsr.carry = true;
+                let spsr = StatusRegister {
+                    mode: OperationMode::System,
+                    irq_disabled: true,
+                    fiq_disabled: false,
+                    signed: true,
+                    carry: true,
+                    ..StatusRegister::default()
+                };
+                cpu.reg.spsr = spsr.bits();
             })
             .assert_r(7, 0b10_0_11111.with_bits(28.., 0b1010))
             .run();
@@ -1250,12 +1254,13 @@ mod tests {
         // AL SPSR_svc_f,#0101b,ROR #4
         let cpu = InstrTest::new_arm(0b1110_00_1_10_1_1_0_1000_1111_0010_00000101).run();
 
-        assert!(cpu.reg.spsr.zero);
-        assert!(cpu.reg.spsr.overflow);
-        assert!(!cpu.reg.spsr.signed);
-        assert!(!cpu.reg.spsr.carry);
-        assert!(!cpu.reg.spsr.irq_disabled);
-        assert!(!cpu.reg.spsr.fiq_disabled);
+        let spsr = StatusRegister::from_bits(cpu.reg.spsr).unwrap();
+        assert!(spsr.zero);
+        assert!(spsr.overflow);
+        assert!(!spsr.signed);
+        assert!(!spsr.carry);
+        assert!(!spsr.irq_disabled);
+        assert!(!spsr.fiq_disabled);
 
         // AL CPSR_c,#01110000b
         let cpu = InstrTest::new_arm(0b1110_00_1_10_0_1_0_0001_1111_0000_01110000)
@@ -1267,13 +1272,14 @@ mod tests {
         // AL SPSR_svc_fc,#11110000b
         let cpu = InstrTest::new_arm(0b1110_00_1_10_1_1_0_1001_1111_0000_11110000).run();
 
-        assert!(!cpu.reg.spsr.zero);
-        assert!(!cpu.reg.spsr.overflow);
-        assert!(!cpu.reg.spsr.signed);
-        assert!(!cpu.reg.spsr.carry);
-        assert!(cpu.reg.spsr.irq_disabled);
-        assert!(cpu.reg.spsr.fiq_disabled);
-        assert_eq!(cpu.reg.spsr.mode, OperationMode::User);
+        let spsr = StatusRegister::from_bits(cpu.reg.spsr).unwrap();
+        assert!(!spsr.zero);
+        assert!(!spsr.overflow);
+        assert!(!spsr.signed);
+        assert!(!spsr.carry);
+        assert!(spsr.irq_disabled);
+        assert!(spsr.fiq_disabled);
+        assert_eq!(spsr.mode, OperationMode::User);
 
         // AL CPSR_f,R10
         let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_1000_1111_00000000_1010)
@@ -1608,10 +1614,14 @@ mod tests {
         bus.assert_oob(&|bus| {
             let cpu = InstrTest::new_arm(0b1110_100_0011_1_0101_1001000100000101)
                 .setup(&|cpu| {
-                    cpu.reg.spsr.mode = OperationMode::Abort;
-                    cpu.reg.spsr.irq_disabled = true;
-                    cpu.reg.spsr.fiq_disabled = true;
-                    cpu.reg.spsr.overflow = true;
+                    let spsr = StatusRegister {
+                        mode: OperationMode::Abort,
+                        irq_disabled: true,
+                        fiq_disabled: true,
+                        overflow: true,
+                        ..StatusRegister::default()
+                    };
+                    cpu.reg.spsr = spsr.bits();
                     cpu.reg.cpsr.signed = true;
                     cpu.reg.r[5] = 20;
                 })

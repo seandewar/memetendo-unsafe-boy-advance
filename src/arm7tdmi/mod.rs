@@ -43,15 +43,15 @@ impl Cpu {
     pub fn skip_bios(&mut self, bus: &impl Bus) {
         self.reg.r[..=12].fill(0);
 
-        // TODO: spsr_svc = 0
         self.reg.change_mode(OperationMode::Supervisor);
         self.reg.r[SP_INDEX] = 0x0300_7fe0;
         self.reg.r[LR_INDEX] = 0;
+        self.reg.spsr = 0;
 
-        // TODO: spsr_irq = 0
         self.reg.change_mode(OperationMode::Interrupt);
         self.reg.r[SP_INDEX] = 0x0300_7fa0;
         self.reg.r[LR_INDEX] = 0;
+        self.reg.spsr = 0;
 
         self.reg.change_mode(OperationMode::System);
         self.reg.r[SP_INDEX] = 0x0300_7f00;
@@ -67,15 +67,15 @@ impl Cpu {
 
         let instr = self.pipeline_instrs[0];
 
-        let s = self
-            .reg
-            .r
-            .iter()
-            .copied()
-            .map(|x| format!("{x:0x}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        //println!("{:08x} => {instr:08x} : [{s}]", self.reg.r[PC_INDEX]);
+        // let regs = self
+        //     .reg
+        //     .r
+        //     .iter()
+        //     .copied()
+        //     .map(|x| format!("{x:0x}"))
+        //     .collect::<Vec<_>>()
+        //     .join(", ");
+        // println!("{:08x} => {instr:08x} : [{regs}]", self.reg.r[PC_INDEX]);
 
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),
@@ -157,7 +157,7 @@ impl Cpu {
         self.reg.cpsr.irq_disabled = true;
         self.reg.cpsr.state = OperationState::Arm;
 
-        self.reg.spsr = old_cpsr;
+        self.reg.spsr = old_cpsr.bits();
         self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
         self.reg.r[PC_INDEX] = exception.vector_addr();
         self.reload_pipeline(bus);
@@ -189,7 +189,7 @@ mod tests {
         // Values except PC and CPSR are indeterminate after a reset.
         if exception != Exception::Reset {
             assert_eq!(old_reg.r[PC_INDEX].wrapping_sub(4), cpu.reg.r[LR_INDEX]);
-            assert_eq!(old_reg.cpsr, cpu.reg.spsr);
+            assert_eq!(old_reg.cpsr.bits(), cpu.reg.spsr);
         }
     }
 

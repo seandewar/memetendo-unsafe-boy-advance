@@ -76,6 +76,8 @@ impl SdlContext {
 }
 
 struct SdlScreen<'r> {
+    frame_buf: FrameBuffer,
+    texture_is_stale: bool,
     texture: Texture<'r>,
 }
 
@@ -90,23 +92,38 @@ impl<'r> SdlScreen<'r> {
             )
             .context("failed to create screen texture")?;
 
-        Ok(Self { texture })
+        Ok(Self {
+            frame_buf: FrameBuffer::default(),
+            texture_is_stale: true,
+            texture,
+        })
+    }
+
+    fn get_texture(&mut self) -> Result<&Texture> {
+        if self.texture_is_stale {
+            self.texture
+                .with_lock(None, |buf, pitch| {
+                    for y in 0..FRAME_HEIGHT {
+                        for x in 0..FRAME_WIDTH {
+                            let rgb = &self.frame_buf[(x, y)].to_le_bytes()[..3];
+                            let offset = y * pitch + x * 3;
+                            buf[offset..offset + 3].copy_from_slice(rgb);
+                        }
+                    }
+                })
+                .map_err(|e| anyhow!("failed to lock screen texture: {e}"))?;
+
+            self.texture_is_stale = false;
+        }
+
+        Ok(&self.texture)
     }
 }
 
 impl Screen for SdlScreen<'_> {
     fn present_frame(&mut self, frame_buf: &FrameBuffer) {
-        self.texture
-            .with_lock(None, |buf, pitch| {
-                for y in 0..FRAME_HEIGHT {
-                    for x in 0..FRAME_WIDTH {
-                        let rgb = &frame_buf[(x, y)].to_le_bytes()[..3];
-                        let offset = y * pitch + x * 3;
-                        buf[offset..offset + 3].copy_from_slice(rgb);
-                    }
-                }
-            })
-            .expect("failed to lock screen texture");
+        self.frame_buf.0.copy_from_slice(&frame_buf.0[..]);
+        self.texture_is_stale = true;
     }
 }
 
@@ -118,7 +135,7 @@ fn main() -> Result<()> {
         .get_matches();
 
     let rom_file = Path::new(matches.value_of_os("file").unwrap());
-    let cart = Cartridge::from_file(rom_file).context("failed to read cart")?;
+    let cart = Cartridge::from_file(rom_file).context("failed to read ROM file")?;
 
     let mut context = SdlContext::init()?;
     let mut screen = SdlScreen::new(&context.win_texture_creator)?;
@@ -127,7 +144,7 @@ fn main() -> Result<()> {
     context.win_canvas.present();
 
     let mut gba = Gba::new(&cart);
-    gba.reset();
+    gba.reset_and_skip_bios();
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {
@@ -135,7 +152,11 @@ fn main() -> Result<()> {
 
         let now = Instant::now();
         if now >= next_redraw_time {
-            next_redraw_time = now + REDRAW_DURATION;
+            next_redraw_time += REDRAW_DURATION;
+            if now >= next_redraw_time {
+                // A simple reschedule if we're too far behind.
+                next_redraw_time = now + REDRAW_DURATION;
+            }
 
             for event in context.event_pump.poll_iter() {
                 if let Event::Quit { .. } = event {
@@ -146,14 +167,11 @@ fn main() -> Result<()> {
             context.win_canvas.clear();
             context
                 .win_canvas
-                .copy(&screen.texture, None, None)
+                .copy(screen.get_texture()?, None, None)
                 .map_err(|e| anyhow!("failed to draw screen texture: {e}"))?;
             context.win_canvas.present();
         }
     }
-
-    gba.dump_ewram("result.bin")
-        .context("failed to dump ewram")?;
 
     Ok(())
 }

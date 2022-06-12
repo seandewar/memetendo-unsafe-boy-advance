@@ -38,7 +38,7 @@ pub(super) const PC_INDEX: usize = 15;
 pub(super) struct Registers {
     pub(super) r: [u32; 16],
     pub(super) cpsr: StatusRegister,
-    pub(super) spsr: StatusRegister,
+    pub(super) spsr: u32,
     banks: [Bank; 6],
     fiq_r8_12_bank: [u32; 5],
 }
@@ -47,7 +47,7 @@ pub(super) struct Registers {
 struct Bank {
     sp: u32,
     lr: u32,
-    spsr: StatusRegister,
+    spsr: u32,
 }
 
 impl OperationMode {
@@ -130,19 +130,28 @@ pub(super) struct StatusRegister {
 }
 
 impl StatusRegister {
+    #[cfg(test)]
+    pub(super) fn from_bits(bits: u32) -> Result<Self, ()> {
+        let mut psr = Self::default();
+        psr.set_control_from_bits(bits)?;
+        psr.set_flags_from_bits(bits);
+
+        Ok(psr)
+    }
+
     pub(super) fn bits(self) -> u32 {
-        let mut psr = 0;
-        psr.set_bit(31, self.signed);
-        psr.set_bit(30, self.zero);
-        psr.set_bit(29, self.carry);
-        psr.set_bit(28, self.overflow);
+        let mut bits = 0;
+        bits.set_bit(31, self.signed);
+        bits.set_bit(30, self.zero);
+        bits.set_bit(29, self.carry);
+        bits.set_bit(28, self.overflow);
 
-        psr.set_bit(7, self.irq_disabled);
-        psr.set_bit(6, self.fiq_disabled);
-        psr |= self.state.bits();
-        psr |= self.mode.bits();
+        bits.set_bit(7, self.irq_disabled);
+        bits.set_bit(6, self.fiq_disabled);
+        bits |= self.state.bits();
+        bits |= self.mode.bits();
 
-        psr
+        bits
     }
 
     pub(super) fn set_flags_from_bits(&mut self, bits: u32) {
@@ -190,8 +199,8 @@ mod tests {
         assert_eq!(1337, old_bank.lr);
 
         reg.r[13..=14].fill(1234);
-        let undef_spsr_zero = reg.spsr.zero;
-        reg.spsr.zero = !reg.spsr.zero;
+
+        reg.spsr = 0b1010_1010;
         reg.change_mode(OperationMode::FastInterrupt);
 
         assert_eq!(OperationMode::FastInterrupt, reg.cpsr.mode);
@@ -199,7 +208,7 @@ mod tests {
         let old_bank = reg.banks[OperationMode::UndefinedInstr.bank_index()];
         assert_eq!(1234, old_bank.sp);
         assert_eq!(1234, old_bank.lr);
-        assert_ne!(undef_spsr_zero, old_bank.spsr.zero);
+        assert_eq!(0b1010_1010, old_bank.spsr);
         // Should have temporarily saved r8-r12 for later restoration
         assert_eq!([1337; 5], reg.fiq_r8_12_bank);
 
