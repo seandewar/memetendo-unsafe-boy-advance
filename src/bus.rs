@@ -2,7 +2,10 @@
 
 use intbits::Bits;
 
-use crate::{cart::Cartridge, video::VideoController};
+use crate::{
+    cart::{Bios, Cartridge},
+    video::VideoController,
+};
 
 pub trait Bus {
     fn read_byte(&self, addr: u32) -> u8;
@@ -75,7 +78,8 @@ pub(super) struct GbaBus<'a> {
     pub iwram: &'a mut Box<[u8]>,
     pub ewram: &'a mut Box<[u8]>,
     pub video: &'a mut VideoController,
-    pub cart: &'a Cartridge,
+    pub cart: &'a mut Cartridge,
+    pub bios: &'a Bios,
 }
 
 impl GbaBus<'_> {
@@ -90,10 +94,19 @@ impl GbaBus<'_> {
     fn read_io(&self, addr: u32) -> u8 {
         match addr & 0x3ff {
             // DISPCNT
+            0 => self.video.dispcnt.lo_bits(),
+            1 => self.video.dispcnt.hi_bits(),
+            // Green swap (undocumented)
             #[allow(clippy::cast_possible_truncation)]
-            0 => self.video.dispcnt as u8,
+            2 => self.video.green_swap as u8,
             #[allow(clippy::cast_possible_truncation)]
-            1 => self.video.dispcnt.bits(8..) as u8,
+            3 => self.video.green_swap.bits(8..) as u8,
+            // DISPSTAT
+            4 => self.video.dispstat_lo_bits(),
+            5 => self.video.dispstat.vcount_target,
+            // VCOUNT
+            6 => self.video.vcount(),
+            7 => 0,
             _ => 0xff,
         }
     }
@@ -101,8 +114,14 @@ impl GbaBus<'_> {
     fn write_io(&mut self, addr: u32, value: u8) {
         match addr & 0x3ff {
             // DISPCNT
-            0 => self.video.dispcnt.set_bits(..8, value.into()),
-            1 => self.video.dispcnt.set_bits(8.., value.into()),
+            0 => self.video.dispcnt.set_lo_bits(value),
+            1 => self.video.dispcnt.set_hi_bits(value),
+            // Green swap (undocumented)
+            2 => self.video.green_swap.set_bits(..8, value.into()),
+            3 => self.video.green_swap.set_bits(8.., value.into()),
+            // DISPSTAT
+            4 => self.video.dispstat.set_lo_bits(value),
+            5 => self.video.dispstat.vcount_target = value,
             _ => {}
         }
     }
@@ -112,7 +131,7 @@ impl Bus for GbaBus<'_> {
     fn read_byte(&self, addr: u32) -> u8 {
         match addr {
             // BIOS
-            0x0000_0000..=0x0000_3fff => 0xff, // TODO
+            0x0000_0000..=0x0000_3fff => self.bios.rom()[(addr & 0x3fff) as usize],
             // External WRAM
             0x0200_0000..=0x0203_ffff => self.ewram[(addr & 0x3_ffff) as usize],
             // Internal WRAM
@@ -132,7 +151,7 @@ impl Bus for GbaBus<'_> {
             // ROM Mirror; TODO: Wait state 2
             0x0c00_0000..=0x0dff_ffff => self.read_rom(addr),
             // SRAM
-            0x0e00_0000..=0x0e00_ffff => 0xff, // TODO
+            0x0e00_0000..=0x0e00_ffff => self.cart.sram[(addr & 0xffff) as usize],
             // Unused (TODO: what is the behaviour? Probably open bus)
             _ => 0xff,
         }
@@ -152,6 +171,8 @@ impl Bus for GbaBus<'_> {
             0x0600_0000..=0x0601_7fff => self.video.vram[(addr & 0x1_7fff) as usize] = value,
             // OAM
             0x0700_0000..=0x0700_03ff => self.video.oam[(addr & 0x3ff) as usize] = value,
+            // SRAM
+            0x0e00_0000..=0x0e00_ffff => self.cart.sram[(addr & 0xffff) as usize] = value,
             // Read-only or Unused
             _ => {}
         }

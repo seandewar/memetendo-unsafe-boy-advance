@@ -118,15 +118,15 @@ impl OperationState {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct StatusRegister {
-    pub(super) signed: bool,
-    pub(super) zero: bool,
-    pub(super) carry: bool,
-    pub(super) overflow: bool,
+    pub signed: bool,
+    pub zero: bool,
+    pub carry: bool,
+    pub overflow: bool,
 
-    pub(super) irq_disabled: bool,
-    pub(super) fiq_disabled: bool,
-    pub(super) state: OperationState,
-    pub(super) mode: OperationMode,
+    pub irq_disabled: bool,
+    pub fiq_disabled: bool,
+    pub state: OperationState,
+    pub mode: OperationMode,
 }
 
 impl StatusRegister {

@@ -25,6 +25,8 @@ use sdl2::{
 };
 use video::{FrameBuffer, Screen, FRAME_HEIGHT, FRAME_WIDTH};
 
+use crate::cart::Bios;
+
 struct SdlContext {
     sdl: Sdl,
     sdl_video: VideoSubsystem,
@@ -59,7 +61,6 @@ impl SdlContext {
 
         let win_canvas = window
             .into_canvas()
-            .present_vsync()
             .build()
             .context("failed to get sdl2 window canvas")?;
 
@@ -131,11 +132,15 @@ fn main() -> Result<()> {
     const REDRAW_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
     let matches = command!()
-        .arg(arg!(<file> "ROM file to execute").allow_invalid_utf8(true))
+        .arg(arg!(--bios <FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
+        .arg(arg!(<FILE> "Cartridge ROM file to execute").allow_invalid_utf8(true))
         .get_matches();
 
-    let rom_file = Path::new(matches.value_of_os("file").unwrap());
-    let cart = Cartridge::from_file(rom_file).context("failed to read ROM file")?;
+    let bios_file = Path::new(matches.value_of_os("bios").unwrap());
+    let cart_file = Path::new(matches.value_of_os("FILE").unwrap());
+
+    let bios = Bios::from_file(bios_file).context("failed to read BIOS ROM file")?;
+    let mut cart = Cartridge::from_file(cart_file).context("failed to read cartridge ROM file")?;
 
     let mut context = SdlContext::init()?;
     let mut screen = SdlScreen::new(&context.win_texture_creator)?;
@@ -143,7 +148,7 @@ fn main() -> Result<()> {
     context.win_canvas.clear();
     context.win_canvas.present();
 
-    let mut gba = Gba::new(&cart);
+    let mut gba = Gba::new(&bios, &mut cart);
     gba.reset_and_skip_bios();
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;

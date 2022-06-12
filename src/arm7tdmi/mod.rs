@@ -67,15 +67,15 @@ impl Cpu {
 
         let instr = self.pipeline_instrs[0];
 
-        // let regs = self
-        //     .reg
-        //     .r
-        //     .iter()
-        //     .copied()
-        //     .map(|x| format!("{x:0x}"))
-        //     .collect::<Vec<_>>()
-        //     .join(", ");
-        // println!("{:08x} => {instr:08x} : [{regs}]", self.reg.r[PC_INDEX]);
+        let regs = self
+            .reg
+            .r
+            .iter()
+            .copied()
+            .map(|x| format!("{x:0x}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("{:08x} => {instr:08x} : [{regs}]", self.reg.r[PC_INDEX]);
 
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),

@@ -1,16 +1,17 @@
 use crate::{
     arm7tdmi::Cpu,
     bus::GbaBus,
-    cart::Cartridge,
+    cart::{Bios, Cartridge},
     video::{Screen, VideoController},
 };
 
-pub struct Gba<'a> {
+pub struct Gba<'a, 'b> {
     cpu: Cpu,
     iwram: Box<[u8]>,
     ewram: Box<[u8]>,
     video: VideoController,
-    cart: &'a Cartridge,
+    cart: &'a mut Cartridge,
+    bios: &'b Bios,
 }
 
 // A member fn would be nicer, but using &mut self over $gba unnecessarily mutably borrows the
@@ -21,19 +22,21 @@ macro_rules! bus {
             iwram: &mut $gba.iwram,
             ewram: &mut $gba.ewram,
             video: &mut $gba.video,
-            cart: &$gba.cart,
+            cart: &mut $gba.cart,
+            bios: &$gba.bios,
         }
     }};
 }
 
-impl<'a> Gba<'a> {
-    pub fn new(cart: &'a Cartridge) -> Self {
+impl<'a, 'b> Gba<'a, 'b> {
+    pub fn new(bios: &'b Bios, cart: &'a mut Cartridge) -> Self {
         Self {
             cpu: Cpu::new(),
             iwram: vec![0; 0x8000].into_boxed_slice(),
             ewram: vec![0; 0x4_0000].into_boxed_slice(),
             video: VideoController::new(),
             cart,
+            bios,
         }
     }
 
