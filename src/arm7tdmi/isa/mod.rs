@@ -185,11 +185,11 @@ impl Cpu {
         if offset > 1 {
             result = result.checked_shr(offset - 1).unwrap_or(0);
         }
-        if update_cond {
-            self.reg.cpsr.carry = result.bit(0);
-        }
 
         if offset > 0 {
+            if update_cond {
+                self.reg.cpsr.carry = result.bit(0);
+            }
             result >>= 1;
         }
         if update_cond {
@@ -225,10 +225,10 @@ impl Cpu {
         if offset > 1 {
             result = result.checked_shr(offset - 1).unwrap_or(overflow_result);
         }
-        if update_cond {
-            self.reg.cpsr.carry = result.bit(0);
-        }
         if offset > 0 {
+            if update_cond {
+                self.reg.cpsr.carry = result.bit(0);
+            }
             result >>= 1;
         }
 

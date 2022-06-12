@@ -718,6 +718,12 @@ mod tests {
             .assert_zero()
             .run();
 
+        InstrTest::new_thumb(0b010000_0010_001_111) // R7,R1
+            .setup(&|cpu| cpu.reg.r[7] = 1 << 31)
+            .assert_r(7, 1 << 31)
+            .assert_signed()
+            .run();
+
         // LSR{S} Rd,Rs
         // this test should not panic due to shift overflow:
         InstrTest::new_thumb(0b010000_0011_000_001) // R1,R0
@@ -755,6 +761,11 @@ mod tests {
             })
             .assert_r(0, 3)
             .assert_r(1, 1)
+            .run();
+
+        InstrTest::new_thumb(0b010000_0011_001_111) // R7,R1
+            .setup(&|cpu| cpu.reg.r[7] = 1)
+            .assert_r(7, 1)
             .run();
 
         // ASR{S} Rd,Rs
@@ -799,6 +810,11 @@ mod tests {
             })
             .assert_r(1, u8::MAX.into())
             .assert_zero()
+            .run();
+
+        InstrTest::new_thumb(0b010000_0100_001_000) // R0,R1
+            .setup(&|cpu| cpu.reg.r[0] = 1)
+            .assert_r(0, 1)
             .run();
 
         // ADC{S} Rd,Rs
