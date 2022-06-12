@@ -868,7 +868,6 @@ mod tests {
             .assert_r(0, 15)
             .assert_r(14, -6 as _)
             .assert_signed()
-            .assert_carry()
             .run();
 
         // AL R14,R0,#20

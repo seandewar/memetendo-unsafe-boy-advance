@@ -570,6 +570,7 @@ mod tests {
             .assert_r(1, i32::MIN as u32 + 1)
             .assert_r(2, i32::MIN as _)
             .assert_signed()
+            .assert_overflow()
             .assert_carry()
             .run();
 
@@ -611,6 +612,7 @@ mod tests {
         InstrTest::new_thumb(0b001_01_010_00000000) // R2,#0
             .setup(&|cpu| cpu.reg.r[2] = 13)
             .assert_r(2, 13)
+            .assert_carry()
             .run();
 
         // ADD{S} Rd,#nn
@@ -914,7 +916,6 @@ mod tests {
             })
             .assert_r(0, u32::MAX)
             .assert_r(7, 1)
-            .assert_carry()
             .run();
 
         InstrTest::new_thumb(0b010000_0110_000_111) // R7,R0
@@ -1024,6 +1025,7 @@ mod tests {
         InstrTest::new_thumb(0b010000_1001_011_111) // R7,R3
             .setup(&|cpu| cpu.reg.r[3] = 0)
             .assert_zero()
+            .assert_carry()
             .run();
 
         InstrTest::new_thumb(0b010000_1001_011_111) // R7,R3

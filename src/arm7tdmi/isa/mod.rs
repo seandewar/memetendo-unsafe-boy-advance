@@ -22,29 +22,29 @@ impl StatusRegister {
     }
 }
 
-#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-fn execute_add_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) -> u32 {
+fn execute_add_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, carry: bool) -> u32 {
+    #[allow(clippy::cast_possible_wrap)]
     let (a_b, a_b_overflow) = (a as i32).overflowing_add(b as _);
-    let (result, a_b_c_overflow) = a_b.overflowing_add(c as _);
+    let (result, a_b_c_overflow) = a_b.overflowing_add(carry.into());
+    #[allow(clippy::cast_sign_loss)]
+    let result = result as u32;
 
     if update_cond {
-        let actual_result = i64::from(a) + i64::from(b) + i64::from(c);
+        let actual_result = u64::from(a) + u64::from(b) + u64::from(carry);
         cpu.reg.cpsr.overflow = a_b_overflow || a_b_c_overflow;
-        cpu.reg.cpsr.carry = actual_result as u64 > u32::MAX.into();
-        cpu.reg.cpsr.set_nz_from_word(result as _);
+        cpu.reg.cpsr.carry = actual_result > u32::MAX.into();
+        cpu.reg.cpsr.set_nz_from_word(result);
     }
 
-    result as _
+    result
 }
 
-#[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
-fn execute_sub_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) -> u32 {
-    let (b_neg, overflow) = (b as i32).overflowing_neg();
+fn execute_sub_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, carry: bool) -> u32 {
+    let result = execute_add_impl(cpu, update_cond, a, !b, !carry);
 
-    // c is our implementation detail; it's not expected to overflow.
-    let result = execute_add_impl(cpu, update_cond, a, b_neg as _, -(c as i32) as _);
-    if update_cond {
-        cpu.reg.cpsr.overflow |= overflow;
+    #[allow(clippy::cast_possible_wrap)]
+    if update_cond && b as i32 == i32::MIN {
+        cpu.reg.cpsr.overflow = true;
     }
 
     result
@@ -52,19 +52,19 @@ fn execute_sub_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, c: u32) ->
 
 impl Cpu {
     fn execute_add(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
-        execute_add_impl(self, update_cond, a, b, 0)
+        execute_add_impl(self, update_cond, a, b, false)
     }
 
     fn execute_sub(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
-        execute_sub_impl(self, update_cond, a, b, 0)
+        execute_sub_impl(self, update_cond, a, b, false)
     }
 
     fn execute_adc(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
-        execute_add_impl(self, update_cond, a, b, self.reg.cpsr.carry.into())
+        execute_add_impl(self, update_cond, a, b, self.reg.cpsr.carry)
     }
 
     fn execute_sbc(&mut self, update_cond: bool, a: u32, b: u32) -> u32 {
-        execute_sub_impl(self, update_cond, a, b, (!self.reg.cpsr.carry).into())
+        execute_sub_impl(self, update_cond, a, b, !self.reg.cpsr.carry)
     }
 
     fn execute_mla(&mut self, update_cond: bool, a: u32, b: u32, accum: u32) -> u32 {

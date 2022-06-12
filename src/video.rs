@@ -79,7 +79,11 @@ impl VideoController {
                 } else {
                     // TODO
                     let i = y * FRAME_WIDTH + x;
-                    u32::from(self.vram[i]) * 0xff
+                    if self.vram[i] != 0 || self.vram[i + 0xa000] != 0 {
+                        0xff_ff_ff
+                    } else {
+                        0
+                    }
                 };
                 self.frame_buf[(x, y)] = rgb;
             }
