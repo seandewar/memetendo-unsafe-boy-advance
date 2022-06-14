@@ -82,7 +82,9 @@ impl Cpu {
         let r_dst = r_index(instr, 12);
         let update_cond = instr.bit(20) && r_dst != PC_INDEX;
 
+        let old_carry = self.reg.cpsr.carry;
         let mut value1 = self.reg.r[r_value1];
+
         let value2 = if instr.bit(25) {
             // Operand 2 is an ROR'd immediate value.
             #[allow(clippy::cast_possible_truncation)]
@@ -140,9 +142,15 @@ impl Cpu {
             // ADD{cond}{S} Rd,Rn,Op2
             4 => self.reg.r[r_dst] = self.execute_add(update_cond, value1, value2),
             // ADC{cond}{S} Rd,Rn,Op2
-            5 => self.reg.r[r_dst] = self.execute_adc(update_cond, value1, value2),
+            5 => {
+                self.reg.cpsr.carry = old_carry;
+                self.reg.r[r_dst] = self.execute_adc(update_cond, value1, value2);
+            }
             // SBC{cond}{S} Rd,Rn,Op2
-            6 => self.reg.r[r_dst] = self.execute_sbc(update_cond, value1, value2),
+            6 => {
+                self.reg.cpsr.carry = old_carry;
+                self.reg.r[r_dst] = self.execute_sbc(update_cond, value1, value2);
+            }
             // RSC{cond}{S} Rd,Rn,Op2
             7 => self.reg.r[r_dst] = self.execute_sbc(update_cond, value2, value1),
             // TST{cond} Rn,Op2

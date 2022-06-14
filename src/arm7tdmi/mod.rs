@@ -75,7 +75,11 @@ impl Cpu {
             .map(|x| format!("{x:0x}"))
             .collect::<Vec<_>>()
             .join(", ");
-        println!("{:08x} => {instr:08x} : [{regs}]", self.reg.r[PC_INDEX]);
+        println!(
+            "{:08x}: {instr:08x}, r: [{regs}], cpsr: {:08x}",
+            self.reg.r[PC_INDEX],
+            self.reg.cpsr.bits()
+        );
 
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),
