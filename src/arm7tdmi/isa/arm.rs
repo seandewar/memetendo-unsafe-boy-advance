@@ -78,9 +78,9 @@ impl Cpu {
         // TODO: (1+p)S+rI+pN. Whereas r=1 if I=0 and R=1 (ie. shift by register); otherwise r=0.
         //       And p=1 if Rd=R15; otherwise p=0.
         // TODO: do these instructions act weird when, e.g, reserved bits are set?
-        let update_cond = instr.bit(20);
         let r_value1 = r_index(instr, 16);
         let r_dst = r_index(instr, 12);
+        let update_cond = instr.bit(20) && r_dst != PC_INDEX;
 
         let mut value1 = self.reg.r[r_value1];
         let value2 = if instr.bit(25) {
@@ -173,6 +173,7 @@ impl Cpu {
         }
 
         if !(8..=11).contains(&op) && r_dst == PC_INDEX {
+            self.execute_msr(false, true, true, self.reg.spsr);
             self.reload_pipeline(bus);
         }
     }
@@ -587,11 +588,18 @@ mod tests {
             .run();
 
         // AL S R15,R0,#1011b
-        InstrTest::new_arm(0b1110_00_1_0000_1_0000_1111_0000_00001011)
-            .setup(&|cpu| cpu.reg.r[0] = u32::MAX)
+        let cpu = InstrTest::new_arm(0b1110_00_1_0000_1_0000_1111_0000_00001011)
+            .setup(&|cpu| {
+                cpu.reg.spsr = 0b11_0_10001.with_bits(28.., 0b1010);
+                cpu.reg.r[0] = u32::MAX;
+            })
             .assert_r(0, u32::MAX)
             .assert_r(PC_INDEX, 8 + 8)
+            .assert_signed()
+            .assert_carry()
             .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::FastInterrupt);
 
         // AL S R9,R0,R11,LSL #30
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_11110_00_0_1011)
@@ -955,12 +963,20 @@ mod tests {
 
         // ORR{cond}{S} Rd,Rn,Op2
         // AL S R15,R0,#10101010b
-        InstrTest::new_arm(0b1110_00_1_1100_1_0000_1111_0000_10101010)
-            .setup(&|cpu| cpu.reg.r[0] = 0b1100_0011.with_bit(31, true))
+        let cpu = InstrTest::new_arm(0b1110_00_1_1100_1_0000_1111_0000_10101010)
+            .setup(&|cpu| {
+                cpu.reg.spsr = 0b00_1_10000.with_bits(28.., 0b0101);
+                cpu.reg.r[0] = 0b1100_0011.with_bit(31, true);
+            })
             .assert_r(0, 0b1100_0011.with_bit(31, true))
             .assert_r(PC_INDEX, 0b1110_1000.with_bit(31, true) + 8)
-            .assert_signed()
+            .assert_zero()
+            .assert_overflow()
+            .assert_irq_enabled()
+            .assert_fiq_enabled()
             .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::User);
 
         // AL R14,R0,#10101010b
         InstrTest::new_arm(0b1110_00_1_1100_0_0000_1110_0000_10101010)
