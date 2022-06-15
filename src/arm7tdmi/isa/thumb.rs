@@ -1552,8 +1552,14 @@ mod tests {
 
         // LDRH Rd,[Rb,#nn]
         InstrTest::new_thumb(0b1000_1_00110_001_000) // R0,[R1,#12]
-            .setup(&|cpu| cpu.reg.r[1] = 9)
+            .setup(&|cpu| cpu.reg.r[1] = 8)
             .assert_r(0, 0xef01)
+            .assert_r(1, 8)
+            .run_with_bus(&mut bus);
+
+        InstrTest::new_thumb(0b1000_1_00110_001_000) // R0,[R1,#12]
+            .setup(&|cpu| cpu.reg.r[1] = 9) // Mis-aligned
+            .assert_r(0, 0x0100_00ef)
             .assert_r(1, 9)
             .run_with_bus(&mut bus);
     }

@@ -398,28 +398,32 @@ impl Cpu {
     }
 
     fn execute_ldr(bus: &impl Bus, addr: u32) -> u32 {
-        let value = bus.read_word_aligned(addr);
-
-        value.rotate_right(8 * (addr & 0b11))
+        bus.read_word_aligned(addr).rotate_right(8 * (addr & 0b11))
     }
 
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
     fn execute_ldrh_or_ldsh(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
-        // TODO: emulate weird misaligned read behaviour?
-        //       (LDRH Rd,[odd] -> LDRH Rd,[odd-1] ROR 8)
-        let result = bus.read_hword_aligned(addr);
+        if sign_extend && (addr & 1) == 1 {
+            return Self::execute_ldrb_or_ldsb(bus, addr, true);
+        }
 
+        let result = u32::from(bus.read_hword_aligned(addr)).rotate_right(8 * (addr & 1));
+
+        #[allow(
+            clippy::cast_sign_loss,
+            clippy::cast_possible_wrap,
+            clippy::cast_possible_truncation
+        )]
         if sign_extend {
             i32::from(result as i16) as _
         } else {
-            result.into()
+            result
         }
     }
 
-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
     fn execute_ldrb_or_ldsb(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
         let result = bus.read_byte(addr);
 
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
         if sign_extend {
             i32::from(result as i8) as _
         } else {
