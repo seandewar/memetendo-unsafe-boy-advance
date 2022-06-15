@@ -365,7 +365,12 @@ impl Cpu {
         r_list: u16,
     ) -> u32 {
         rlist_for_each(preindex, ascend, base_addr, r_list, &mut |addr, r| {
-            bus.write_word_aligned(addr, self.reg.r[r]);
+            let value = if r == PC_INDEX {
+                self.reg.r[PC_INDEX].wrapping_add(self.reg.cpsr.state.instr_size())
+            } else {
+                self.reg.r[r]
+            };
+            bus.write_word_aligned(addr, value);
         })
     }
 
