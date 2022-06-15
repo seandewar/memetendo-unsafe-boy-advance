@@ -77,7 +77,6 @@ impl Cpu {
     fn execute_arm_data_processing(&mut self, bus: &impl Bus, instr: u32) {
         // TODO: (1+p)S+rI+pN. Whereas r=1 if I=0 and R=1 (ie. shift by register); otherwise r=0.
         //       And p=1 if Rd=R15; otherwise p=0.
-        // TODO: do these instructions act weird when, e.g, reserved bits are set?
         let r_value1 = r_index(instr, 16);
         let r_dst = r_index(instr, 12);
         let update_cond = instr.bit(20) && r_dst != PC_INDEX;
@@ -153,19 +152,19 @@ impl Cpu {
             }
             // RSC{cond}{S} Rd,Rn,Op2
             7 => self.reg.r[r_dst] = self.execute_sbc(update_cond, value2, value1),
-            // TST{cond} Rn,Op2
+            // TST{cond}{P} Rn,Op2
             8 => {
                 self.execute_and(true, value1, value2);
             }
-            // TEQ{cond} Rn,Op2
+            // TEQ{cond}{P} Rn,Op2
             9 => {
                 self.execute_eor(true, value1, value2);
             }
-            // CMP{cond} Rn,Op2
+            // CMP{cond}{P} Rn,Op2
             10 => {
                 self.execute_sub(true, value1, value2);
             }
-            // CMN{cond} Rn,Op2
+            // CMN{cond}{P} Rn,Op2
             11 => {
                 self.execute_add(true, value1, value2);
             }
@@ -180,9 +179,12 @@ impl Cpu {
             _ => unreachable!(),
         }
 
-        if !(8..=11).contains(&op) && r_dst == PC_INDEX {
+        if r_dst == PC_INDEX {
             self.execute_msr(false, true, true, self.reg.spsr);
-            self.reload_pipeline(bus);
+
+            if !(8..=11).contains(&op) {
+                self.reload_pipeline(bus);
+            }
         }
     }
 
@@ -909,9 +911,21 @@ mod tests {
             .assert_r(14, 4)
             .run();
 
-        // TST{cond} Rn,Op2
+        // TST{cond}{P} Rn,Op2
+        // AL P R0,#10101010b
+        let cpu = InstrTest::new_arm(0b1110_00_1_1000_1_0000_1111_0000_10101010)
+            .setup(&|cpu| {
+                cpu.reg.spsr = 0b11_0_10010.with_bits(28.., 0b0001);
+                cpu.reg.r[0] = 1;
+            })
+            .assert_r(0, 1)
+            .assert_overflow()
+            .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::Interrupt);
+
         // AL R0,#10101010b
-        InstrTest::new_arm(0b1110_00_1_1000_1_0000_1111_0000_10101010)
+        InstrTest::new_arm(0b1110_00_1_1000_1_0000_0000_0000_10101010)
             .setup(&|cpu| cpu.reg.r[0] = 1)
             .assert_r(0, 1)
             .assert_zero()
@@ -923,7 +937,7 @@ mod tests {
             .assert_r(0, 0b10)
             .run();
 
-        // TEQ{cond} Rn,Op2
+        // TEQ{cond}{P} Rn,Op2
         // AL R0,#10101010b
         InstrTest::new_arm(0b1110_00_1_1001_1_0000_0000_0000_10101010)
             .setup(&|cpu| cpu.reg.r[0] = 0b1010_1011)
@@ -931,15 +945,15 @@ mod tests {
             .run();
 
         // AL R0,#10101010b
-        InstrTest::new_arm(0b1110_00_1_1001_1_0000_1111_0000_10101010)
+        InstrTest::new_arm(0b1110_00_1_1001_1_0000_0000_0000_10101010)
             .setup(&|cpu| cpu.reg.r[0] = 0b1010_1010)
             .assert_r(0, 0b1010_1010)
             .assert_zero()
             .run();
 
-        // CMP{cond} Rn,Op2
+        // CMP{cond}{P} Rn,Op2
         // AL S R0,#20
-        InstrTest::new_arm(0b1110_00_1_1010_1_0000_1111_0000_00010100)
+        InstrTest::new_arm(0b1110_00_1_1010_1_0000_0000_0000_00010100)
             .setup(&|cpu| cpu.reg.r[0] = 15)
             .assert_r(0, 15)
             .assert_signed()
@@ -953,7 +967,7 @@ mod tests {
             .assert_carry()
             .run();
 
-        // CMN{cond} Rn,Op2
+        // CMN{cond}{P} Rn,Op2
         // AL R0,#3
         InstrTest::new_arm(0b1110_00_1_1011_1_0000_0000_0000_00000011)
             .setup(&|cpu| cpu.reg.r[0] = -15 as _)
@@ -962,7 +976,7 @@ mod tests {
             .run();
 
         // AL R0,#15
-        InstrTest::new_arm(0b1110_00_1_1011_1_0000_1111_0000_00001111)
+        InstrTest::new_arm(0b1110_00_1_1011_1_0000_0000_0000_00001111)
             .setup(&|cpu| cpu.reg.r[0] = -15 as _)
             .assert_r(0, -15 as _)
             .assert_zero()
