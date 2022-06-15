@@ -47,7 +47,6 @@ impl Cpu {
 
     /// Thumb.1: Move shifted register.
     fn execute_thumb1(&mut self, instr: u16) {
-        // TODO: 1S cycle
         let value = self.reg.r[r_index(instr, 3)];
         #[allow(clippy::cast_possible_truncation)]
         let offset = instr.bits(6..11) as u8;
@@ -65,7 +64,6 @@ impl Cpu {
 
     /// Thumb.2: Add or subtract.
     fn execute_thumb2(&mut self, instr: u16) {
-        // TODO: 1S cycle
         let value1 = self.reg.r[r_index(instr, 3)];
         let r = r_index(instr, 6);
         #[allow(clippy::cast_possible_truncation)]
@@ -86,7 +84,6 @@ impl Cpu {
 
     /// Thumb.3: Move, compare, add or subtract immediate.
     fn execute_thumb3(&mut self, instr: u16) {
-        // TODO: 1S cycle
         let value = instr.bits(..8).into();
         let r_dst = r_index(instr, 8);
 
@@ -108,9 +105,6 @@ impl Cpu {
     /// Thumb.4: ALU operations.
     #[allow(clippy::cast_possible_truncation)]
     fn execute_thumb4(&mut self, instr: u16) {
-        // TODO: 1S: AND, EOR, ADC, SBC, TST, NEG, CMP, CMN, ORR, BIC, MVN
-        //       1S+1I: LSL, LSR, ASR, ROR
-        //       1S+mI: MUL (m=1..4; depending on MSBs of incoming Rd value)
         let r_dst = r_index(instr, 0);
         let value = self.reg.r[r_index(instr, 3)];
         let offset = value as u8;
@@ -160,14 +154,12 @@ impl Cpu {
 
     /// Thumb.5: Hi register operations or branch exchange.
     fn execute_thumb5(&mut self, bus: &impl Bus, instr: u16) {
-        // TODO: 1S cycle for ADD, MOV, CMP
-        //       2S + 1N cycles for ADD, MOV with Rd=R15 and for BX
         let r_src = r_index(instr, 3).with_bit(3, instr.bit(6));
         let value = self.reg.r[r_src];
         let op = instr.bits(8..10);
 
         if op == 3 {
-            // BX Rs (jump)
+            // BX Rs
             self.execute_bx(bus, value);
             return;
         }
@@ -193,7 +185,6 @@ impl Cpu {
 
     /// Thumb.6: Load PC relative.
     fn execute_thumb6(&mut self, bus: &impl Bus, instr: u16) {
-        // TODO: 1S + 1N + 1I
         let offset = u32::from(instr.bits(..8));
         let addr = self.reg.r[PC_INDEX].wrapping_add(offset * 4);
 
@@ -205,7 +196,6 @@ impl Cpu {
     /// Thumb.8: Load or store sign-extended byte or half-word (if bit 9 is set in `instr`).
     #[allow(clippy::cast_possible_truncation)]
     fn execute_thumb7_or_thumb8(&mut self, bus: &mut impl Bus, instr: u16) {
-        // TODO: 1S + 1N + 1I for LDR, 2N for STR
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = self.reg.r[r_index(instr, 6)];
@@ -241,7 +231,6 @@ impl Cpu {
 
     /// Thumb.9: Load or store with immediate offset.
     fn execute_thumb9(&mut self, bus: &mut impl Bus, instr: u16) {
-        // TODO: 1S+1N+1I for LDR, or 2N for STR
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = instr.bits(6..11).into();
@@ -264,7 +253,6 @@ impl Cpu {
 
     /// Thumb.10: Load or store half-word.
     fn execute_thumb10(&mut self, bus: &mut impl Bus, instr: u16) {
-        // 1S+1N+1I for LDR, or 2N for STR
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = u32::from(instr.bits(6..11));
@@ -282,7 +270,6 @@ impl Cpu {
 
     /// Thumb.11: Load or store SP relative.
     fn execute_thumb11(&mut self, bus: &mut impl Bus, instr: u16) {
-        // 1S+1N+1I for LDR, or 2N for STR
         let offset = u32::from(instr.bits(..8));
         let addr = self.reg.r[SP_INDEX].wrapping_add(offset * 4);
         let r = r_index(instr, 8);
@@ -298,7 +285,6 @@ impl Cpu {
 
     /// Thumb.12: Get relative address.
     fn execute_thumb12(&mut self, instr: u16) {
-        // TODO: 1S
         let offset = instr.bits(..8).into();
         let base_addr = self.reg.r[if instr.bit(11) { SP_INDEX } else { PC_INDEX }];
 
@@ -308,7 +294,6 @@ impl Cpu {
 
     /// Thumb.13: Add offset to SP.
     fn execute_thumb13(&mut self, instr: u16) {
-        // TODO: 1S
         let offset = u32::from(instr.bits(..7)) * 4;
 
         self.reg.r[SP_INDEX] = if instr.bit(7) {
@@ -322,7 +307,6 @@ impl Cpu {
 
     /// Thumb.14: Push or pop registers.
     fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) {
-        // TODO: nS+1N+1I (POP), (n+1)S+2N+1I (POP PC), or (n-1)S+2N (PUSH)
         let pop = instr.bit(11);
         #[allow(clippy::cast_possible_truncation)]
         let r_list =
@@ -339,7 +323,6 @@ impl Cpu {
 
     /// Thumb.15: Multiple load or store.
     fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) {
-        // TODO: nS+1N+1I for LDM, or (n-1)S+2N for STM
         #[allow(clippy::cast_possible_truncation)]
         let r_list = (instr as u8).into();
         let r_base = r_index(instr, 8);
@@ -356,7 +339,6 @@ impl Cpu {
     /// Thumb.16: Conditional branch.
     #[allow(clippy::cast_possible_truncation)]
     fn execute_thumb16(&mut self, bus: &impl Bus, instr: u16) {
-        // TODO: 2S+1N if true (jumped) or 1S if false
         if self.meets_condition(instr.bits(8..12) as u8) {
             // B{cond} label
             self.execute_branch(bus, self.reg.r[PC_INDEX], 2 * i32::from(instr as i8));
@@ -365,7 +347,6 @@ impl Cpu {
 
     /// Thumb.18: Unconditional branch.
     fn execute_thumb18(&mut self, bus: &impl Bus, instr: u16) {
-        // TODO: 2S+1N
         // B label
         self.execute_branch(
             bus,
@@ -376,7 +357,6 @@ impl Cpu {
 
     /// Thumb.19: Long branch with link.
     fn execute_thumb19(&mut self, bus: &impl Bus, instr: u16) {
-        // TODO: 3S+1N (first opcode 1S, second opcode 2S+1N)
         // BL label
         self.execute_thumb_bl(bus, !instr.bit(11), instr.bits(..11));
     }

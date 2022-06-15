@@ -54,7 +54,6 @@ impl Cpu {
 
     /// Branch and branch with link.
     fn execute_arm_b_bl(&mut self, bus: &impl Bus, instr: u32) {
-        // TODO: 2S+1N
         let addr_offset = 4 * arbitrary_sign_extend!(i32, instr.bits(..24), 24);
         if instr.bit(24) {
             // BL{cond} label
@@ -67,16 +66,12 @@ impl Cpu {
 
     /// Branch and exchange.
     fn execute_arm_bx(&mut self, bus: &impl Bus, instr: u32) {
-        // TODO: 2S+1N
-        // TODO: bits 4-7 should be 0b0001, but what happens if they're not?
         // BX{cond} Rn
         self.execute_bx(bus, self.reg.r[r_index(instr, 0)]);
     }
 
     /// Data processing operations.
     fn execute_arm_data_processing(&mut self, bus: &impl Bus, instr: u32) {
-        // TODO: (1+p)S+rI+pN. Whereas r=1 if I=0 and R=1 (ie. shift by register); otherwise r=0.
-        //       And p=1 if Rd=R15; otherwise p=0.
         let r_value1 = r_index(instr, 16);
         let r_dst = r_index(instr, 12);
         let update_cond = instr.bit(20) && r_dst != PC_INDEX;
@@ -107,7 +102,6 @@ impl Cpu {
             let r_value2 = r_index(instr, 0);
             let mut value2 = self.reg.r[r_value2];
 
-            // If PC is Rn or Rm, it is read as PC+12, not PC+8 (so an extra instr ahead).
             if offset_from_reg {
                 if r_value1 == PC_INDEX {
                     value1 = value1.wrapping_add(self.reg.cpsr.state.instr_size());
@@ -190,7 +184,6 @@ impl Cpu {
 
     /// Multiply and multiply-accumulate.
     fn execute_arm_multiply(&mut self, instr: u32) {
-        // TODO: Cycle counting -- it's complicated; see GBATEK.
         // TODO: There are some restrictions; what if they're violated?
         //       Right now, due to how our opcode parsing is implemented, using unused opcodes may
         //       be interpreted as valid opcodes; we'll just call it undefined behaviour. :-)
@@ -241,7 +234,6 @@ impl Cpu {
 
     /// PSR transfer.
     fn execute_arm_psr_transfer(&mut self, instr: u32) {
-        // TODO: 1S
         let use_spsr = instr.bit(22);
 
         if instr.bit(21) {
@@ -264,7 +256,6 @@ impl Cpu {
 
     /// Single data transfer.
     fn execute_arm_single_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
-        // TODO: For normal LDR: 1S+1N+1I. For LDR PC: 2S+2N+1I. For STR: 2N.
         let preindex = instr.bit(24);
         let transfer_byte = instr.bit(22);
         let force_user = !preindex && instr.bit(21);
@@ -312,7 +303,6 @@ impl Cpu {
         } else {
             let mut value = self.reg.r[r_src_or_dst];
             if r_src_or_dst == PC_INDEX {
-                // PC reads as an extra instruction ahead here. (PC+12)
                 value = value.wrapping_add(self.reg.cpsr.state.instr_size());
             }
 
@@ -340,7 +330,6 @@ impl Cpu {
 
     /// Half-word and signed data transfer.
     fn execute_arm_hword_and_signed_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
-        // TODO: For Normal LDR, 1S+1N+1I. For LDR PC, 2S+2N+1I. For STRH 2N.
         let preindex = instr.bit(24);
         let load = instr.bit(20);
 
@@ -383,7 +372,6 @@ impl Cpu {
         } else {
             let mut value = self.reg.r[r_src_or_dst];
             if r_src_or_dst == PC_INDEX {
-                // PC reads as an extra instruction ahead here. (PC+12)
                 value = value.wrapping_add(self.reg.cpsr.state.instr_size());
             }
 
@@ -405,8 +393,6 @@ impl Cpu {
 
     /// Block data transfer.
     fn execute_arm_block_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
-        // TODO: For normal LDM, nS+1N+1I. For LDM PC, (n+1)S+2N+1I. For STM (n-1)S+2N. Where n is
-        //       the number of words transferred.
         let preindex = instr.bit(24);
         let ascend = instr.bit(23);
         let load_psr_or_force_user = instr.bit(22);
@@ -445,7 +431,6 @@ impl Cpu {
 
     /// Single data swap.
     fn execute_arm_swap(&mut self, bus: &mut impl Bus, instr: u32) {
-        // TODO: 1S+2N+1I. That is, 2N data cycles, 1S code cycle, plus 1I.
         let base_addr = self.reg.r[r_index(instr, 16)];
         let value = self.reg.r[r_index(instr, 0)];
 

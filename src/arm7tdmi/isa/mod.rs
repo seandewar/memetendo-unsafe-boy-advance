@@ -59,7 +59,6 @@ impl Cpu {
     fn execute_mla(&mut self, update_cond: bool, a: u32, b: u32, accum: u32) -> u32 {
         let result = a.wrapping_mul(b).wrapping_add(accum);
         if update_cond {
-            // TODO: should corrupt carry flag (lol), but how?
             self.reg.cpsr.set_nz_from_word(result);
         }
 
@@ -70,7 +69,6 @@ impl Cpu {
         #[allow(clippy::cast_sign_loss)]
         let result = i64::from(a).wrapping_mul(b.into()).wrapping_add(accum) as u64;
         if update_cond {
-            // TODO: should corrupt carry flag (lol), but how?
             self.reg.cpsr.set_nz_from_dword(result);
         }
 
@@ -80,7 +78,6 @@ impl Cpu {
     fn execute_umlal(&mut self, update_cond: bool, a: u32, b: u32, accum: u64) -> u64 {
         let result = u64::from(a).wrapping_mul(b.into()).wrapping_add(accum);
         if update_cond {
-            // TODO: should corrupt carry flag (lol), but how?
             self.reg.cpsr.set_nz_from_dword(result);
         }
 
@@ -311,9 +308,9 @@ impl Cpu {
             12 => !self.reg.cpsr.zero && (self.reg.cpsr.signed == self.reg.cpsr.overflow),
             // LE
             13 => self.reg.cpsr.zero || (self.reg.cpsr.signed != self.reg.cpsr.overflow),
-            // AL (Always, or Undefined in Thumb; TODO: how does it act?)
+            // AL (Always; Undefined in Thumb)
             14 => true,
-            // Reserved (TODO: acts like Never in ARMv1,v2?)
+            // Reserved
             15 => false,
             _ => unreachable!(),
         }
