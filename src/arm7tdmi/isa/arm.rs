@@ -396,36 +396,34 @@ impl Cpu {
         let preindex = instr.bit(24);
         let ascend = instr.bit(23);
         let load_psr_or_force_user = instr.bit(22);
+        let writeback = instr.bit(21);
 
         let r_base_addr = r_index(instr, 16);
         #[allow(clippy::cast_possible_truncation)]
         let r_list = instr as u16;
 
-        let load = instr.bit(20);
-        let load_psr = load_psr_or_force_user && load && r_list.bit(PC_INDEX);
-        let saved_mode = self.reg.cpsr.mode;
-
-        if load_psr {
-            self.execute_msr(false, true, true, self.reg.spsr);
-        } else if load_psr_or_force_user {
-            self.reg.change_mode(OperationMode::User);
-        }
-
-        let final_addr = if load {
+        if instr.bit(20) {
             // LDM{cond}{amod} Rn{!},<Rlist>{^}
-            self.execute_ldm(bus, preindex, ascend, self.reg.r[r_base_addr], r_list)
+            self.execute_ldm(
+                bus,
+                preindex,
+                ascend,
+                load_psr_or_force_user,
+                writeback,
+                r_base_addr,
+                r_list,
+            );
         } else {
             // STM{cond}{amod} Rn{!},<Rlist>{^}
-            self.execute_stm(bus, preindex, ascend, self.reg.r[r_base_addr], r_list)
-        };
-
-        if load_psr_or_force_user && !load_psr {
-            self.reg.change_mode(saved_mode);
-        }
-
-        if instr.bit(21) {
-            // Write-back to Rn. (cannot be R15)
-            self.reg.r[r_base_addr] = final_addr;
+            self.execute_stm(
+                bus,
+                preindex,
+                ascend,
+                load_psr_or_force_user,
+                writeback,
+                r_base_addr,
+                r_list,
+            );
         }
     }
 

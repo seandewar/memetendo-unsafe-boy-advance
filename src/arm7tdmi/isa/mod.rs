@@ -317,74 +317,127 @@ impl Cpu {
     }
 }
 
-fn rlist_for_each(
+fn r_list_final_addr(ascend: bool, base_addr: u32, r_list: u16) -> u32 {
+    let offset = if r_list == 0 {
+        0x40 // Empty Rlists are illegal and act weird.
+    } else {
+        4 * r_list.count_ones()
+    };
+
+    if ascend {
+        base_addr.wrapping_add(offset)
+    } else {
+        base_addr.wrapping_sub(offset)
+    }
+}
+
+fn r_list_for_each(
     preindex: bool,
     ascend: bool,
     base_addr: u32,
     mut r_list: u16,
     f: &mut impl FnMut(u32, usize),
 ) -> u32 {
-    // TODO: emulate weird invalid r_list behaviour? (empty r_list, r_list with r_base_addr)
-
-    // Descending transfers work by calculating the final address ahead of time, then by starting
-    // an ascending transfer from there. We also need to invert indexing order to compensate.
-    let desc_final_addr = base_addr.wrapping_sub(4 * r_list.count_ones());
-    let mut addr = if ascend { base_addr } else { desc_final_addr };
+    // Descending transfers work by calculating the final address ahead of time, then by doing
+    // an ascending transfer from there. The indexing order is inverted to compensate for this.
+    let final_addr = r_list_final_addr(ascend, base_addr, r_list);
     let preindex = preindex ^ !ascend;
 
+    // Empty Rlists are illegal and act weird.
+    if r_list == 0 {
+        r_list.set_bit(PC_INDEX, true);
+    }
+
+    let mut addr = if ascend { base_addr } else { final_addr };
+    if preindex {
+        addr = addr.wrapping_add(4);
+    }
     for r in 0..16 {
         if r_list.bit(0) {
-            if preindex {
-                addr = addr.wrapping_add(4);
-            }
             f(addr, r);
-            if !preindex {
-                addr = addr.wrapping_add(4);
-            }
+            addr = addr.wrapping_add(4);
         }
         r_list >>= 1;
     }
 
-    if ascend {
-        addr
-    } else {
-        desc_final_addr
-    }
+    final_addr
 }
 
+#[allow(clippy::fn_params_excessive_bools)]
 impl Cpu {
+    #[allow(clippy::too_many_arguments)]
     fn execute_stm(
         &mut self,
         bus: &mut impl Bus,
         preindex: bool,
         ascend: bool,
-        base_addr: u32,
+        force_user: bool,
+        writeback: bool,
+        r_base_addr: usize,
         r_list: u16,
-    ) -> u32 {
-        rlist_for_each(preindex, ascend, base_addr, r_list, &mut |addr, r| {
-            let value = if r == PC_INDEX {
+    ) {
+        let base_addr = self.reg.r[r_base_addr];
+        let saved_mode = self.reg.cpsr.mode;
+        if force_user {
+            self.reg.change_mode(OperationMode::User);
+        }
+
+        let final_addr = r_list_for_each(preindex, ascend, base_addr, r_list, &mut |addr, r| {
+            let value = if writeback && r == r_base_addr && r_list.bits(..r_base_addr) != 0 {
+                // Rlists containing Rd are illegal and act weird; if Rd is not the first register
+                // in the Rlist, then the final value of Rd is written back.
+                r_list_final_addr(ascend, base_addr, r_list)
+            } else if r == PC_INDEX {
                 self.reg.r[PC_INDEX].wrapping_add(self.reg.cpsr.state.instr_size())
             } else {
                 self.reg.r[r]
             };
+
             bus.write_word_aligned(addr, value);
-        })
+        });
+
+        if force_user {
+            self.reg.change_mode(saved_mode);
+        }
+        if writeback {
+            self.reg.r[r_base_addr] = final_addr;
+        }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn execute_ldm(
         &mut self,
         bus: &impl Bus,
         preindex: bool,
         ascend: bool,
-        base_addr: u32,
+        load_psr_or_force_user: bool,
+        writeback: bool,
+        r_base_addr: usize,
         r_list: u16,
-    ) -> u32 {
-        rlist_for_each(preindex, ascend, base_addr, r_list, &mut |addr, r| {
+    ) {
+        let base_addr = self.reg.r[r_base_addr];
+        let saved_mode = self.reg.cpsr.mode;
+
+        let load_psr = load_psr_or_force_user && r_list.bit(PC_INDEX);
+        if load_psr {
+            self.execute_msr(false, true, true, self.reg.spsr);
+        } else if load_psr_or_force_user {
+            self.reg.change_mode(OperationMode::User);
+        }
+
+        let final_addr = r_list_for_each(preindex, ascend, base_addr, r_list, &mut |addr, r| {
             self.reg.r[r] = bus.read_word_aligned(addr);
             if r == PC_INDEX {
                 self.reload_pipeline(bus);
             }
-        })
+        });
+
+        if load_psr_or_force_user && !load_psr {
+            self.reg.change_mode(saved_mode);
+        }
+        if writeback && !r_list.bit(r_base_addr) {
+            self.reg.r[r_base_addr] = final_addr;
+        }
     }
 
     fn execute_str(bus: &mut impl Bus, addr: u32, value: u32) {

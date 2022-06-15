@@ -312,13 +312,13 @@ impl Cpu {
         let r_list =
             u16::from(instr as u8).with_bit(if pop { PC_INDEX } else { LR_INDEX }, instr.bit(8));
 
-        self.reg.r[SP_INDEX] = if pop {
+        if pop {
             // POP {Rlist}{PC} (LDMFD)
-            self.execute_ldm(bus, false, true, self.reg.r[SP_INDEX], r_list)
+            self.execute_ldm(bus, false, true, false, true, SP_INDEX, r_list);
         } else {
             // PUSH {Rlist}{LR} (STMFD)
-            self.execute_stm(bus, true, false, self.reg.r[SP_INDEX], r_list)
-        };
+            self.execute_stm(bus, true, false, false, true, SP_INDEX, r_list);
+        }
     }
 
     /// Thumb.15: Multiple load or store.
@@ -327,13 +327,13 @@ impl Cpu {
         let r_list = (instr as u8).into();
         let r_base = r_index(instr, 8);
 
-        self.reg.r[r_base] = if instr.bit(11) {
+        if instr.bit(11) {
             // LDMIA Rb!,{Rlist}
-            self.execute_ldm(bus, false, true, self.reg.r[r_base], r_list)
+            self.execute_ldm(bus, false, true, false, true, r_base, r_list);
         } else {
             // STMIA Rb!,{Rlist}
-            self.execute_stm(bus, false, true, self.reg.r[r_base], r_list)
-        };
+            self.execute_stm(bus, false, true, false, true, r_base, r_list);
+        }
     }
 
     /// Thumb.16: Conditional branch.
