@@ -4,11 +4,13 @@ use intbits::Bits;
 use crate::{
     arbitrary_sign_extend,
     arm7tdmi::{
-        reg::{OperationMode, OperationState, PC_INDEX},
+        reg::{OperationMode, OperationState, LR_INDEX, PC_INDEX},
         Cpu, Exception,
     },
-    bus::Bus,
+    bus::{Bus, BusAlignedExt},
 };
+
+use super::BlockTransferFlags;
 
 fn r_index(instr: u32, pos: u8) -> usize {
     instr.bits(pos..(pos + 4)) as _
@@ -56,18 +58,19 @@ impl Cpu {
     fn execute_arm_b_bl(&mut self, bus: &impl Bus, instr: u32) {
         let addr_offset = 4 * arbitrary_sign_extend!(i32, instr.bits(..24), 24);
         if instr.bit(24) {
-            // BL{cond} label
-            self.execute_arm_bl(bus, addr_offset);
-        } else {
-            // B{cond} label
-            self.execute_branch(bus, self.reg.r[PC_INDEX], addr_offset);
+            // Adjust for pipelining, which has us two instructions ahead.
+            self.reg.r[LR_INDEX] =
+                self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
         }
+
+        // B{L}{cond} label
+        self.op_branch(bus, self.reg.r[PC_INDEX], addr_offset);
     }
 
     /// Branch and exchange.
     fn execute_arm_bx(&mut self, bus: &impl Bus, instr: u32) {
         // BX{cond} Rn
-        self.execute_bx(bus, self.reg.r[r_index(instr, 0)]);
+        self.op_bx(bus, self.reg.r[r_index(instr, 0)]);
     }
 
     /// Data processing operations.
@@ -82,7 +85,7 @@ impl Cpu {
         let value2 = if instr.bit(25) {
             // Operand 2 is an ROR'd immediate value.
             #[allow(clippy::cast_possible_truncation)]
-            self.execute_ror(
+            self.op_ror(
                 update_cond,
                 false,
                 instr.bits(..8),
@@ -101,7 +104,6 @@ impl Cpu {
 
             let r_value2 = r_index(instr, 0);
             let mut value2 = self.reg.r[r_value2];
-
             if offset_from_reg {
                 if r_value1 == PC_INDEX {
                     value1 = value1.wrapping_add(self.reg.cpsr.state.instr_size());
@@ -112,7 +114,7 @@ impl Cpu {
             }
 
             #[allow(clippy::cast_possible_truncation)]
-            self.execute_shift_operand(
+            self.op_shift_operand(
                 instr.bits(5..7) as _,
                 update_cond,
                 !offset_from_reg,
@@ -122,60 +124,58 @@ impl Cpu {
         };
 
         let op = instr.bits(21..25);
-
         match op {
             // AND{cond}{S} Rd,Rn,Op2
-            0 => self.reg.r[r_dst] = self.execute_and(update_cond, value1, value2),
+            0 => self.reg.r[r_dst] = self.op_and(update_cond, value1, value2),
             // EOR{cond}{S} Rd,Rn,Op2
-            1 => self.reg.r[r_dst] = self.execute_eor(update_cond, value1, value2),
+            1 => self.reg.r[r_dst] = self.op_eor(update_cond, value1, value2),
             // SUB{cond}{S} Rd,Rn,Op2
-            2 => self.reg.r[r_dst] = self.execute_sub(update_cond, value1, value2),
+            2 => self.reg.r[r_dst] = self.op_sub(update_cond, value1, value2),
             // RSB{cond}{S} Rd,Rn,Op2
-            3 => self.reg.r[r_dst] = self.execute_sub(update_cond, value2, value1),
+            3 => self.reg.r[r_dst] = self.op_sub(update_cond, value2, value1),
             // ADD{cond}{S} Rd,Rn,Op2
-            4 => self.reg.r[r_dst] = self.execute_add(update_cond, value1, value2),
+            4 => self.reg.r[r_dst] = self.op_add(update_cond, value1, value2),
             // ADC{cond}{S} Rd,Rn,Op2
             5 => {
                 self.reg.cpsr.carry = old_carry;
-                self.reg.r[r_dst] = self.execute_adc(update_cond, value1, value2);
+                self.reg.r[r_dst] = self.op_adc(update_cond, value1, value2);
             }
             // SBC{cond}{S} Rd,Rn,Op2
             6 => {
                 self.reg.cpsr.carry = old_carry;
-                self.reg.r[r_dst] = self.execute_sbc(update_cond, value1, value2);
+                self.reg.r[r_dst] = self.op_sbc(update_cond, value1, value2);
             }
             // RSC{cond}{S} Rd,Rn,Op2
-            7 => self.reg.r[r_dst] = self.execute_sbc(update_cond, value2, value1),
+            7 => self.reg.r[r_dst] = self.op_sbc(update_cond, value2, value1),
             // TST{cond}{P} Rn,Op2
             8 => {
-                self.execute_and(true, value1, value2);
+                self.op_and(true, value1, value2);
             }
             // TEQ{cond}{P} Rn,Op2
             9 => {
-                self.execute_eor(true, value1, value2);
+                self.op_eor(true, value1, value2);
             }
             // CMP{cond}{P} Rn,Op2
             10 => {
-                self.execute_sub(true, value1, value2);
+                self.op_sub(true, value1, value2);
             }
             // CMN{cond}{P} Rn,Op2
             11 => {
-                self.execute_add(true, value1, value2);
+                self.op_add(true, value1, value2);
             }
             // ORR{cond}{S} Rd,Rn,Op2
-            12 => self.reg.r[r_dst] = self.execute_orr(update_cond, value1, value2),
+            12 => self.reg.r[r_dst] = self.op_orr(update_cond, value1, value2),
             // MOV{cond}{S} Rd,Op2
-            13 => self.reg.r[r_dst] = self.execute_mov(update_cond, value2),
+            13 => self.reg.r[r_dst] = self.op_mov(update_cond, value2),
             // BIC{cond}{S} Rd,Rn,Op2
-            14 => self.reg.r[r_dst] = self.execute_bic(update_cond, value1, value2),
+            14 => self.reg.r[r_dst] = self.op_bic(update_cond, value1, value2),
             // MVN{cond}{S} Rd,Op2
-            15 => self.reg.r[r_dst] = self.execute_mvn(update_cond, value2),
+            15 => self.reg.r[r_dst] = self.op_mvn(update_cond, value2),
             _ => unreachable!(),
         }
 
         if r_dst == PC_INDEX {
-            self.execute_msr(false, true, true, self.reg.spsr);
-
+            self.op_msr(false, true, true, self.reg.spsr);
             if !(8..=11).contains(&op) {
                 self.reload_pipeline(bus);
             }
@@ -203,13 +203,13 @@ impl Cpu {
 
             let result = match instr.bits(21..23) {
                 // UMULL{cond}{S} RdLo,RdHi,Rm,Rs
-                0 => self.execute_umlal(update_cond, value1, value2, 0),
+                0 => self.op_umlal(update_cond, value1, value2, 0),
                 // UMLAL{cond}{S} RdLo,RdHi,Rm,Rs
-                1 => self.execute_umlal(update_cond, value1, value2, accum_dword),
+                1 => self.op_umlal(update_cond, value1, value2, accum_dword),
                 // SMULL{cond}{S} RdLo,RdHi,Rm,Rs
-                2 => self.execute_smlal(update_cond, value1 as i32, value2 as i32, 0),
+                2 => self.op_smlal(update_cond, value1 as i32, value2 as i32, 0),
                 // SMLAL{cond}{S} RdLo,RdHi,Rm,Rs
-                3 => self.execute_smlal(
+                3 => self.op_smlal(
                     update_cond,
                     value1 as i32,
                     value2 as i32,
@@ -224,10 +224,10 @@ impl Cpu {
             // 32-bit result written to Rd.
             self.reg.r[r_dst_or_hi] = if instr.bit(21) {
                 // MLA{cond}{S} Rd,Rm,Rs,Rn
-                self.execute_mla(update_cond, value1, value2, accum1) as u32
+                self.op_mla(update_cond, value1, value2, accum1) as u32
             } else {
                 // MUL{cond}{S} Rd,Rm,Rs
-                self.execute_mla(update_cond, value1, value2, 0) as u32
+                self.op_mla(update_cond, value1, value2, 0) as u32
             };
         }
     }
@@ -240,17 +240,21 @@ impl Cpu {
             let value = if instr.bit(25) {
                 // Immediate operand.
                 #[allow(clippy::cast_possible_truncation)]
-                self.execute_ror(false, false, instr.bits(..8), 2 * (instr.bits(8..12) as u8))
+                self.op_ror(false, false, instr.bits(..8), 2 * (instr.bits(8..12) as u8))
             } else {
                 // Register operand.
                 self.reg.r[r_index(instr, 0)]
             };
 
             // MSR{cond} Psr{_field},Op
-            self.execute_msr(use_spsr, instr.bit(19), instr.bit(16), value);
+            self.op_msr(use_spsr, instr.bit(19), instr.bit(16), value);
         } else {
             // MRS{cond} Rd,Psr
-            self.reg.r[r_index(instr, 12)] = self.execute_mrs(use_spsr);
+            self.reg.r[r_index(instr, 12)] = if use_spsr {
+                self.reg.spsr
+            } else {
+                self.reg.cpsr.bits()
+            };
         }
     }
 
@@ -258,7 +262,8 @@ impl Cpu {
     fn execute_arm_single_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
         let preindex = instr.bit(24);
         let transfer_byte = instr.bit(22);
-        let force_user = !preindex && instr.bit(21);
+        let writeback = instr.bit(21);
+        let force_user = !preindex && writeback;
         let load = instr.bit(20);
 
         let r_base_addr = r_index(instr, 16);
@@ -270,7 +275,7 @@ impl Cpu {
             let shift_offset = instr.bits(7..12) as u8;
             let value = self.reg.r[r_index(instr, 0)];
 
-            self.execute_shift_operand(instr.bits(5..7) as _, false, true, value, shift_offset)
+            self.op_shift_operand(instr.bits(5..7) as _, false, true, value, shift_offset)
         } else {
             // Immediate offset.
             instr.bits(..12)
@@ -292,9 +297,9 @@ impl Cpu {
         if load {
             // LDR{cond}{B}{T} Rd,<Address>
             self.reg.r[r_src_or_dst] = if transfer_byte {
-                Self::execute_ldrb_or_ldsb(bus, transfer_addr, false)
+                Self::op_ldrb_or_ldsb(bus, transfer_addr, false)
             } else {
-                Self::execute_ldr(bus, transfer_addr)
+                Self::op_ldr(bus, transfer_addr)
             };
 
             if r_src_or_dst == PC_INDEX {
@@ -309,9 +314,9 @@ impl Cpu {
             // STR{cond}{B}{T} Rd,<Address>
             if transfer_byte {
                 #[allow(clippy::cast_possible_truncation)]
-                Self::execute_strb(bus, transfer_addr, value as u8);
+                Self::op_strb(bus, transfer_addr, value as u8);
             } else {
-                Self::execute_str(bus, transfer_addr, value);
+                Self::op_str(bus, transfer_addr, value);
             }
         }
 
@@ -319,8 +324,7 @@ impl Cpu {
             self.reg.change_mode(saved_mode);
         }
 
-        if (instr.bit(21) || !preindex) && !(load && r_base_addr == r_src_or_dst) {
-            // Write-back to Rn.
+        if (writeback || !preindex) && !(load && r_base_addr == r_src_or_dst) {
             self.reg.r[r_base_addr] = final_addr;
             if r_base_addr == PC_INDEX {
                 self.reload_pipeline(bus);
@@ -331,6 +335,7 @@ impl Cpu {
     /// Half-word and signed data transfer.
     fn execute_arm_hword_and_signed_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
         let preindex = instr.bit(24);
+        let writeback = instr.bit(21);
         let load = instr.bit(20);
 
         let r_base_addr = r_index(instr, 16);
@@ -358,11 +363,11 @@ impl Cpu {
                 // Reserved. TODO: how does it behave?
                 0 => self.reg.r[r_src_or_dst],
                 // LDR{cond}H Rd,<Address>
-                1 => Self::execute_ldrh_or_ldsh(bus, transfer_addr, false),
+                1 => Self::op_ldrh_or_ldsh(bus, transfer_addr, false),
                 // LDR{cond}SB Rd,<Address>
-                2 => Self::execute_ldrb_or_ldsb(bus, transfer_addr, true),
+                2 => Self::op_ldrb_or_ldsb(bus, transfer_addr, true),
                 // LDR{cond}SH Rd,<Address>
-                3 => Self::execute_ldrh_or_ldsh(bus, transfer_addr, true),
+                3 => Self::op_ldrh_or_ldsh(bus, transfer_addr, true),
                 _ => unreachable!(),
             };
 
@@ -378,12 +383,11 @@ impl Cpu {
             if op == 1 {
                 // STR{cond}H Rd,<Address>; other opcodes are reserved.
                 #[allow(clippy::cast_possible_truncation)]
-                Self::execute_strh(bus, transfer_addr, value as u16);
+                Self::op_strh(bus, transfer_addr, value as u16);
             }
         }
 
-        if (instr.bit(21) || !preindex) && !(load && r_base_addr == r_src_or_dst) {
-            // Write-back to Rn.
+        if (writeback || !preindex) && !(load && r_base_addr == r_src_or_dst) {
             self.reg.r[r_base_addr] = final_addr;
             if r_base_addr == PC_INDEX {
                 self.reload_pipeline(bus);
@@ -393,10 +397,12 @@ impl Cpu {
 
     /// Block data transfer.
     fn execute_arm_block_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
-        let preindex = instr.bit(24);
-        let ascend = instr.bit(23);
-        let load_psr_or_force_user = instr.bit(22);
-        let writeback = instr.bit(21);
+        let flags = BlockTransferFlags {
+            preindex: instr.bit(24),
+            ascend: instr.bit(23),
+            load_psr_or_force_user: instr.bit(22),
+            writeback: instr.bit(21),
+        };
 
         let r_base_addr = r_index(instr, 16);
         #[allow(clippy::cast_possible_truncation)]
@@ -404,26 +410,10 @@ impl Cpu {
 
         if instr.bit(20) {
             // LDM{cond}{amod} Rn{!},<Rlist>{^}
-            self.execute_ldm(
-                bus,
-                preindex,
-                ascend,
-                load_psr_or_force_user,
-                writeback,
-                r_base_addr,
-                r_list,
-            );
+            self.op_ldm(bus, &flags, r_base_addr, r_list);
         } else {
             // STM{cond}{amod} Rn{!},<Rlist>{^}
-            self.execute_stm(
-                bus,
-                preindex,
-                ascend,
-                load_psr_or_force_user,
-                writeback,
-                r_base_addr,
-                r_list,
-            );
+            self.op_stm(bus, &flags, r_base_addr, r_list);
         }
     }
 
@@ -434,11 +424,17 @@ impl Cpu {
 
         self.reg.r[r_index(instr, 12)] = if instr.bit(22) {
             // SWP{cond}B Rd,Rm,[Rn]
+            let old_value = bus.read_byte(base_addr);
             #[allow(clippy::cast_possible_truncation)]
-            Self::execute_swpb(bus, base_addr, value as u8).into()
+            bus.write_byte(base_addr, value as u8);
+
+            old_value.into()
         } else {
             // SWP{cond} Rd,Rm,[Rn]
-            Self::execute_swp(bus, base_addr, value)
+            let old_value = Self::op_ldr(bus, base_addr);
+            bus.write_word_aligned(base_addr, value);
+
+            old_value
         };
     }
 }

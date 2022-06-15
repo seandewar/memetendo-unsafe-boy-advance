@@ -10,6 +10,8 @@ use crate::{
     bus::Bus,
 };
 
+use super::BlockTransferFlags;
+
 fn r_index(instr: u16, pos: u8) -> usize {
     instr.bits(pos..(pos + 3)).into()
 }
@@ -53,11 +55,11 @@ impl Cpu {
 
         self.reg.r[r_index(instr, 0)] = match instr.bits(11..13) {
             // LSL{S} Rd,Rs,#Offset
-            0 => self.execute_lsl(true, value, offset),
+            0 => self.op_lsl(true, value, offset),
             // LSR{S} Rd,Rs,#Offset
-            1 => self.execute_lsr(true, true, value, offset),
+            1 => self.op_lsr(true, true, value, offset),
             // ASR{S} Rd,Rs,#Offset
-            2 => self.execute_asr(true, true, value, offset),
+            2 => self.op_asr(true, true, value, offset),
             _ => unreachable!(),
         };
     }
@@ -71,13 +73,13 @@ impl Cpu {
 
         self.reg.r[r_index(instr, 0)] = match instr.bits(9..11) {
             // ADD{S} Rd,Rs,Rn
-            0 => self.execute_add(true, value1, self.reg.r[r]),
+            0 => self.op_add(true, value1, self.reg.r[r]),
             // SUB{S} Rd,Rs,Rn
-            1 => self.execute_sub(true, value1, self.reg.r[r]),
+            1 => self.op_sub(true, value1, self.reg.r[r]),
             // ADD{S} Rd,Rs,#nn
-            2 => self.execute_add(true, value1, value2),
+            2 => self.op_add(true, value1, value2),
             // SUB{S} Rd,Rs,#nn
-            3 => self.execute_sub(true, value1, value2),
+            3 => self.op_sub(true, value1, value2),
             _ => unreachable!(),
         };
     }
@@ -89,15 +91,15 @@ impl Cpu {
 
         match instr.bits(11..13) {
             // MOV{S} Rd,#nn
-            0 => self.reg.r[r_dst] = self.execute_mov(true, value),
+            0 => self.reg.r[r_dst] = self.op_mov(true, value),
             // CMP{S} Rd,#nn
             1 => {
-                self.execute_sub(true, self.reg.r[r_dst], value);
+                self.op_sub(true, self.reg.r[r_dst], value);
             }
             // ADD{S} Rd,#nn
-            2 => self.reg.r[r_dst] = self.execute_add(true, self.reg.r[r_dst], value),
+            2 => self.reg.r[r_dst] = self.op_add(true, self.reg.r[r_dst], value),
             // SUB{S} Rd,#nn
-            3 => self.reg.r[r_dst] = self.execute_sub(true, self.reg.r[r_dst], value),
+            3 => self.reg.r[r_dst] = self.op_sub(true, self.reg.r[r_dst], value),
             _ => unreachable!(),
         }
     }
@@ -111,43 +113,43 @@ impl Cpu {
 
         match instr.bits(6..10) {
             // AND{S} Rd,Rs
-            0 => self.reg.r[r_dst] = self.execute_and(true, self.reg.r[r_dst], value),
+            0 => self.reg.r[r_dst] = self.op_and(true, self.reg.r[r_dst], value),
             // EOR{S} Rd,Rs
-            1 => self.reg.r[r_dst] = self.execute_eor(true, self.reg.r[r_dst], value),
+            1 => self.reg.r[r_dst] = self.op_eor(true, self.reg.r[r_dst], value),
             // LSL{S} Rd,Rs
-            2 => self.reg.r[r_dst] = self.execute_lsl(true, self.reg.r[r_dst], offset),
+            2 => self.reg.r[r_dst] = self.op_lsl(true, self.reg.r[r_dst], offset),
             // LSR{S} Rd,Rs
-            3 => self.reg.r[r_dst] = self.execute_lsr(true, false, self.reg.r[r_dst], offset),
+            3 => self.reg.r[r_dst] = self.op_lsr(true, false, self.reg.r[r_dst], offset),
             // ASR{S} Rd,Rs
-            4 => self.reg.r[r_dst] = self.execute_asr(true, false, self.reg.r[r_dst], offset),
+            4 => self.reg.r[r_dst] = self.op_asr(true, false, self.reg.r[r_dst], offset),
             // ADC{S} Rd,Rs
-            5 => self.reg.r[r_dst] = self.execute_adc(true, self.reg.r[r_dst], value),
+            5 => self.reg.r[r_dst] = self.op_adc(true, self.reg.r[r_dst], value),
             // SBC{S} Rd,Rs
-            6 => self.reg.r[r_dst] = self.execute_sbc(true, self.reg.r[r_dst], value),
+            6 => self.reg.r[r_dst] = self.op_sbc(true, self.reg.r[r_dst], value),
             // ROR{S} Rd,Rs
-            7 => self.reg.r[r_dst] = self.execute_ror(true, false, self.reg.r[r_dst], offset),
+            7 => self.reg.r[r_dst] = self.op_ror(true, false, self.reg.r[r_dst], offset),
             // TST Rd,Rs
             8 => {
-                self.execute_and(true, self.reg.r[r_dst], value);
+                self.op_and(true, self.reg.r[r_dst], value);
             }
             // NEG{S} Rd,Rs
-            9 => self.reg.r[r_dst] = self.execute_sub(true, 0, value),
+            9 => self.reg.r[r_dst] = self.op_sub(true, 0, value),
             // CMP Rd,Rs
             10 => {
-                self.execute_sub(true, self.reg.r[r_dst], value);
+                self.op_sub(true, self.reg.r[r_dst], value);
             }
             // CMN Rd,Rs
             11 => {
-                self.execute_add(true, self.reg.r[r_dst], value);
+                self.op_add(true, self.reg.r[r_dst], value);
             }
             // ORR{S} Rd,Rs
-            12 => self.reg.r[r_dst] = self.execute_orr(true, self.reg.r[r_dst], value),
+            12 => self.reg.r[r_dst] = self.op_orr(true, self.reg.r[r_dst], value),
             // MUL{S} Rd,Rs
-            13 => self.reg.r[r_dst] = self.execute_mla(true, self.reg.r[r_dst], value, 0),
+            13 => self.reg.r[r_dst] = self.op_mla(true, self.reg.r[r_dst], value, 0),
             // BIC{S} Rd,Rs
-            14 => self.reg.r[r_dst] = self.execute_bic(true, self.reg.r[r_dst], value),
+            14 => self.reg.r[r_dst] = self.op_bic(true, self.reg.r[r_dst], value),
             // MVN{S} Rd,Rs
-            15 => self.reg.r[r_dst] = self.execute_mvn(true, value),
+            15 => self.reg.r[r_dst] = self.op_mvn(true, value),
             _ => unreachable!(),
         }
     }
@@ -160,21 +162,20 @@ impl Cpu {
 
         if op == 3 {
             // BX Rs
-            self.execute_bx(bus, value);
+            self.op_bx(bus, value);
             return;
         }
 
         let r_dst = r_index(instr, 0).with_bit(3, instr.bit(7));
-
         match op {
             // ADD Rd,Rs
-            0 => self.reg.r[r_dst] = self.execute_add(false, self.reg.r[r_dst], value),
+            0 => self.reg.r[r_dst] = self.op_add(false, self.reg.r[r_dst], value),
             // CMP Rd,Rs
             1 => {
-                self.execute_sub(true, self.reg.r[r_dst], value);
+                self.op_sub(true, self.reg.r[r_dst], value);
             }
             // MOV Rd,Rs
-            2 => self.reg.r[r_dst] = self.execute_mov(false, value),
+            2 => self.reg.r[r_dst] = self.op_mov(false, value),
             _ => unreachable!(),
         }
 
@@ -189,7 +190,7 @@ impl Cpu {
         let addr = self.reg.r[PC_INDEX].wrapping_add(offset * 4);
 
         // LDR Rd,[PC,#nn]
-        self.reg.r[r_index(instr, 8)] = Self::execute_ldr(bus, addr);
+        self.reg.r[r_index(instr, 8)] = Self::op_ldr(bus, addr);
     }
 
     /// Thumb.7: Load or store with register offset, OR
@@ -206,24 +207,24 @@ impl Cpu {
             // Thumb.8
             match op {
                 // STRH Rd,[Rb,Ro]
-                0 => Self::execute_strh(bus, addr, self.reg.r[r] as u16),
+                0 => Self::op_strh(bus, addr, self.reg.r[r] as u16),
                 // LDSB Rd,[Rb,Ro]
-                1 => self.reg.r[r] = Self::execute_ldrb_or_ldsb(bus, addr, true),
+                1 => self.reg.r[r] = Self::op_ldrb_or_ldsb(bus, addr, true),
                 // LDRH/LDSH Rd,[Rb,Ro]
-                2 | 3 => self.reg.r[r] = Self::execute_ldrh_or_ldsh(bus, addr, op == 3),
+                2 | 3 => self.reg.r[r] = Self::op_ldrh_or_ldsh(bus, addr, op == 3),
                 _ => unreachable!(),
             }
         } else {
             // Thumb.7
             match op {
                 // STR Rd,[Rb,Ro]
-                0 => Self::execute_str(bus, addr, self.reg.r[r]),
+                0 => Self::op_str(bus, addr, self.reg.r[r]),
                 // STRB Rd,[Rb,Ro]
-                1 => Self::execute_strb(bus, addr, self.reg.r[r] as u8),
+                1 => Self::op_strb(bus, addr, self.reg.r[r] as u8),
                 // LDR Rd,[Rb,Ro]
-                2 => self.reg.r[r] = Self::execute_ldr(bus, addr),
+                2 => self.reg.r[r] = Self::op_ldr(bus, addr),
                 // LDRB Rd,[Rb,Ro]
-                3 => self.reg.r[r] = Self::execute_ldrb_or_ldsb(bus, addr, false),
+                3 => self.reg.r[r] = Self::op_ldrb_or_ldsb(bus, addr, false),
                 _ => unreachable!(),
             }
         }
@@ -239,14 +240,14 @@ impl Cpu {
 
         match instr.bits(11..13) {
             // STR Rd,[Rb,#nn]
-            0 => Self::execute_str(bus, word_addr, self.reg.r[r]),
+            0 => Self::op_str(bus, word_addr, self.reg.r[r]),
             // LDR Rd,[Rb,#nn]
-            1 => self.reg.r[r] = Self::execute_ldr(bus, word_addr),
+            1 => self.reg.r[r] = Self::op_ldr(bus, word_addr),
             // STRB Rd,[Rb,#nn]
             #[allow(clippy::cast_possible_truncation)]
-            2 => Self::execute_strb(bus, addr, self.reg.r[r] as u8),
+            2 => Self::op_strb(bus, addr, self.reg.r[r] as u8),
             // LDRB Rd,[Rb,#nn]
-            3 => self.reg.r[r] = Self::execute_ldrb_or_ldsb(bus, addr, false),
+            3 => self.reg.r[r] = Self::op_ldrb_or_ldsb(bus, addr, false),
             _ => unreachable!(),
         }
     }
@@ -260,11 +261,11 @@ impl Cpu {
 
         if instr.bit(11) {
             // LDRH Rd,[Rb,#nn]
-            self.reg.r[r] = Self::execute_ldrh_or_ldsh(bus, addr, false);
+            self.reg.r[r] = Self::op_ldrh_or_ldsh(bus, addr, false);
         } else {
             // STRH Rd,[Rb,#nn]
             #[allow(clippy::cast_possible_truncation)]
-            Self::execute_strh(bus, addr, self.reg.r[r] as u16);
+            Self::op_strh(bus, addr, self.reg.r[r] as u16);
         }
     }
 
@@ -276,10 +277,10 @@ impl Cpu {
 
         if instr.bit(11) {
             // LDR Rd,[SP,#nn]
-            self.reg.r[r] = Self::execute_ldr(bus, addr);
+            self.reg.r[r] = Self::op_ldr(bus, addr);
         } else {
             // STR Rd,[SP,#nn]
-            Self::execute_str(bus, addr, self.reg.r[r]);
+            Self::op_str(bus, addr, self.reg.r[r]);
         }
     }
 
@@ -289,7 +290,7 @@ impl Cpu {
         let base_addr = self.reg.r[if instr.bit(11) { SP_INDEX } else { PC_INDEX }];
 
         // ADD Rd,(PC/SP),#nn
-        self.reg.r[r_index(instr, 8)] = self.execute_add(false, base_addr, offset);
+        self.reg.r[r_index(instr, 8)] = self.op_add(false, base_addr, offset);
     }
 
     /// Thumb.13: Add offset to SP.
@@ -298,26 +299,33 @@ impl Cpu {
 
         self.reg.r[SP_INDEX] = if instr.bit(7) {
             // SUB SP,#nn
-            self.execute_sub(false, self.reg.r[SP_INDEX], offset)
+            self.op_sub(false, self.reg.r[SP_INDEX], offset)
         } else {
             // ADD SP,#nn
-            self.execute_add(false, self.reg.r[SP_INDEX], offset)
+            self.op_add(false, self.reg.r[SP_INDEX], offset)
         };
     }
 
     /// Thumb.14: Push or pop registers.
     fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) {
         let pop = instr.bit(11);
+        let flags = BlockTransferFlags {
+            preindex: !pop,
+            ascend: pop,
+            load_psr_or_force_user: false,
+            writeback: true,
+        };
+
+        let r_list_extra = if pop { PC_INDEX } else { LR_INDEX };
         #[allow(clippy::cast_possible_truncation)]
-        let r_list =
-            u16::from(instr as u8).with_bit(if pop { PC_INDEX } else { LR_INDEX }, instr.bit(8));
+        let r_list = u16::from(instr as u8).with_bit(r_list_extra, instr.bit(8));
 
         if pop {
             // POP {Rlist}{PC} (LDMFD)
-            self.execute_ldm(bus, false, true, false, true, SP_INDEX, r_list);
+            self.op_ldm(bus, &flags, SP_INDEX, r_list);
         } else {
             // PUSH {Rlist}{LR} (STMFD)
-            self.execute_stm(bus, true, false, false, true, SP_INDEX, r_list);
+            self.op_stm(bus, &flags, SP_INDEX, r_list);
         }
     }
 
@@ -327,12 +335,19 @@ impl Cpu {
         let r_list = (instr as u8).into();
         let r_base = r_index(instr, 8);
 
+        let flags = BlockTransferFlags {
+            preindex: false,
+            ascend: true,
+            load_psr_or_force_user: false,
+            writeback: true,
+        };
+
         if instr.bit(11) {
             // LDMIA Rb!,{Rlist}
-            self.execute_ldm(bus, false, true, false, true, r_base, r_list);
+            self.op_ldm(bus, &flags, r_base, r_list);
         } else {
             // STMIA Rb!,{Rlist}
-            self.execute_stm(bus, false, true, false, true, r_base, r_list);
+            self.op_stm(bus, &flags, r_base, r_list);
         }
     }
 
@@ -341,14 +356,14 @@ impl Cpu {
     fn execute_thumb16(&mut self, bus: &impl Bus, instr: u16) {
         if self.meets_condition(instr.bits(8..12) as u8) {
             // B{cond} label
-            self.execute_branch(bus, self.reg.r[PC_INDEX], 2 * i32::from(instr as i8));
+            self.op_branch(bus, self.reg.r[PC_INDEX], 2 * i32::from(instr as i8));
         }
     }
 
     /// Thumb.18: Unconditional branch.
     fn execute_thumb18(&mut self, bus: &impl Bus, instr: u16) {
         // B label
-        self.execute_branch(
+        self.op_branch(
             bus,
             self.reg.r[PC_INDEX],
             2 * arbitrary_sign_extend!(i32, instr.bits(..11), 11),
@@ -357,8 +372,20 @@ impl Cpu {
 
     /// Thumb.19: Long branch with link.
     fn execute_thumb19(&mut self, bus: &impl Bus, instr: u16) {
+        let hi_part = !instr.bit(11);
+        let addr_offset_part = u32::from(instr.bits(..11));
+
         // BL label
-        self.execute_thumb_bl(bus, !instr.bit(11), instr.bits(..11));
+        if hi_part {
+            self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_add(addr_offset_part << 12);
+        } else {
+            // Adjust for pipelining, which has us two instructions ahead.
+            let return_addr = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
+
+            #[allow(clippy::cast_possible_wrap)]
+            self.op_branch(bus, self.reg.r[LR_INDEX], (addr_offset_part << 1) as _);
+            self.reg.r[LR_INDEX] = return_addr | 1; // bit 0 set indicates Thumb
+        };
     }
 }
 
