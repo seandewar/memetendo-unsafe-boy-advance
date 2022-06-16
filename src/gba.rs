@@ -55,6 +55,6 @@ impl<'a, 'b> Gba<'a, 'b> {
 
     pub fn step(&mut self, screen: &mut impl Screen) {
         self.cpu.step(&mut bus!(self));
-        self.video.step(screen, 8);
+        self.video.step(screen, &mut self.cpu, 8);
     }
 }

@@ -26,7 +26,9 @@ impl Cpu {
         #[bitmatch]
         match instr.bits(8..) as u8 {
             "1011_0000" => self.execute_thumb13(instr),
-            "1101_1111" => self.enter_exception(bus, Exception::SoftwareInterrupt),
+            "1101_1111" => {
+                self.enter_exception(bus, Exception::SoftwareInterrupt);
+            }
             "0100_00??" => self.execute_thumb4(instr),
             "0100_01??" => self.execute_thumb5(bus, instr),
             "0001_1???" => self.execute_thumb2(instr),

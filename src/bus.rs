@@ -152,7 +152,7 @@ impl Bus for GbaBus<'_> {
             0x0c00_0000..=0x0dff_ffff => self.read_rom(addr),
             // SRAM
             0x0e00_0000..=0x0e00_ffff => self.cart.sram[(addr & 0xffff) as usize],
-            // Unused (TODO: what is the behaviour? Probably open bus)
+            // Unused
             _ => 0xff,
         }
     }

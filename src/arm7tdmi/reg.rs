@@ -2,7 +2,6 @@ use intbits::Bits;
 use strum_macros::FromRepr;
 
 #[derive(Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
-#[repr(u8)]
 pub(super) enum OperationMode {
     User = 0b10000,
     FastInterrupt = 0b10001,
@@ -90,7 +89,6 @@ impl Registers {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-#[repr(u8)]
 pub(super) enum OperationState {
     Arm = 0,
     Thumb = 1 << 5,
