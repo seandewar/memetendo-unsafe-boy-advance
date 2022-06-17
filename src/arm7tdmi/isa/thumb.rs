@@ -88,7 +88,7 @@ impl Cpu {
 
     /// Thumb.3: Move, compare, add or subtract immediate.
     fn execute_thumb3(&mut self, instr: u16) {
-        let value = instr.bits(..8).into();
+        let value = u32::from(instr.bits(..8));
         let r_dst = r_index(instr, 8);
 
         match instr.bits(11..13) {
@@ -288,7 +288,7 @@ impl Cpu {
 
     /// Thumb.12: Get relative address.
     fn execute_thumb12(&mut self, instr: u16) {
-        let offset = instr.bits(..8).into();
+        let offset = u32::from(instr.bits(..8));
         let base_addr = self.reg.r[if instr.bit(11) { SP_INDEX } else { PC_INDEX }];
 
         // ADD Rd,(PC/SP),#nn

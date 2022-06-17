@@ -25,7 +25,7 @@ impl<T: Bus> BusExt for T {
         let lo = self.read_byte(addr);
         let hi = self.read_byte(addr.wrapping_add(1));
 
-        u16::from(lo).with_bits(8.., hi.into())
+        u16::from_le_bytes([lo, hi])
     }
 
     fn read_word(&self, addr: u32) -> u32 {

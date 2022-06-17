@@ -4,7 +4,7 @@ use intbits::Bits;
 #[derive(Default, Debug)]
 pub struct DisplayControl {
     pub mode: u8,
-    pub frame_select: u8,
+    pub frame_select: usize,
     pub hblank_oam_access: bool,
     pub obj_1d: bool,
     pub forced_blank: bool,
@@ -19,7 +19,8 @@ impl DisplayControl {
     pub fn lo_bits(&self) -> u8 {
         let mut bits = 0;
         bits.set_bits(..3, self.mode.bits(..3));
-        bits.set_bits(4..5, self.frame_select);
+        #[allow(clippy::cast_possible_truncation)]
+        bits.set_bits(4..5, self.frame_select as u8);
         bits.set_bit(5, self.hblank_oam_access);
         bits.set_bit(6, self.obj_1d);
         bits.set_bit(7, self.forced_blank);
@@ -44,7 +45,7 @@ impl DisplayControl {
 
     pub fn set_lo_bits(&mut self, bits: u8) {
         self.mode = bits.bits(..3);
-        self.frame_select = bits.bits(4..5);
+        self.frame_select = bits.bits(4..5).into();
         self.hblank_oam_access = bits.bit(5);
         self.obj_1d = bits.bit(6);
         self.forced_blank = bits.bit(7);
@@ -60,6 +61,10 @@ impl DisplayControl {
         self.display_window[0] = bits.bit(5);
         self.display_window[1] = bits.bit(6);
         self.display_obj_window = bits.bit(7);
+    }
+
+    pub(super) fn frame_vram_index(&self) -> usize {
+        self.frame_select * 0xa000
     }
 }
 

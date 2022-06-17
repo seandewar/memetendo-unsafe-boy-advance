@@ -2,6 +2,8 @@ mod reg;
 
 use std::ops::{Index, IndexMut};
 
+use intbits::Bits;
+
 use crate::arm7tdmi::{Cpu, Exception};
 
 use self::reg::{DisplayControl, DisplayStatus};
@@ -65,6 +67,15 @@ impl Default for VideoController {
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
+fn bgr555_to_24(value: u16) -> u32 {
+    let r = value.bits(..5) as u8;
+    let g = value.bits(5..10) as u8;
+    let b = value.bits(10..15) as u8;
+
+    u32::from_le_bytes([r << 3, g << 3, b << 3, 0])
+}
+
 impl VideoController {
     pub fn new() -> Self {
         Self {
@@ -85,7 +96,7 @@ impl VideoController {
     pub fn step(&mut self, screen: &mut impl Screen, cpu: &mut Cpu, cycles: u32) {
         for _ in 0..cycles {
             if self.x < HBLANK_DOT && self.y < VBLANK_DOT {
-                self.frame_buf[(self.x.into(), self.y.into())] = self.compute_rgb();
+                self.frame_buf[(self.x.into(), self.y.into())] = self.compute_colour();
             }
 
             self.cycle_accum += 1;
@@ -120,17 +131,40 @@ impl VideoController {
         }
     }
 
-    fn compute_rgb(&self) -> u32 {
+    fn compute_colour(&self) -> u32 {
         if self.dispcnt.forced_blank {
             return 0xff_ff_ff;
         }
 
         let (x, y) = (usize::from(self.x), usize::from(self.y));
-        let i = y * FRAME_WIDTH + x + usize::from(self.dispcnt.frame_select) * 0xa000;
-        if self.vram[i] > 0 {
-            0xff_ff_ff
+        if (3..=5).contains(&self.dispcnt.mode) && self.dispcnt.display_bg[2] {
+            match self.dispcnt.mode {
+                3 => {
+                    let dot_idx = y * FRAME_WIDTH + x;
+                    let lo = self.vram[2 * dot_idx];
+                    let hi = self.vram[2 * dot_idx + 1];
+
+                    bgr555_to_24(u16::from_le_bytes([lo, hi]))
+                }
+                4 => {
+                    let dot_idx = y * FRAME_WIDTH + x + self.dispcnt.frame_vram_index();
+                    let palette_idx = 2 * usize::from(self.vram[dot_idx]); // TODO: 0==transparent
+                    let lo = self.palette_ram[palette_idx];
+                    let hi = self.palette_ram[palette_idx + 1];
+
+                    bgr555_to_24(u16::from_le_bytes([lo, hi]))
+                }
+                5 => {
+                    // TODO: this is actually 160x128 pixels, we probably want to rescale...
+                    let dot_idx = y * 160 + x + self.dispcnt.frame_vram_index();
+
+                    let _ = dot_idx;
+                    todo!();
+                }
+                _ => unreachable!(),
+            }
         } else {
-            0
+            0 // TODO
         }
     }
 
