@@ -3,7 +3,7 @@ mod thumb;
 
 use intbits::Bits;
 
-use crate::bus::{Bus, BusAlignedExt};
+use crate::bus::{Bus, BusAlignedExt, BusMut, BusMutAlignedExt};
 
 use super::{
     reg::{OperationMode, StatusRegister, PC_INDEX},
@@ -374,7 +374,7 @@ struct BlockTransferFlags {
 impl Cpu {
     fn op_stm(
         &mut self,
-        bus: &mut impl Bus,
+        bus: &mut impl BusMut,
         flags: &BlockTransferFlags,
         r_base_addr: usize,
         r_list: u16,
@@ -452,15 +452,15 @@ impl Cpu {
         }
     }
 
-    fn op_str(bus: &mut impl Bus, addr: u32, value: u32) {
+    fn op_str(bus: &mut impl BusMut, addr: u32, value: u32) {
         bus.write_word_aligned(addr, value);
     }
 
-    fn op_strh(bus: &mut impl Bus, addr: u32, value: u16) {
+    fn op_strh(bus: &mut impl BusMut, addr: u32, value: u16) {
         bus.write_hword_aligned(addr, value);
     }
 
-    fn op_strb(bus: &mut impl Bus, addr: u32, value: u8) {
+    fn op_strb(bus: &mut impl BusMut, addr: u32, value: u8) {
         bus.write_byte(addr, value);
     }
 
@@ -547,7 +547,7 @@ mod tests {
             reg::{OperationState, PC_INDEX},
             Cpu,
         },
-        bus::{tests::NullBus, Bus},
+        bus::{tests::NullBus, BusMut},
     };
 
     #[allow(clippy::struct_excessive_bools)]
@@ -596,7 +596,7 @@ mod tests {
     }
 
     impl<'a> InstrTest<'a> {
-        pub fn run_with_bus(self, bus: &mut impl Bus) -> Cpu {
+        pub fn run_with_bus(self, bus: &mut impl BusMut) -> Cpu {
             let mut cpu = Cpu::new();
             cpu.reset(bus);
 

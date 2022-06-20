@@ -5,7 +5,7 @@ use std::mem::replace;
 
 use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX, SP_INDEX};
 
-use crate::bus::Bus;
+use crate::bus::{Bus, BusMut};
 
 use strum_macros::{EnumIter, FromRepr};
 
@@ -113,7 +113,7 @@ impl Cpu {
         self.step_pipeline(bus);
     }
 
-    pub fn step(&mut self, bus: &mut impl Bus) {
+    pub fn step(&mut self, bus: &mut impl BusMut) {
         if self.run_state != RunState::Running {
             return;
         }
@@ -212,7 +212,7 @@ mod tests {
     use super::*;
     use crate::bus::{
         tests::{NullBus, VecBus},
-        BusExt,
+        BusMutExt,
     };
     use strum::IntoEnumIterator;
 

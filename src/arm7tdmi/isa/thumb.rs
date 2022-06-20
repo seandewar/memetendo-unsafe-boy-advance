@@ -7,7 +7,7 @@ use crate::{
         reg::{OperationState, LR_INDEX, PC_INDEX, SP_INDEX},
         Cpu, Exception,
     },
-    bus::Bus,
+    bus::{Bus, BusMut},
 };
 
 use super::BlockTransferFlags;
@@ -18,7 +18,7 @@ fn r_index(instr: u16, pos: u8) -> usize {
 
 impl Cpu {
     #[bitmatch]
-    pub(in crate::arm7tdmi) fn execute_thumb(&mut self, bus: &mut impl Bus, instr: u16) {
+    pub(in crate::arm7tdmi) fn execute_thumb(&mut self, bus: &mut impl BusMut, instr: u16) {
         debug_assert!(self.reg.cpsr.state == OperationState::Thumb);
 
         // TODO: SWI is 2S+1N
@@ -198,7 +198,7 @@ impl Cpu {
     /// Thumb.7: Load or store with register offset, OR
     /// Thumb.8: Load or store sign-extended byte or half-word (if bit 9 is set in `instr`).
     #[allow(clippy::cast_possible_truncation)]
-    fn execute_thumb7_or_thumb8(&mut self, bus: &mut impl Bus, instr: u16) {
+    fn execute_thumb7_or_thumb8(&mut self, bus: &mut impl BusMut, instr: u16) {
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = self.reg.r[r_index(instr, 6)];
@@ -233,7 +233,7 @@ impl Cpu {
     }
 
     /// Thumb.9: Load or store with immediate offset.
-    fn execute_thumb9(&mut self, bus: &mut impl Bus, instr: u16) {
+    fn execute_thumb9(&mut self, bus: &mut impl BusMut, instr: u16) {
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = instr.bits(6..11).into();
@@ -255,7 +255,7 @@ impl Cpu {
     }
 
     /// Thumb.10: Load or store half-word.
-    fn execute_thumb10(&mut self, bus: &mut impl Bus, instr: u16) {
+    fn execute_thumb10(&mut self, bus: &mut impl BusMut, instr: u16) {
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = u32::from(instr.bits(6..11));
@@ -272,7 +272,7 @@ impl Cpu {
     }
 
     /// Thumb.11: Load or store SP relative.
-    fn execute_thumb11(&mut self, bus: &mut impl Bus, instr: u16) {
+    fn execute_thumb11(&mut self, bus: &mut impl BusMut, instr: u16) {
         let offset = u32::from(instr.bits(..8));
         let addr = self.reg.r[SP_INDEX].wrapping_add(offset * 4);
         let r = r_index(instr, 8);
@@ -309,7 +309,7 @@ impl Cpu {
     }
 
     /// Thumb.14: Push or pop registers.
-    fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) {
+    fn execute_thumb14(&mut self, bus: &mut impl BusMut, instr: u16) {
         let pop = instr.bit(11);
         let flags = BlockTransferFlags {
             preindex: !pop,
@@ -332,7 +332,7 @@ impl Cpu {
     }
 
     /// Thumb.15: Multiple load or store.
-    fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) {
+    fn execute_thumb15(&mut self, bus: &mut impl BusMut, instr: u16) {
         #[allow(clippy::cast_possible_truncation)]
         let r_list = (instr as u8).into();
         let r_base = r_index(instr, 8);
@@ -400,7 +400,7 @@ impl Cpu {
 mod tests {
     use crate::{
         arm7tdmi::{isa::tests::InstrTest, reg::LR_INDEX},
-        bus::{tests::VecBus, BusExt},
+        bus::{tests::VecBus, BusExt, BusMutExt},
     };
 
     use super::*;

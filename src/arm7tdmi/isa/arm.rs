@@ -7,7 +7,7 @@ use crate::{
         reg::{OperationMode, OperationState, LR_INDEX, PC_INDEX},
         Cpu, Exception,
     },
-    bus::{Bus, BusAlignedExt},
+    bus::{Bus, BusMut, BusMutAlignedExt},
 };
 
 use super::BlockTransferFlags;
@@ -18,7 +18,7 @@ fn r_index(instr: u32, pos: u8) -> usize {
 
 impl Cpu {
     #[bitmatch]
-    pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl Bus, instr: u32) {
+    pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl BusMut, instr: u32) {
         debug_assert!(self.reg.cpsr.state == OperationState::Arm);
 
         #[allow(clippy::cast_possible_truncation)]
@@ -261,7 +261,7 @@ impl Cpu {
     }
 
     /// Single data transfer.
-    fn execute_arm_single_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
+    fn execute_arm_single_transfer(&mut self, bus: &mut impl BusMut, instr: u32) {
         let preindex = instr.bit(24);
         let transfer_byte = instr.bit(22);
         let writeback = instr.bit(21);
@@ -335,7 +335,7 @@ impl Cpu {
     }
 
     /// Half-word and signed data transfer.
-    fn execute_arm_hword_and_signed_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
+    fn execute_arm_hword_and_signed_transfer(&mut self, bus: &mut impl BusMut, instr: u32) {
         let preindex = instr.bit(24);
         let writeback = instr.bit(21);
         let load = instr.bit(20);
@@ -398,7 +398,7 @@ impl Cpu {
     }
 
     /// Block data transfer.
-    fn execute_arm_block_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
+    fn execute_arm_block_transfer(&mut self, bus: &mut impl BusMut, instr: u32) {
         let flags = BlockTransferFlags {
             preindex: instr.bit(24),
             ascend: instr.bit(23),
@@ -420,7 +420,7 @@ impl Cpu {
     }
 
     /// Single data swap.
-    fn execute_arm_swap(&mut self, bus: &mut impl Bus, instr: u32) {
+    fn execute_arm_swap(&mut self, bus: &mut impl BusMut, instr: u32) {
         let base_addr = self.reg.r[r_index(instr, 16)];
         let value = self.reg.r[r_index(instr, 0)];
 
@@ -453,7 +453,7 @@ mod tests {
             isa::tests::InstrTest,
             reg::{OperationMode, StatusRegister, LR_INDEX},
         },
-        bus::{tests::VecBus, BusExt},
+        bus::{tests::VecBus, BusExt, BusMutExt},
     };
 
     use super::*;

@@ -87,7 +87,7 @@ impl<'r> SdlScreen<'r> {
         #[allow(clippy::cast_possible_truncation)]
         let texture = texture_creator
             .create_texture_streaming(
-                PixelFormatEnum::BGR24,
+                PixelFormatEnum::RGB24,
                 FRAME_WIDTH as u32,
                 FRAME_HEIGHT as u32,
             )

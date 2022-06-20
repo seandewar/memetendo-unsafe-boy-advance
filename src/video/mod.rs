@@ -4,9 +4,12 @@ use std::ops::{Index, IndexMut};
 
 use intbits::Bits;
 
-use crate::arm7tdmi::{Cpu, Exception};
+use crate::{
+    arm7tdmi::{Cpu, Exception},
+    bus::BusExt,
+};
 
-use self::reg::{DisplayControl, DisplayStatus};
+use self::reg::{BackgroundControl, DisplayControl, DisplayStatus};
 
 pub const FRAME_WIDTH: usize = HBLANK_DOT as _;
 pub const FRAME_HEIGHT: usize = VBLANK_DOT as _;
@@ -46,6 +49,8 @@ const VBLANK_DOT: u8 = 160;
 
 const CYCLES_PER_DOT: u8 = 4;
 
+const TILE_DIMENSION: usize = 8;
+
 pub(super) struct VideoController {
     frame_buf: FrameBuffer,
     cycle_accum: u8,
@@ -59,6 +64,7 @@ pub(super) struct VideoController {
     pub(super) dispcnt: DisplayControl,
     pub(super) dispstat: DisplayStatus,
     pub(super) green_swap: u16,
+    pub(super) bgcnt: [BackgroundControl; 4],
 }
 
 impl Default for VideoController {
@@ -68,12 +74,12 @@ impl Default for VideoController {
 }
 
 #[allow(clippy::cast_possible_truncation)]
-fn bgr555_to_24(value: u16) -> u32 {
+fn rgb555_to_24(value: u16) -> u32 {
     let r = value.bits(..5) as u8;
     let g = value.bits(5..10) as u8;
     let b = value.bits(10..15) as u8;
 
-    u32::from_le_bytes([r << 3, g << 3, b << 3, 0])
+    u32::from_le_bytes([r * 8, g * 8, b * 8, 0])
 }
 
 impl VideoController {
@@ -89,10 +95,10 @@ impl VideoController {
             dispcnt: DisplayControl::default(),
             dispstat: DisplayStatus::default(),
             green_swap: 0,
+            bgcnt: [BackgroundControl::default(); 4],
         }
     }
 
-    #[allow(clippy::similar_names)]
     pub fn step(&mut self, screen: &mut impl Screen, cpu: &mut Cpu, cycles: u32) {
         for _ in 0..cycles {
             if self.x < HBLANK_DOT && self.y < VBLANK_DOT {
@@ -136,27 +142,63 @@ impl VideoController {
             return 0xff_ff_ff;
         }
 
-        let (x, y) = (usize::from(self.x), usize::from(self.y));
-        if (3..=5).contains(&self.dispcnt.mode) && self.dispcnt.display_bg[2] {
+        // TODO: palette colour 0 is always transparent
+        if (0..=2).contains(&self.dispcnt.mode) {
+            // TODO: other BGs, other sizes than 256, etc.
+            let tile_x = usize::from(self.x) / TILE_DIMENSION;
+            let tile_y = usize::from(self.y) / TILE_DIMENSION;
+            let tile_idx = tile_y * (256 / TILE_DIMENSION) + tile_x;
+            let tile_info_offset = self.bgcnt[0].vram_offset() + 2 * tile_idx;
+
+            #[allow(clippy::cast_possible_truncation)]
+            let tile_info = self.vram.as_ref().read_hword(tile_info_offset as u32);
+            let dots_idx = usize::from(tile_info.bits(..10));
+            let flip_horiz = tile_info.bit(10);
+            let flip_vert = tile_info.bit(11);
+
+            let mut dot_x = usize::from(self.x) % TILE_DIMENSION;
+            if flip_horiz {
+                dot_x = TILE_DIMENSION - dot_x;
+            }
+            let mut dot_y = usize::from(self.y) % TILE_DIMENSION;
+            if flip_vert {
+                dot_y = TILE_DIMENSION - dot_y;
+            }
+
+            if self.bgcnt[0].color256 {
+                0x00_ff_00 // TODO
+            } else {
+                // 4-bit depth
+                let palette_group_idx = usize::from(tile_info.bits(12..));
+                let dots_base_offset = self.bgcnt[0].dots_vram_offset() + 32 * dots_idx;
+                let dots = self.vram[dots_base_offset + (4 * dot_y) + (dot_x / 2)];
+                let palette_idx = usize::from(dots >> (4 * (dot_x % 2))).bits(..4);
+                #[allow(clippy::cast_possible_truncation)]
+                let palette_offset = 2 * (16 * palette_group_idx + palette_idx) as u32;
+
+                rgb555_to_24(self.palette_ram.as_ref().read_hword(palette_offset))
+            }
+        } else if (3..=5).contains(&self.dispcnt.mode) && self.dispcnt.display_bg[2] {
+            let (dot_x, dot_y) = (usize::from(self.x), usize::from(self.y));
+
             match self.dispcnt.mode {
                 3 => {
-                    let dot_idx = y * FRAME_WIDTH + x;
-                    let lo = self.vram[2 * dot_idx];
-                    let hi = self.vram[2 * dot_idx + 1];
+                    let dot_idx = dot_y * FRAME_WIDTH + dot_x;
 
-                    bgr555_to_24(u16::from_le_bytes([lo, hi]))
+                    #[allow(clippy::cast_possible_truncation)]
+                    rgb555_to_24(self.vram.as_ref().read_hword(2 * dot_idx as u32))
                 }
                 4 => {
-                    let dot_idx = y * FRAME_WIDTH + x + self.dispcnt.frame_vram_index();
-                    let palette_idx = 2 * usize::from(self.vram[dot_idx]); // TODO: 0==transparent
-                    let lo = self.palette_ram[palette_idx];
-                    let hi = self.palette_ram[palette_idx + 1];
+                    let dot_idx = self.dispcnt.frame_vram_offset() + dot_y * FRAME_WIDTH + dot_x;
+                    // TODO: colour 0 is the backdrop colour, and also acts as transparent when
+                    //       rendering the object layer
+                    let palette_offset = u32::from(2 * self.vram[dot_idx]);
 
-                    bgr555_to_24(u16::from_le_bytes([lo, hi]))
+                    rgb555_to_24(self.palette_ram.as_ref().read_hword(palette_offset))
                 }
                 5 => {
                     // TODO: this is actually 160x128 pixels, we probably want to rescale...
-                    let dot_idx = y * 160 + x + self.dispcnt.frame_vram_index();
+                    let dot_idx = self.dispcnt.frame_vram_offset() + dot_y * 160 + dot_x;
 
                     let _ = dot_idx;
                     todo!();

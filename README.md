@@ -5,8 +5,8 @@ Nothing to see here yet; I'll be working on this in my spare time :)
 ## Status
 
 Currently passes all of the pre-generated tests in
-[FuzzARM](https://github.com/DenSinH/FuzzARM), plus the ARM and THUMB tests in
-[gba-tests](https://github.com/jsmolka/gba-tests)!
+[FuzzARM](https://github.com/DenSinH/FuzzARM), plus the ARM, THUMB and PPU tests
+in [gba-tests](https://github.com/jsmolka/gba-tests)!
 
 ## What's with the name?
 

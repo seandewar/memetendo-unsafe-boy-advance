@@ -63,7 +63,7 @@ impl DisplayControl {
         self.display_obj_window = bits.bit(7);
     }
 
-    pub(super) fn frame_vram_index(&self) -> usize {
+    pub(super) fn frame_vram_offset(&self) -> usize {
         self.frame_select * 0xa000
     }
 }
@@ -99,5 +99,61 @@ impl DisplayStatus {
         self.hblank_irq_enabled = bits.bit(4);
         self.vcount_irq_enabled = bits.bit(5);
         self.unused_bit7 = bits.bit(7);
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct BackgroundControl {
+    pub priority: u8,
+    pub dots_base_block: u8,
+    pub unused_bit4_5: u8,
+    pub mosaic: bool,
+    pub color256: bool,
+    pub base_block: u8,
+    pub wraparound: bool,
+    pub screen_size: u8,
+}
+
+impl BackgroundControl {
+    pub fn lo_bits(self) -> u8 {
+        let mut bits = 0;
+        bits.set_bits(..2, self.priority);
+        bits.set_bits(2..4, self.dots_base_block);
+        bits.set_bits(4..6, self.unused_bit4_5);
+        bits.set_bit(6, self.mosaic);
+        bits.set_bit(7, self.color256);
+
+        bits
+    }
+
+    pub fn hi_bits(self) -> u8 {
+        let mut bits = 0;
+        bits.set_bits(..5, self.base_block);
+        bits.set_bit(5, self.wraparound);
+        bits.set_bits(6.., self.screen_size);
+
+        bits
+    }
+
+    pub fn set_lo_bits(&mut self, bits: u8) {
+        self.priority = bits.bits(..2);
+        self.dots_base_block = bits.bits(2..4);
+        self.unused_bit4_5 = bits.bits(4..6);
+        self.mosaic = bits.bit(6);
+        self.color256 = bits.bit(7);
+    }
+
+    pub fn set_hi_bits(&mut self, bits: u8) {
+        self.base_block = bits.bits(..5);
+        self.wraparound = bits.bit(5);
+        self.screen_size = bits.bits(6..);
+    }
+
+    pub fn vram_offset(self) -> usize {
+        0x800 * usize::from(self.base_block)
+    }
+
+    pub fn dots_vram_offset(self) -> usize {
+        0x4000 * usize::from(self.dots_base_block)
     }
 }
