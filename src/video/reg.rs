@@ -15,6 +15,13 @@ pub struct DisplayControl {
     pub display_obj_window: bool,
 }
 
+#[derive(Eq, PartialEq, Debug)]
+pub(super) enum ModeType {
+    Tile,
+    Bitmap,
+    Invalid,
+}
+
 impl DisplayControl {
     pub fn lo_bits(&self) -> u8 {
         let mut bits = 0;
@@ -65,6 +72,22 @@ impl DisplayControl {
 
     pub(super) fn frame_vram_offset(&self) -> usize {
         self.frame_select * 0xa000
+    }
+
+    pub(super) fn mode_type(&self) -> ModeType {
+        match self.mode {
+            0..=2 => ModeType::Tile,
+            3..=5 => ModeType::Bitmap,
+            _ => ModeType::Invalid,
+        }
+    }
+
+    pub fn obj_vram_offset(&self) -> usize {
+        if self.mode_type() == ModeType::Tile {
+            0x1_0000
+        } else {
+            0x1_4000 // TODO: invalid type behaviour?
+        }
     }
 }
 

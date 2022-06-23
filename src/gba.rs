@@ -2,7 +2,7 @@ use intbits::Bits;
 
 use crate::{
     arm7tdmi::Cpu,
-    bus::{Bus, BusMut},
+    bus::{self, Bus, BusMut},
     cart::{Bios, Cartridge},
     video::{Screen, VideoController},
 };
@@ -155,12 +155,10 @@ impl Bus for GbaBus<'_> {
             0x0600_0000..=0x06ff_ffff => self.video.vram.as_ref().read_byte(addr & 0x1_7fff),
             // OAM
             0x0700_0000..=0x07ff_ffff => self.video.oam.as_ref().read_byte(addr & 0x3ff),
-            // ROM Mirror; TODO: Wait state 0
-            0x0800_0000..=0x09ff_ffff => self.read_rom(addr),
-            // ROM Mirror; TODO: Wait state 1
-            0x0a00_0000..=0x0bff_ffff => self.read_rom(addr),
-            // ROM Mirror; TODO: Wait state 2
-            0x0c00_0000..=0x0dff_ffff => self.read_rom(addr),
+            // ROM Mirror; TODO: Wait states 0, 1 and 2
+            0x0800_0000..=0x09ff_ffff | 0x0a00_0000..=0x0bff_ffff | 0x0c00_0000..=0x0dff_ffff => {
+                self.read_rom(addr)
+            }
             // SRAM
             0x0e00_0000..=0x0e00_ffff => self.cart.sram.as_ref().read_byte(addr & 0xffff),
             // Unused
@@ -180,21 +178,47 @@ impl BusMut for GbaBus<'_> {
             0x0400_0000..=0x0400_03fe => self.write_io(addr, value),
             // Palette RAM
             0x0500_0000..=0x05ff_ffff => {
+                // 8-bit writes act weird; write as a hword.
                 self.video
                     .palette_ram
                     .as_mut()
-                    .write_byte(addr & 0x3ff, value);
+                    .write_hword(addr & 0x3ff, u16::from_le_bytes([value, value]));
             }
             // VRAM
             0x0600_0000..=0x06ff_ffff => {
-                self.video.vram.as_mut().write_byte(addr & 0x1_7fff, value);
+                // Like palette RAM, but only write a hword for BG data.
+                if (addr as usize & 0x1_7fff) < self.video.dispcnt.obj_vram_offset() {
+                    self.video
+                        .vram
+                        .as_mut()
+                        .write_hword(addr & 0x1_7fff, u16::from_le_bytes([value, value]));
+                }
             }
-            // OAM
-            0x0700_0000..=0x07ff_ffff => self.video.oam.as_mut().write_byte(addr & 0x3ff, value),
             // SRAM
             0x0e00_0000..=0x0e00_ffff => self.cart.sram.as_mut().write_byte(addr & 0xffff, value),
-            // Read-only or Unused
+            // Read-only, Unused, Ignored 8-bit writes to OAM/VRAM
             _ => {}
+        }
+    }
+
+    fn write_hword(&mut self, addr: u32, value: u16) {
+        // Video memory has weird behaviour when writing 8-bit values, so we can't simply delegate
+        // such writes to write_hword_as_bytes.
+        match addr {
+            // Palette RAM
+            0x0500_0000..=0x05ff_ffff => {
+                self.video
+                    .palette_ram
+                    .as_mut()
+                    .write_hword(addr & 0x3ff, value);
+            }
+            // VRAM
+            0x0600_0000..=0x06ff_ffff => {
+                self.video.vram.as_mut().write_hword(addr & 0x1_7fff, value);
+            }
+            // OAM
+            0x0700_0000..=0x07ff_ffff => self.video.oam.as_mut().write_hword(addr & 0x3ff, value),
+            _ => bus::write_hword_as_bytes(self, addr, value),
         }
     }
 }

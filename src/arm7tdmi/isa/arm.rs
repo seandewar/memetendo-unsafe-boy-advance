@@ -453,7 +453,7 @@ mod tests {
             isa::tests::InstrTest,
             reg::{OperationMode, StatusRegister, LR_INDEX},
         },
-        bus::{tests::VecBus, BusExt, BusMutExt},
+        bus::tests::VecBus,
     };
 
     use super::*;

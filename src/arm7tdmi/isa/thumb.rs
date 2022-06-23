@@ -400,7 +400,7 @@ impl Cpu {
 mod tests {
     use crate::{
         arm7tdmi::{isa::tests::InstrTest, reg::LR_INDEX},
-        bus::{tests::VecBus, BusExt, BusMutExt},
+        bus::tests::VecBus,
     };
 
     use super::*;

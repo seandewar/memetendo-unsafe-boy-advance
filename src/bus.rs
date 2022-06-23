@@ -4,36 +4,7 @@ use intbits::Bits;
 
 pub trait Bus {
     fn read_byte(&self, addr: u32) -> u8;
-}
 
-impl Bus for &[u8] {
-    fn read_byte(&self, addr: u32) -> u8 {
-        self[addr as usize]
-    }
-}
-
-pub trait BusMut: Bus {
-    fn write_byte(&mut self, addr: u32, value: u8);
-}
-
-impl Bus for &mut [u8] {
-    fn read_byte(&self, addr: u32) -> u8 {
-        self[addr as usize]
-    }
-}
-
-impl BusMut for &mut [u8] {
-    fn write_byte(&mut self, addr: u32, value: u8) {
-        self[addr as usize] = value;
-    }
-}
-
-pub trait BusExt {
-    fn read_hword(&self, addr: u32) -> u16;
-    fn read_word(&self, addr: u32) -> u32;
-}
-
-impl<T: Bus> BusExt for T {
     fn read_hword(&self, addr: u32) -> u16 {
         let lo = self.read_byte(addr);
         let hi = self.read_byte(addr.wrapping_add(1));
@@ -49,22 +20,41 @@ impl<T: Bus> BusExt for T {
     }
 }
 
-pub trait BusMutExt {
-    fn write_hword(&mut self, addr: u32, value: u16);
-    fn write_word(&mut self, addr: u32, value: u32);
+impl Bus for &[u8] {
+    fn read_byte(&self, addr: u32) -> u8 {
+        self[addr as usize]
+    }
 }
 
-impl<T: BusMut> BusMutExt for T {
-    #[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_possible_truncation)]
+pub fn write_hword_as_bytes<T: BusMut + ?Sized>(bus: &mut T, addr: u32, value: u16) {
+    bus.write_byte(addr, value as u8);
+    bus.write_byte(addr.wrapping_add(1), value.bits(8..) as _);
+}
+
+pub trait BusMut: Bus {
+    fn write_byte(&mut self, addr: u32, value: u8);
+
     fn write_hword(&mut self, addr: u32, value: u16) {
-        self.write_byte(addr, value as u8);
-        self.write_byte(addr.wrapping_add(1), value.bits(8..) as _);
+        write_hword_as_bytes(self, addr, value);
     }
 
     #[allow(clippy::cast_possible_truncation)]
     fn write_word(&mut self, addr: u32, value: u32) {
         self.write_hword(addr, value as u16);
         self.write_hword(addr.wrapping_add(2), value.bits(16..) as _);
+    }
+}
+
+impl Bus for &mut [u8] {
+    fn read_byte(&self, addr: u32) -> u8 {
+        self[addr as usize]
+    }
+}
+
+impl BusMut for &mut [u8] {
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        self[addr as usize] = value;
     }
 }
 
@@ -75,11 +65,11 @@ pub trait BusAlignedExt {
 
 impl<T: Bus> BusAlignedExt for T {
     fn read_hword_aligned(&self, addr: u32) -> u16 {
-        BusExt::read_hword(self, addr & !1)
+        self.read_hword(addr & !1)
     }
 
     fn read_word_aligned(&self, addr: u32) -> u32 {
-        BusExt::read_word(self, addr & !0b11)
+        self.read_word(addr & !0b11)
     }
 }
 
@@ -90,11 +80,11 @@ pub trait BusMutAlignedExt {
 
 impl<T: BusMut> BusMutAlignedExt for T {
     fn write_hword_aligned(&mut self, addr: u32, value: u16) {
-        BusMutExt::write_hword(self, addr & !1, value);
+        self.write_hword(addr & !1, value);
     }
 
     fn write_word_aligned(&mut self, addr: u32, value: u32) {
-        BusMutExt::write_word(self, addr & !0b11, value);
+        self.write_word(addr & !0b11, value);
     }
 }
 

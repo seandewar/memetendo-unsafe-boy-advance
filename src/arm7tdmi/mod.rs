@@ -155,8 +155,6 @@ impl Cpu {
     }
 
     fn step_pipeline(&mut self, bus: &impl Bus) {
-        use crate::bus::BusExt; // PC is forcibly aligned below, so this is fine.
-
         self.reg.r[PC_INDEX] &= match self.reg.cpsr.state {
             OperationState::Thumb => !1,
             OperationState::Arm => !0b11,
@@ -211,10 +209,7 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::{
-        tests::{NullBus, VecBus},
-        BusMutExt,
-    };
+    use crate::bus::tests::{NullBus, VecBus};
     use strum::IntoEnumIterator;
 
     fn assert_exception_result(cpu: &mut Cpu, exception: Exception, old_reg: Registers) {
