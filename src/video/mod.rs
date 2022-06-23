@@ -49,8 +49,6 @@ const VBLANK_DOT: u8 = 160;
 
 const CYCLES_PER_DOT: u8 = 4;
 
-const TILE_DIMENSION: usize = 8;
-
 pub(super) struct VideoController {
     frame_buf: FrameBuffer,
     cycle_accum: u8,
@@ -138,13 +136,15 @@ impl VideoController {
     }
 
     fn compute_colour(&self) -> u32 {
+        const TILE_DIMENSION: usize = 8;
+
         if self.dispcnt.forced_blank {
             return 0xff_ff_ff;
         }
 
         // TODO: palette colour 0 is always transparent
         if (0..=2).contains(&self.dispcnt.mode) {
-            // TODO: other BGs, other sizes than 256, etc.
+            // TODO: other BGs, other sizes than 256, proper flipping, etc.
             let tile_x = usize::from(self.x) / TILE_DIMENSION;
             let tile_y = usize::from(self.y) / TILE_DIMENSION;
             let tile_idx = tile_y * (256 / TILE_DIMENSION) + tile_x;

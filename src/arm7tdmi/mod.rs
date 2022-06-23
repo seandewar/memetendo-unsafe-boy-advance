@@ -129,6 +129,7 @@ impl Cpu {
         }
 
         let instr = self.pipeline_instrs[0];
+
         // let regs = self
         //     .reg
         //     .r

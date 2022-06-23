@@ -62,8 +62,8 @@ impl<'a, 'b> Gba<'a, 'b> {
 }
 
 pub(super) struct GbaBus<'a> {
-    pub iwram: &'a mut Box<[u8]>,
-    pub ewram: &'a mut Box<[u8]>,
+    pub iwram: &'a mut [u8],
+    pub ewram: &'a mut [u8],
     pub video: &'a mut VideoController,
     pub cart: &'a mut Cartridge,
     pub bios: &'a Bios,
@@ -144,17 +144,17 @@ impl Bus for GbaBus<'_> {
             // BIOS
             0x0000_0000..=0x0000_3fff => self.bios.rom().read_byte(addr & 0x3fff),
             // External WRAM
-            0x0200_0000..=0x0203_ffff => self.ewram.as_ref().read_byte(addr & 0x3_ffff),
+            0x0200_0000..=0x02ff_ffff => self.ewram.as_ref().read_byte(addr & 0x3_ffff),
             // Internal WRAM
-            0x0300_0000..=0x0300_7fff => self.iwram.as_ref().read_byte(addr & 0x7fff),
+            0x0300_0000..=0x03ff_ffff => self.iwram.as_ref().read_byte(addr & 0x7fff),
             // I/O Registers
             0x0400_0000..=0x0400_03fe => self.read_io(addr),
             // Palette RAM
-            0x0500_0000..=0x0500_03ff => self.video.palette_ram.as_ref().read_byte(addr & 0x3ff),
+            0x0500_0000..=0x05ff_ffff => self.video.palette_ram.as_ref().read_byte(addr & 0x3ff),
             // VRAM
-            0x0600_0000..=0x0601_7fff => self.video.vram.as_ref().read_byte(addr & 0x1_7fff),
+            0x0600_0000..=0x06ff_ffff => self.video.vram.as_ref().read_byte(addr & 0x1_7fff),
             // OAM
-            0x0700_0000..=0x0700_03ff => self.video.oam.as_ref().read_byte(addr & 0x3ff),
+            0x0700_0000..=0x07ff_ffff => self.video.oam.as_ref().read_byte(addr & 0x3ff),
             // ROM Mirror; TODO: Wait state 0
             0x0800_0000..=0x09ff_ffff => self.read_rom(addr),
             // ROM Mirror; TODO: Wait state 1
@@ -173,24 +173,24 @@ impl BusMut for GbaBus<'_> {
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
             // External WRAM
-            0x0200_0000..=0x0203_ffff => self.ewram.as_mut().write_byte(addr & 0x3_ffff, value),
+            0x0200_0000..=0x02ff_ffff => self.ewram.as_mut().write_byte(addr & 0x3_ffff, value),
             // Internal WRAM
-            0x0300_0000..=0x0300_7fff => self.iwram.as_mut().write_byte(addr & 0x7fff, value),
+            0x0300_0000..=0x03ff_ffff => self.iwram.as_mut().write_byte(addr & 0x7fff, value),
             // I/O Registers
             0x0400_0000..=0x0400_03fe => self.write_io(addr, value),
             // Palette RAM
-            0x0500_0000..=0x0500_03ff => {
+            0x0500_0000..=0x05ff_ffff => {
                 self.video
                     .palette_ram
                     .as_mut()
                     .write_byte(addr & 0x3ff, value);
             }
             // VRAM
-            0x0600_0000..=0x0601_7fff => {
+            0x0600_0000..=0x06ff_ffff => {
                 self.video.vram.as_mut().write_byte(addr & 0x1_7fff, value);
             }
             // OAM
-            0x0700_0000..=0x0700_03ff => self.video.oam.as_mut().write_byte(addr & 0x3ff, value),
+            0x0700_0000..=0x07ff_ffff => self.video.oam.as_mut().write_byte(addr & 0x3ff, value),
             // SRAM
             0x0e00_0000..=0x0e00_ffff => self.cart.sram.as_mut().write_byte(addr & 0xffff, value),
             // Read-only or Unused
