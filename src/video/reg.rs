@@ -16,7 +16,7 @@ pub struct DisplayControl {
 }
 
 #[derive(Eq, PartialEq, Debug)]
-pub(super) enum ModeType {
+pub enum ModeType {
     Tile,
     Bitmap,
     Invalid,
@@ -70,11 +70,11 @@ impl DisplayControl {
         self.display_obj_window = bits.bit(7);
     }
 
-    pub(super) fn frame_vram_offset(&self) -> usize {
+    pub fn frame_vram_offset(&self) -> usize {
         self.frame_select * 0xa000
     }
 
-    pub(super) fn mode_type(&self) -> ModeType {
+    pub fn mode_type(&self) -> ModeType {
         match self.mode {
             0..=2 => ModeType::Tile,
             3..=5 => ModeType::Bitmap,

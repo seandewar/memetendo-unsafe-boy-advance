@@ -7,7 +7,7 @@ use crate::{
         reg::{OperationState, LR_INDEX, PC_INDEX, SP_INDEX},
         Cpu, Exception,
     },
-    bus::{Bus, BusMut},
+    bus::Bus,
 };
 
 use super::BlockTransferFlags;
@@ -18,7 +18,7 @@ fn r_index(instr: u16, pos: u8) -> usize {
 
 impl Cpu {
     #[bitmatch]
-    pub(in crate::arm7tdmi) fn execute_thumb(&mut self, bus: &mut impl BusMut, instr: u16) {
+    pub(in crate::arm7tdmi) fn execute_thumb(&mut self, bus: &mut impl Bus, instr: u16) {
         debug_assert!(self.reg.cpsr.state == OperationState::Thumb);
 
         // TODO: SWI is 2S+1N
@@ -157,7 +157,7 @@ impl Cpu {
     }
 
     /// Thumb.5: Hi register operations or branch exchange.
-    fn execute_thumb5(&mut self, bus: &impl Bus, instr: u16) {
+    fn execute_thumb5(&mut self, bus: &mut impl Bus, instr: u16) {
         let r_src = r_index(instr, 3).with_bit(3, instr.bit(6));
         let value = self.reg.r[r_src];
         let op = instr.bits(8..10);
@@ -187,7 +187,7 @@ impl Cpu {
     }
 
     /// Thumb.6: Load PC relative.
-    fn execute_thumb6(&mut self, bus: &impl Bus, instr: u16) {
+    fn execute_thumb6(&mut self, bus: &mut impl Bus, instr: u16) {
         let offset = u32::from(instr.bits(..8));
         let addr = self.reg.r[PC_INDEX].wrapping_add(offset * 4);
 
@@ -198,7 +198,7 @@ impl Cpu {
     /// Thumb.7: Load or store with register offset, OR
     /// Thumb.8: Load or store sign-extended byte or half-word (if bit 9 is set in `instr`).
     #[allow(clippy::cast_possible_truncation)]
-    fn execute_thumb7_or_thumb8(&mut self, bus: &mut impl BusMut, instr: u16) {
+    fn execute_thumb7_or_thumb8(&mut self, bus: &mut impl Bus, instr: u16) {
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = self.reg.r[r_index(instr, 6)];
@@ -233,7 +233,7 @@ impl Cpu {
     }
 
     /// Thumb.9: Load or store with immediate offset.
-    fn execute_thumb9(&mut self, bus: &mut impl BusMut, instr: u16) {
+    fn execute_thumb9(&mut self, bus: &mut impl Bus, instr: u16) {
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = instr.bits(6..11).into();
@@ -255,7 +255,7 @@ impl Cpu {
     }
 
     /// Thumb.10: Load or store half-word.
-    fn execute_thumb10(&mut self, bus: &mut impl BusMut, instr: u16) {
+    fn execute_thumb10(&mut self, bus: &mut impl Bus, instr: u16) {
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
         let offset = u32::from(instr.bits(6..11));
@@ -272,7 +272,7 @@ impl Cpu {
     }
 
     /// Thumb.11: Load or store SP relative.
-    fn execute_thumb11(&mut self, bus: &mut impl BusMut, instr: u16) {
+    fn execute_thumb11(&mut self, bus: &mut impl Bus, instr: u16) {
         let offset = u32::from(instr.bits(..8));
         let addr = self.reg.r[SP_INDEX].wrapping_add(offset * 4);
         let r = r_index(instr, 8);
@@ -309,7 +309,7 @@ impl Cpu {
     }
 
     /// Thumb.14: Push or pop registers.
-    fn execute_thumb14(&mut self, bus: &mut impl BusMut, instr: u16) {
+    fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) {
         let pop = instr.bit(11);
         let flags = BlockTransferFlags {
             preindex: !pop,
@@ -332,7 +332,7 @@ impl Cpu {
     }
 
     /// Thumb.15: Multiple load or store.
-    fn execute_thumb15(&mut self, bus: &mut impl BusMut, instr: u16) {
+    fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) {
         #[allow(clippy::cast_possible_truncation)]
         let r_list = (instr as u8).into();
         let r_base = r_index(instr, 8);
@@ -355,7 +355,7 @@ impl Cpu {
 
     /// Thumb.16: Conditional branch.
     #[allow(clippy::cast_possible_truncation)]
-    fn execute_thumb16(&mut self, bus: &impl Bus, instr: u16) {
+    fn execute_thumb16(&mut self, bus: &mut impl Bus, instr: u16) {
         if self.meets_condition(instr.bits(8..12) as u8) {
             // B{cond} label
             self.op_branch(bus, self.reg.r[PC_INDEX], 2 * i32::from(instr as i8));
@@ -363,7 +363,7 @@ impl Cpu {
     }
 
     /// Thumb.18: Unconditional branch.
-    fn execute_thumb18(&mut self, bus: &impl Bus, instr: u16) {
+    fn execute_thumb18(&mut self, bus: &mut impl Bus, instr: u16) {
         // B label
         self.op_branch(
             bus,
@@ -373,7 +373,7 @@ impl Cpu {
     }
 
     /// Thumb.19: Long branch with link.
-    fn execute_thumb19(&mut self, bus: &impl Bus, instr: u16) {
+    fn execute_thumb19(&mut self, bus: &mut impl Bus, instr: u16) {
         let hi_part = !instr.bit(11);
         let addr_offset_part = u32::from(instr.bits(..11));
 

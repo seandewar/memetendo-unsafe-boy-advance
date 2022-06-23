@@ -2,18 +2,18 @@ use intbits::Bits;
 
 use crate::{
     arm7tdmi::Cpu,
-    bus::{self, Bus, BusMut},
-    cart::{Bios, Cartridge},
+    bus::{self, Bus},
+    rom::{Bios, Cartridge},
     video::{Screen, VideoController},
 };
 
-pub struct Gba<'a, 'b> {
+pub struct Gba<'b, 'c> {
     cpu: Cpu,
     iwram: Box<[u8]>,
     ewram: Box<[u8]>,
     video: VideoController,
-    cart: &'a mut Cartridge,
-    bios: &'b Bios,
+    bios: Bios<'b>,
+    cart: Cartridge<'c>,
 }
 
 // A member fn would be nicer, but using &mut self over $gba unnecessarily mutably borrows the
@@ -30,28 +30,25 @@ macro_rules! bus {
     }};
 }
 
-impl<'a, 'b> Gba<'a, 'b> {
-    pub fn new(bios: &'b Bios, cart: &'a mut Cartridge) -> Self {
+impl<'b, 'c> Gba<'b, 'c> {
+    pub fn new(bios: Bios<'b>, cart: Cartridge<'c>) -> Self {
         Self {
             cpu: Cpu::new(),
             iwram: vec![0; 0x8000].into_boxed_slice(),
             ewram: vec![0; 0x4_0000].into_boxed_slice(),
             video: VideoController::new(),
-            cart,
             bios,
+            cart,
         }
     }
 
     pub fn reset(&mut self) {
-        let bus = &bus!(self);
-        self.cpu.reset(bus);
+        self.cpu.reset(&mut bus!(self));
     }
 
     pub fn reset_and_skip_bios(&mut self) {
         self.reset();
-        let bus = &bus!(self);
-        self.cpu.skip_bios(bus);
-
+        self.cpu.skip_bios(&mut bus!(self));
         self.iwram[0x7e00..].fill(0);
     }
 
@@ -61,23 +58,15 @@ impl<'a, 'b> Gba<'a, 'b> {
     }
 }
 
-pub(super) struct GbaBus<'a> {
+pub(super) struct GbaBus<'a, 'b, 'c> {
     pub iwram: &'a mut [u8],
     pub ewram: &'a mut [u8],
     pub video: &'a mut VideoController,
-    pub cart: &'a mut Cartridge,
-    pub bios: &'a Bios,
+    pub bios: &'a Bios<'b>,
+    pub cart: &'a mut Cartridge<'c>,
 }
 
-impl GbaBus<'_> {
-    fn read_rom(&self, addr: u32) -> u8 {
-        self.cart
-            .rom()
-            .get((addr & 0x01ff_ffff) as usize)
-            .copied()
-            .unwrap_or(0xff)
-    }
-
+impl GbaBus<'_, '_, '_> {
     fn read_io(&self, addr: u32) -> u8 {
         match addr & 0x3ff {
             // DISPCNT
@@ -138,11 +127,11 @@ impl GbaBus<'_> {
     }
 }
 
-impl Bus for GbaBus<'_> {
-    fn read_byte(&self, addr: u32) -> u8 {
+impl Bus for GbaBus<'_, '_, '_> {
+    fn read_byte(&mut self, addr: u32) -> u8 {
         match addr {
             // BIOS
-            0x0000_0000..=0x0000_3fff => self.bios.rom().read_byte(addr & 0x3fff),
+            0x0000_0000..=0x0000_3fff => self.bios.rom.bytes().read_byte(addr & 0x3fff),
             // External WRAM
             0x0200_0000..=0x02ff_ffff => self.ewram.as_ref().read_byte(addr & 0x3_ffff),
             // Internal WRAM
@@ -157,7 +146,7 @@ impl Bus for GbaBus<'_> {
             0x0700_0000..=0x07ff_ffff => self.video.oam.as_ref().read_byte(addr & 0x3ff),
             // ROM Mirror; TODO: Wait states 0, 1 and 2
             0x0800_0000..=0x09ff_ffff | 0x0a00_0000..=0x0bff_ffff | 0x0c00_0000..=0x0dff_ffff => {
-                self.read_rom(addr)
+                self.cart.read_byte(addr & 0x1ff_ffff)
             }
             // SRAM
             0x0e00_0000..=0x0e00_ffff => self.cart.sram.as_ref().read_byte(addr & 0xffff),
@@ -165,9 +154,7 @@ impl Bus for GbaBus<'_> {
             _ => 0xff,
         }
     }
-}
 
-impl BusMut for GbaBus<'_> {
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
             // External WRAM

@@ -7,7 +7,7 @@ use crate::{
         reg::{OperationMode, OperationState, LR_INDEX, PC_INDEX},
         Cpu, Exception,
     },
-    bus::{Bus, BusMut, BusMutAlignedExt},
+    bus::{Bus, BusAlignedExt},
 };
 
 use super::BlockTransferFlags;
@@ -18,7 +18,7 @@ fn r_index(instr: u32, pos: u8) -> usize {
 
 impl Cpu {
     #[bitmatch]
-    pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl BusMut, instr: u32) {
+    pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl Bus, instr: u32) {
         debug_assert!(self.reg.cpsr.state == OperationState::Arm);
 
         #[allow(clippy::cast_possible_truncation)]
@@ -57,7 +57,7 @@ impl Cpu {
     }
 
     /// Branch and branch with link.
-    fn execute_arm_b_bl(&mut self, bus: &impl Bus, instr: u32) {
+    fn execute_arm_b_bl(&mut self, bus: &mut impl Bus, instr: u32) {
         let addr_offset = 4 * arbitrary_sign_extend!(i32, instr.bits(..24), 24);
         if instr.bit(24) {
             // Adjust for pipelining, which has us two instructions ahead.
@@ -70,13 +70,13 @@ impl Cpu {
     }
 
     /// Branch and exchange.
-    fn execute_arm_bx(&mut self, bus: &impl Bus, instr: u32) {
+    fn execute_arm_bx(&mut self, bus: &mut impl Bus, instr: u32) {
         // BX{cond} Rn
         self.op_bx(bus, self.reg.r[r_index(instr, 0)]);
     }
 
     /// Data processing operations.
-    fn execute_arm_data_processing(&mut self, bus: &impl Bus, instr: u32) {
+    fn execute_arm_data_processing(&mut self, bus: &mut impl Bus, instr: u32) {
         let r_value1 = r_index(instr, 16);
         let r_dst = r_index(instr, 12);
         let update_cond = instr.bit(20) && r_dst != PC_INDEX;
@@ -261,7 +261,7 @@ impl Cpu {
     }
 
     /// Single data transfer.
-    fn execute_arm_single_transfer(&mut self, bus: &mut impl BusMut, instr: u32) {
+    fn execute_arm_single_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
         let preindex = instr.bit(24);
         let transfer_byte = instr.bit(22);
         let writeback = instr.bit(21);
@@ -335,7 +335,7 @@ impl Cpu {
     }
 
     /// Half-word and signed data transfer.
-    fn execute_arm_hword_and_signed_transfer(&mut self, bus: &mut impl BusMut, instr: u32) {
+    fn execute_arm_hword_and_signed_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
         let preindex = instr.bit(24);
         let writeback = instr.bit(21);
         let load = instr.bit(20);
@@ -398,7 +398,7 @@ impl Cpu {
     }
 
     /// Block data transfer.
-    fn execute_arm_block_transfer(&mut self, bus: &mut impl BusMut, instr: u32) {
+    fn execute_arm_block_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
         let flags = BlockTransferFlags {
             preindex: instr.bit(24),
             ascend: instr.bit(23),
@@ -420,7 +420,7 @@ impl Cpu {
     }
 
     /// Single data swap.
-    fn execute_arm_swap(&mut self, bus: &mut impl BusMut, instr: u32) {
+    fn execute_arm_swap(&mut self, bus: &mut impl Bus, instr: u32) {
         let base_addr = self.reg.r[r_index(instr, 16)];
         let value = self.reg.r[r_index(instr, 0)];
 

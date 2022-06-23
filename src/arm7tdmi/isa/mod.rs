@@ -3,7 +3,7 @@ mod thumb;
 
 use intbits::Bits;
 
-use crate::bus::{Bus, BusAlignedExt, BusMut, BusMutAlignedExt};
+use crate::bus::{Bus, BusAlignedExt};
 
 use super::{
     reg::{OperationMode, StatusRegister, PC_INDEX},
@@ -374,7 +374,7 @@ struct BlockTransferFlags {
 impl Cpu {
     fn op_stm(
         &mut self,
-        bus: &mut impl BusMut,
+        bus: &mut impl Bus,
         flags: &BlockTransferFlags,
         r_base_addr: usize,
         r_list: u16,
@@ -416,7 +416,7 @@ impl Cpu {
 
     fn op_ldm(
         &mut self,
-        bus: &impl Bus,
+        bus: &mut impl Bus,
         flags: &BlockTransferFlags,
         r_base_addr: usize,
         r_list: u16,
@@ -452,23 +452,23 @@ impl Cpu {
         }
     }
 
-    fn op_str(bus: &mut impl BusMut, addr: u32, value: u32) {
+    fn op_str(bus: &mut impl Bus, addr: u32, value: u32) {
         bus.write_word_aligned(addr, value);
     }
 
-    fn op_strh(bus: &mut impl BusMut, addr: u32, value: u16) {
+    fn op_strh(bus: &mut impl Bus, addr: u32, value: u16) {
         bus.write_hword_aligned(addr, value);
     }
 
-    fn op_strb(bus: &mut impl BusMut, addr: u32, value: u8) {
+    fn op_strb(bus: &mut impl Bus, addr: u32, value: u8) {
         bus.write_byte(addr, value);
     }
 
-    fn op_ldr(bus: &impl Bus, addr: u32) -> u32 {
+    fn op_ldr(bus: &mut impl Bus, addr: u32) -> u32 {
         bus.read_word_aligned(addr).rotate_right(8 * (addr & 0b11))
     }
 
-    fn op_ldrh_or_ldsh(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
+    fn op_ldrh_or_ldsh(bus: &mut impl Bus, addr: u32, sign_extend: bool) -> u32 {
         if sign_extend && (addr & 1) == 1 {
             return Self::op_ldrb_or_ldsb(bus, addr, true);
         }
@@ -487,7 +487,7 @@ impl Cpu {
         }
     }
 
-    fn op_ldrb_or_ldsb(bus: &impl Bus, addr: u32, sign_extend: bool) -> u32 {
+    fn op_ldrb_or_ldsb(bus: &mut impl Bus, addr: u32, sign_extend: bool) -> u32 {
         let result = bus.read_byte(addr);
 
         #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
@@ -499,12 +499,12 @@ impl Cpu {
     }
 
     #[allow(clippy::cast_sign_loss)]
-    fn op_branch(&mut self, bus: &impl Bus, base_addr: u32, addr_offset: i32) {
+    fn op_branch(&mut self, bus: &mut impl Bus, base_addr: u32, addr_offset: i32) {
         self.reg.r[PC_INDEX] = base_addr.wrapping_add(addr_offset as _);
         self.reload_pipeline(bus);
     }
 
-    fn op_bx(&mut self, bus: &impl Bus, addr: u32) {
+    fn op_bx(&mut self, bus: &mut impl Bus, addr: u32) {
         self.reg.cpsr.state = if addr.bit(0) {
             OperationState::Thumb
         } else {
@@ -547,7 +547,7 @@ mod tests {
             reg::{OperationState, PC_INDEX},
             Cpu,
         },
-        bus::{tests::NullBus, BusMut},
+        bus::{tests::NullBus, Bus},
     };
 
     #[allow(clippy::struct_excessive_bools)]
@@ -596,7 +596,7 @@ mod tests {
     }
 
     impl<'a> InstrTest<'a> {
-        pub fn run_with_bus(self, bus: &mut impl BusMut) -> Cpu {
+        pub fn run_with_bus(self, bus: &mut impl Bus) -> Cpu {
             let mut cpu = Cpu::new();
             cpu.reset(bus);
 

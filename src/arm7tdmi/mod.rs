@@ -5,7 +5,7 @@ use std::mem::replace;
 
 use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX, SP_INDEX};
 
-use crate::bus::{Bus, BusMut};
+use crate::bus::Bus;
 
 use strum_macros::{EnumIter, FromRepr};
 
@@ -81,7 +81,7 @@ impl Cpu {
         Self::default()
     }
 
-    pub fn reset(&mut self, bus: &impl Bus) {
+    pub fn reset(&mut self, bus: &mut impl Bus) {
         self.run_state = RunState::Running;
         self.pending_exceptions.fill(false);
 
@@ -93,7 +93,7 @@ impl Cpu {
         self.reg.r[LR_INDEX] = 0;
     }
 
-    pub fn skip_bios(&mut self, bus: &impl Bus) {
+    pub fn skip_bios(&mut self, bus: &mut impl Bus) {
         self.reg.r[..=12].fill(0);
 
         self.reg.change_mode(OperationMode::Supervisor);
@@ -113,7 +113,7 @@ impl Cpu {
         self.step_pipeline(bus);
     }
 
-    pub fn step(&mut self, bus: &mut impl BusMut) {
+    pub fn step(&mut self, bus: &mut impl Bus) {
         if self.run_state != RunState::Running {
             return;
         }
@@ -154,7 +154,7 @@ impl Cpu {
         self.step_pipeline(bus);
     }
 
-    fn step_pipeline(&mut self, bus: &impl Bus) {
+    fn step_pipeline(&mut self, bus: &mut impl Bus) {
         self.reg.r[PC_INDEX] &= match self.reg.cpsr.state {
             OperationState::Thumb => !1,
             OperationState::Arm => !0b11,
@@ -175,7 +175,7 @@ impl Cpu {
     ///
     /// NOTE: The next instruction in the pipeline will be 0, as it is expected that
     /// `step_pipeline()` will be called before getting the next instruction from the pipeline.
-    fn reload_pipeline(&mut self, bus: &impl Bus) {
+    fn reload_pipeline(&mut self, bus: &mut impl Bus) {
         self.pipeline_instrs[0] = 0;
         self.step_pipeline(bus);
     }
@@ -184,7 +184,7 @@ impl Cpu {
         self.pending_exceptions[exception.priority()] = true;
     }
 
-    fn enter_exception(&mut self, bus: &impl Bus, exception: Exception) -> bool {
+    fn enter_exception(&mut self, bus: &mut impl Bus, exception: Exception) -> bool {
         if (self.reg.cpsr.irq_disabled && exception == Exception::Interrupt)
             || (self.reg.cpsr.fiq_disabled && exception == Exception::FastInterrupt)
         {
@@ -241,7 +241,7 @@ mod tests {
         cpu.reg.r[PC_INDEX] = 0xbeef;
 
         let old_reg = cpu.reg;
-        cpu.reset(&NullBus);
+        cpu.reset(&mut NullBus);
         assert_exception_result(&mut cpu, Exception::Reset, old_reg);
 
         // condition flags should be preserved by reset
@@ -254,14 +254,14 @@ mod tests {
     #[test]
     fn enter_exception_works() {
         let mut cpu = Cpu::new();
-        cpu.reset(&NullBus);
+        cpu.reset(&mut NullBus);
         for exception in Exception::iter() {
             cpu.reg.cpsr.fiq_disabled = false;
             cpu.reg.cpsr.irq_disabled = false;
 
             let old_reg = cpu.reg;
-            cpu.enter_exception(&NullBus, exception);
-            cpu.step_pipeline(&NullBus);
+            cpu.enter_exception(&mut NullBus, exception);
+            cpu.step_pipeline(&mut NullBus);
             assert_exception_result(&mut cpu, exception, old_reg);
         }
     }
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn raise_exception_works() {
         let mut cpu = Cpu::new();
-        cpu.reset(&NullBus);
+        cpu.reset(&mut NullBus);
 
         // IRQs are also disabled on reset, so we expect the Interrupt exception to be ignored.
         cpu.reg.cpsr.fiq_disabled = false;
@@ -332,7 +332,7 @@ mod tests {
         bus.write_hword(100, 0b001_00_001_00100001); // MOV R1,#33
 
         let mut cpu = Cpu::new();
-        cpu.reset(&bus);
+        cpu.reset(&mut bus);
         assert_eq!(8, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
 

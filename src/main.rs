@@ -2,8 +2,8 @@
 
 mod arm7tdmi;
 mod bus;
-mod cart;
 mod gba;
+mod rom;
 mod util;
 mod video;
 
@@ -13,9 +13,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use cart::Cartridge;
 use clap::{arg, command};
-use gba::Gba;
 use sdl2::{
     event::Event,
     pixels::{Color, PixelFormatEnum},
@@ -25,7 +23,10 @@ use sdl2::{
 };
 use video::{FrameBuffer, Screen, FRAME_HEIGHT, FRAME_WIDTH};
 
-use crate::cart::Bios;
+use crate::{
+    gba::Gba,
+    rom::{Bios, Cartridge, Rom},
+};
 
 struct SdlContext {
     sdl: Sdl,
@@ -139,8 +140,11 @@ fn main() -> Result<()> {
     let bios_file = Path::new(matches.value_of_os("bios").unwrap());
     let cart_file = Path::new(matches.value_of_os("FILE").unwrap());
 
-    let bios = Bios::from_file(bios_file).context("failed to read BIOS ROM file")?;
-    let mut cart = Cartridge::from_file(cart_file).context("failed to read cartridge ROM file")?;
+    let bios_rom = Rom::from_file(bios_file).context("failed to read BIOS ROM file")?;
+    let bios = Bios::new(&bios_rom).map_err(|_| anyhow!("invalid BIOS ROM size"))?;
+
+    let cart_rom = Rom::from_file(cart_file).context("failed to read cartridge ROM file")?;
+    let cart = Cartridge::new(&cart_rom).map_err(|_| anyhow!("invalid cartridge ROM size"))?;
 
     let mut context = SdlContext::init()?;
     let mut screen = SdlScreen::new(&context.win_texture_creator)?;
@@ -148,7 +152,7 @@ fn main() -> Result<()> {
     context.win_canvas.clear();
     context.win_canvas.present();
 
-    let mut gba = Gba::new(&bios, &mut cart);
+    let mut gba = Gba::new(bios, cart);
     gba.reset_and_skip_bios();
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
