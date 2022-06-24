@@ -13,7 +13,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use clap::{arg, command};
+use clap::{arg, command, Arg};
 use sdl2::{
     event::Event,
     pixels::{Color, PixelFormatEnum},
@@ -133,10 +133,16 @@ fn main() -> Result<()> {
     const REDRAW_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
     let matches = command!()
-        .arg(arg!(--bios <FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
+        .arg(
+            Arg::new("skip-bios")
+                .long("skip-bios")
+                .help("Skip executing BIOS ROM after boot"),
+        )
+        .arg(arg!(-b --bios <FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
         .arg(arg!(<FILE> "Cartridge ROM file to execute").allow_invalid_utf8(true))
         .get_matches();
 
+    let skip_bios = matches.is_present("skip-bios");
     let bios_file = Path::new(matches.value_of_os("bios").unwrap());
     let cart_file = Path::new(matches.value_of_os("FILE").unwrap());
 
@@ -153,7 +159,7 @@ fn main() -> Result<()> {
     context.win_canvas.present();
 
     let mut gba = Gba::new(bios, cart);
-    gba.reset_and_skip_bios();
+    gba.reset(skip_bios);
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {

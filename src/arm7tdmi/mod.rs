@@ -81,36 +81,37 @@ impl Cpu {
         Self::default()
     }
 
-    pub fn reset(&mut self, bus: &mut impl Bus) {
+    pub fn reset(&mut self, bus: &mut impl Bus, skip_bios: bool) {
         self.run_state = RunState::Running;
         self.pending_exceptions.fill(false);
 
         self.enter_exception(bus, Exception::Reset);
         self.step_pipeline(bus);
-
         // Values other than PC and CPSR are considered indeterminate after a reset.
         // enter_exception gives LR an ugly value here; set it to zero for consistency.
         self.reg.r[LR_INDEX] = 0;
-    }
 
-    pub fn skip_bios(&mut self, bus: &mut impl Bus) {
-        self.reg.r[..=12].fill(0);
+        if skip_bios {
+            self.reg.r[..=12].fill(0);
+            self.reg.cpsr.irq_disabled = false;
+            self.reg.cpsr.fiq_disabled = false;
 
-        self.reg.change_mode(OperationMode::Supervisor);
-        self.reg.r[SP_INDEX] = 0x0300_7fe0;
-        self.reg.r[LR_INDEX] = 0;
-        self.reg.spsr = 0;
+            self.reg.change_mode(OperationMode::Supervisor);
+            self.reg.r[SP_INDEX] = 0x0300_7fe0;
+            self.reg.r[LR_INDEX] = 0;
+            self.reg.spsr = 0;
 
-        self.reg.change_mode(OperationMode::Interrupt);
-        self.reg.r[SP_INDEX] = 0x0300_7fa0;
-        self.reg.r[LR_INDEX] = 0;
-        self.reg.spsr = 0;
+            self.reg.change_mode(OperationMode::Interrupt);
+            self.reg.r[SP_INDEX] = 0x0300_7fa0;
+            self.reg.r[LR_INDEX] = 0;
+            self.reg.spsr = 0;
 
-        self.reg.change_mode(OperationMode::System);
-        self.reg.r[SP_INDEX] = 0x0300_7f00;
-        self.reg.r[PC_INDEX] = 0x0800_0000;
-        self.reload_pipeline(bus);
-        self.step_pipeline(bus);
+            self.reg.change_mode(OperationMode::System);
+            self.reg.r[SP_INDEX] = 0x0300_7f00;
+            self.reg.r[PC_INDEX] = 0x0800_0000;
+            self.reload_pipeline(bus);
+            self.step_pipeline(bus);
+        }
     }
 
     pub fn step(&mut self, bus: &mut impl Bus) {
@@ -130,19 +131,20 @@ impl Cpu {
 
         let instr = self.pipeline_instrs[0];
 
-        // let regs = self
-        //     .reg
-        //     .r
-        //     .iter()
-        //     .copied()
-        //     .map(|x| format!("{x:0x}"))
-        //     .collect::<Vec<_>>()
-        //     .join(", ");
-        // println!(
-        //     "{:08x}: {instr:08x}, r: [{regs}], cpsr: {:08x}",
-        //     self.reg.r[PC_INDEX],
-        //     self.reg.cpsr.bits()
-        // );
+        //         let regs = self
+        //             .reg
+        //             .r
+        //             .iter()
+        //             .copied()
+        //             .map(|x| format!("{x:0x}"))
+        //             .collect::<Vec<_>>()
+        //             .join(", ");
+        //         println!(
+        //             "{:08x}: {instr:08x}, r: [{regs}], cpsr: {:08x}, spsr {:08x}",
+        //             self.reg.r[PC_INDEX],
+        //             self.reg.cpsr.bits(),
+        //             self.reg.spsr
+        //         );
 
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),
@@ -155,11 +157,7 @@ impl Cpu {
     }
 
     fn step_pipeline(&mut self, bus: &mut impl Bus) {
-        self.reg.r[PC_INDEX] &= match self.reg.cpsr.state {
-            OperationState::Thumb => !1,
-            OperationState::Arm => !0b11,
-        };
-
+        self.reg.align_pc();
         self.pipeline_instrs[0] = self.pipeline_instrs[1];
         self.pipeline_instrs[1] = match self.reg.cpsr.state {
             OperationState::Thumb => bus.read_hword(self.reg.r[PC_INDEX]).into(),
@@ -168,15 +166,14 @@ impl Cpu {
 
         let instr_size = self.reg.cpsr.state.instr_size();
         self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(instr_size);
+        bus.prefetch_instr(self.reg.r[PC_INDEX]);
     }
 
     /// Forcibly aligns the PC and flushes the instruction pipeline, then fetches the next
     /// instruction at the PC, then advances the PC by one instruction.
-    ///
-    /// NOTE: The next instruction in the pipeline will be 0, as it is expected that
-    /// `step_pipeline()` will be called before getting the next instruction from the pipeline.
     fn reload_pipeline(&mut self, bus: &mut impl Bus) {
-        self.pipeline_instrs[0] = 0;
+        self.reg.align_pc();
+        bus.prefetch_instr(self.reg.r[PC_INDEX]);
         self.step_pipeline(bus);
     }
 
@@ -198,7 +195,8 @@ impl Cpu {
         self.reg.cpsr.state = OperationState::Arm;
 
         self.reg.spsr = old_cpsr.bits();
-        self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
+        let instr_size = self.reg.cpsr.state.instr_size();
+        self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_sub(instr_size);
         self.reg.r[PC_INDEX] = exception.vector_addr();
         self.reload_pipeline(bus);
 
@@ -209,7 +207,9 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::bus::tests::{NullBus, VecBus};
+
     use strum::IntoEnumIterator;
 
     fn assert_exception_result(cpu: &mut Cpu, exception: Exception, old_reg: Registers) {
@@ -241,7 +241,7 @@ mod tests {
         cpu.reg.r[PC_INDEX] = 0xbeef;
 
         let old_reg = cpu.reg;
-        cpu.reset(&mut NullBus);
+        cpu.reset(&mut NullBus, false);
         assert_exception_result(&mut cpu, Exception::Reset, old_reg);
 
         // condition flags should be preserved by reset
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn enter_exception_works() {
         let mut cpu = Cpu::new();
-        cpu.reset(&mut NullBus);
+        cpu.reset(&mut NullBus, false);
         for exception in Exception::iter() {
             cpu.reg.cpsr.fiq_disabled = false;
             cpu.reg.cpsr.irq_disabled = false;
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn raise_exception_works() {
         let mut cpu = Cpu::new();
-        cpu.reset(&mut NullBus);
+        cpu.reset(&mut NullBus, false);
 
         // IRQs are also disabled on reset, so we expect the Interrupt exception to be ignored.
         cpu.reg.cpsr.fiq_disabled = false;
@@ -332,7 +332,7 @@ mod tests {
         bus.write_hword(100, 0b001_00_001_00100001); // MOV R1,#33
 
         let mut cpu = Cpu::new();
-        cpu.reset(&mut bus);
+        cpu.reset(&mut bus, false);
         assert_eq!(8, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
 

@@ -189,7 +189,7 @@ impl Cpu {
     /// Thumb.6: Load PC relative.
     fn execute_thumb6(&mut self, bus: &mut impl Bus, instr: u16) {
         let offset = u32::from(instr.bits(..8));
-        let addr = self.reg.r[PC_INDEX].wrapping_add(offset * 4);
+        let addr = (self.reg.r[PC_INDEX] & !0b10).wrapping_add(offset * 4);
 
         // LDR Rd,[PC,#nn]
         self.reg.r[r_index(instr, 8)] = Self::op_ldr(bus, addr);

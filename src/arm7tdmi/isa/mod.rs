@@ -514,8 +514,8 @@ impl Cpu {
         self.reload_pipeline(bus);
     }
 
-    fn op_msr(&mut self, use_spsr: bool, write_flags: bool, write_control: bool, value: u32) {
-        if use_spsr {
+    fn op_msr(&mut self, write_spsr: bool, write_flags: bool, write_control: bool, value: u32) {
+        if write_spsr {
             // TODO: No SPSR exists in User & System mode. What happens if we attempt access?
             if write_control {
                 self.reg.spsr.set_bits(..8, value.bits(..8));
@@ -598,7 +598,7 @@ mod tests {
     impl<'a> InstrTest<'a> {
         pub fn run_with_bus(self, bus: &mut impl Bus) -> Cpu {
             let mut cpu = Cpu::new();
-            cpu.reset(bus);
+            cpu.reset(bus, false);
 
             if self.state == OperationState::Thumb {
                 cpu.op_bx(bus, 1); // Enter Thumb mode.

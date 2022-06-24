@@ -36,6 +36,8 @@ pub trait Bus {
         self.write_hword(addr, value as u16);
         self.write_hword(addr.wrapping_add(2), value.bits(16..) as _);
     }
+
+    fn prefetch_instr(&mut self, _addr: u32) {}
 }
 
 impl Bus for &[u8] {
@@ -82,8 +84,6 @@ impl<T: Bus> BusAlignedExt for T {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use std::cell::Cell;
-
     use super::*;
 
     #[derive(Debug)]
@@ -99,7 +99,7 @@ pub(super) mod tests {
     pub struct VecBus {
         buf: Vec<u8>,
         allow_oob: bool,
-        did_oob: Cell<bool>,
+        did_oob: bool,
     }
 
     impl VecBus {
@@ -107,18 +107,18 @@ pub(super) mod tests {
             Self {
                 buf: vec![0; len],
                 allow_oob: false,
-                did_oob: Cell::new(false),
+                did_oob: false,
             }
         }
 
-        pub fn assert_oob(&mut self, f: &impl Fn(&mut Self)) {
+        pub fn assert_oob(&mut self, f: &dyn Fn(&mut Self)) {
             assert!(!self.allow_oob, "cannot call assert_oob recursively");
             self.allow_oob = true;
-            self.did_oob.set(false);
+            self.did_oob = false;
             f(self);
 
             assert!(
-                self.did_oob.get(),
+                self.did_oob,
                 "expected oob VecBus access, but there was none"
             );
             self.allow_oob = false;
@@ -128,7 +128,7 @@ pub(super) mod tests {
     impl Bus for VecBus {
         fn read_byte(&mut self, addr: u32) -> u8 {
             self.buf.get(addr as usize).copied().unwrap_or_else(|| {
-                self.did_oob.set(true);
+                self.did_oob = true;
                 assert!(
                     self.allow_oob,
                     "oob VecBus read at address {addr:#010x} (len {})",
@@ -143,7 +143,7 @@ pub(super) mod tests {
             if let Some(v) = self.buf.get_mut(addr as usize) {
                 *v = value;
             } else {
-                self.did_oob.set(true);
+                self.did_oob = true;
                 assert!(
                     self.allow_oob,
                     "oob VecBus write at address {addr:#010x} (value {value}, len {})",

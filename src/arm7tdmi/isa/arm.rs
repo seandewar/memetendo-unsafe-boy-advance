@@ -80,6 +80,7 @@ impl Cpu {
         let r_value1 = r_index(instr, 16);
         let r_dst = r_index(instr, 12);
         let update_cond = instr.bit(20) && r_dst != PC_INDEX;
+        let set_cpsr = instr.bit(20) && r_dst == PC_INDEX;
 
         let old_carry = self.reg.cpsr.carry;
         let mut value1 = self.reg.r[r_value1];
@@ -176,11 +177,11 @@ impl Cpu {
             _ => unreachable!(),
         }
 
-        if r_dst == PC_INDEX {
+        if set_cpsr {
             self.op_msr(false, true, true, self.reg.spsr);
-            if !(8..=11).contains(&op) {
-                self.reload_pipeline(bus);
-            }
+        }
+        if r_dst == PC_INDEX && !(8..=11).contains(&op) {
+            self.reload_pipeline(bus);
         }
     }
 
@@ -978,6 +979,18 @@ mod tests {
             .run();
 
         assert_eq!(cpu.reg.cpsr.mode, OperationMode::User);
+
+        // AL R15,R0,#10101010b
+        let cpu = InstrTest::new_arm(0b1110_00_1_1100_0_0000_1111_0000_10101010)
+            .setup(&|cpu| {
+                cpu.reg.spsr = 0b00_1_10000.with_bits(28.., 0b0101);
+                cpu.reg.r[0] = 0b1100_0011.with_bit(31, true);
+            })
+            .assert_r(0, 0b1100_0011.with_bit(31, true))
+            .assert_r(PC_INDEX, 0b1110_1000.with_bit(31, true) + 8)
+            .run();
+
+        assert_eq!(cpu.reg.cpsr.mode, OperationMode::Supervisor);
 
         // AL R14,R0,#10101010b
         InstrTest::new_arm(0b1110_00_1_1100_0_0000_1110_0000_10101010)

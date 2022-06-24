@@ -86,6 +86,13 @@ impl Registers {
         self.r[LR_INDEX] = self.banks[new_bank_index].lr;
         self.spsr = self.banks[new_bank_index].spsr;
     }
+
+    pub(super) fn align_pc(&mut self) {
+        self.r[PC_INDEX] &= match self.cpsr.state {
+            OperationState::Thumb => !1,
+            OperationState::Arm => !0b11,
+        };
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

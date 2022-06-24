@@ -42,7 +42,9 @@ impl Bus for Cartridge<'_> {
 
 #[derive(Debug)]
 pub struct Bios<'a> {
-    pub rom: &'a Rom,
+    rom: &'a Rom,
+    readable: bool,
+    prefetch_addr: u32,
 }
 
 impl<'a> Bios<'a> {
@@ -51,6 +53,32 @@ impl<'a> Bios<'a> {
             return Err(());
         }
 
-        Ok(Self { rom })
+        Ok(Self {
+            rom,
+            readable: false,
+            prefetch_addr: 0,
+        })
+    }
+
+    pub fn reset(&mut self) {
+        self.readable = false;
+        self.prefetch_addr = 0;
+    }
+
+    pub fn update_protection(&mut self, prefetch_addr: Option<u32>) {
+        self.readable = prefetch_addr.is_some();
+        if let Some(addr) = prefetch_addr {
+            self.prefetch_addr = addr & !0b11;
+        }
+    }
+}
+
+impl Bus for Bios<'_> {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        self.rom.bytes().read_byte(if self.readable {
+            addr
+        } else {
+            self.prefetch_addr | (addr & 0b11)
+        })
     }
 }

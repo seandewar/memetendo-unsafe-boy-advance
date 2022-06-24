@@ -25,7 +25,7 @@ macro_rules! bus {
             ewram: &mut $gba.ewram,
             video: &mut $gba.video,
             cart: &mut $gba.cart,
-            bios: &$gba.bios,
+            bios: &mut $gba.bios,
         }
     }};
 }
@@ -42,14 +42,14 @@ impl<'b, 'c> Gba<'b, 'c> {
         }
     }
 
-    pub fn reset(&mut self) {
-        self.cpu.reset(&mut bus!(self));
-    }
+    pub fn reset(&mut self, skip_bios: bool) {
+        self.bios.reset();
+        self.cpu.reset(&mut bus!(self), skip_bios);
 
-    pub fn reset_and_skip_bios(&mut self) {
-        self.reset();
-        self.cpu.skip_bios(&mut bus!(self));
-        self.iwram[0x7e00..].fill(0);
+        if skip_bios {
+            self.iwram[0x7e00..].fill(0);
+            self.bios.update_protection(Some(0xdc + 8));
+        }
     }
 
     pub fn step(&mut self, screen: &mut impl Screen) {
@@ -62,7 +62,7 @@ pub(super) struct GbaBus<'a, 'b, 'c> {
     pub iwram: &'a mut [u8],
     pub ewram: &'a mut [u8],
     pub video: &'a mut VideoController,
-    pub bios: &'a Bios<'b>,
+    pub bios: &'a mut Bios<'b>,
     pub cart: &'a mut Cartridge<'c>,
 }
 
@@ -131,7 +131,7 @@ impl Bus for GbaBus<'_, '_, '_> {
     fn read_byte(&mut self, addr: u32) -> u8 {
         match addr {
             // BIOS
-            0x0000_0000..=0x0000_3fff => self.bios.rom.bytes().read_byte(addr & 0x3fff),
+            0x0000_0000..=0x0000_3fff => self.bios.read_byte(addr),
             // External WRAM
             0x0200_0000..=0x02ff_ffff => self.ewram.as_ref().read_byte(addr & 0x3_ffff),
             // Internal WRAM
@@ -207,5 +207,10 @@ impl Bus for GbaBus<'_, '_, '_> {
             0x0700_0000..=0x07ff_ffff => self.video.oam.as_mut().write_hword(addr & 0x3ff, value),
             _ => bus::write_hword_as_bytes(self, addr, value),
         }
+    }
+
+    fn prefetch_instr(&mut self, addr: u32) {
+        self.bios
+            .update_protection(if addr < 0x4000 { Some(addr) } else { None });
     }
 }
