@@ -2,7 +2,7 @@ use intbits::Bits;
 use strum_macros::FromRepr;
 
 #[derive(Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
-pub(super) enum OperationMode {
+pub enum OperationMode {
     User = 0b10000,
     FastInterrupt = 0b10001,
     Interrupt = 0b10010,
@@ -19,25 +19,25 @@ impl Default for OperationMode {
 }
 
 impl OperationMode {
-    pub(super) fn bits(self) -> u32 {
+    pub fn bits(self) -> u32 {
         self as _
     }
 
     #[allow(clippy::cast_possible_truncation)]
-    pub(super) fn from_bits(bits: u32) -> Option<Self> {
+    pub fn from_bits(bits: u32) -> Option<Self> {
         Self::from_repr(bits.bits(..5) as _)
     }
 }
 
-pub(super) const SP_INDEX: usize = 13;
-pub(super) const LR_INDEX: usize = 14;
-pub(super) const PC_INDEX: usize = 15;
+pub const SP_INDEX: usize = 13;
+pub const LR_INDEX: usize = 14;
+pub const PC_INDEX: usize = 15;
 
 #[derive(Default, Copy, Clone, Debug)]
-pub(super) struct Registers {
+pub struct Registers {
     pub(super) r: [u32; 16],
     pub(super) cpsr: StatusRegister,
-    pub(super) spsr: u32,
+    pub spsr: u32,
     banks: [Bank; 6],
     fiq_r8_12_bank: [u32; 5],
 }
@@ -63,7 +63,7 @@ impl OperationMode {
 }
 
 impl Registers {
-    pub(super) fn change_mode(&mut self, mode: OperationMode) {
+    pub fn change_mode(&mut self, mode: OperationMode) {
         self.change_bank(mode);
         self.cpsr.mode = mode;
     }
@@ -87,7 +87,7 @@ impl Registers {
         self.spsr = self.banks[new_bank_index].spsr;
     }
 
-    pub(super) fn align_pc(&mut self) {
+    pub fn align_pc(&mut self) {
         self.r[PC_INDEX] &= match self.cpsr.state {
             OperationState::Thumb => !1,
             OperationState::Arm => !0b11,
@@ -96,7 +96,7 @@ impl Registers {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum OperationState {
+pub enum OperationState {
     Arm = 0,
     Thumb = 1 << 5,
 }
@@ -108,11 +108,11 @@ impl Default for OperationState {
 }
 
 impl OperationState {
-    fn bits(self) -> u32 {
+    pub fn bits(self) -> u32 {
         self as _
     }
 
-    pub(super) fn instr_size(self) -> u32 {
+    pub fn instr_size(self) -> u32 {
         match self {
             Self::Arm => 4,
             Self::Thumb => 2,
@@ -122,7 +122,7 @@ impl OperationState {
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) struct StatusRegister {
+pub struct StatusRegister {
     pub signed: bool,
     pub zero: bool,
     pub carry: bool,
@@ -130,21 +130,12 @@ pub(super) struct StatusRegister {
 
     pub irq_disabled: bool,
     pub fiq_disabled: bool,
-    pub state: OperationState,
-    pub mode: OperationMode,
+    pub(super) state: OperationState,
+    pub(super) mode: OperationMode,
 }
 
 impl StatusRegister {
-    #[cfg(test)]
-    pub(super) fn from_bits(bits: u32) -> Result<Self, ()> {
-        let mut psr = Self::default();
-        psr.set_control_from_bits(bits)?;
-        psr.set_flags_from_bits(bits);
-
-        Ok(psr)
-    }
-
-    pub(super) fn bits(self) -> u32 {
+    pub fn bits(self) -> u32 {
         let mut bits = 0;
         bits.set_bit(31, self.signed);
         bits.set_bit(30, self.zero);
@@ -159,19 +150,28 @@ impl StatusRegister {
         bits
     }
 
-    pub(super) fn set_flags_from_bits(&mut self, bits: u32) {
+    pub fn set_flags_from_bits(&mut self, bits: u32) {
         self.signed = bits.bit(31);
         self.zero = bits.bit(30);
         self.carry = bits.bit(29);
         self.overflow = bits.bit(28);
     }
 
-    pub(super) fn set_control_from_bits(&mut self, bits: u32) -> Result<OperationMode, ()> {
+    pub fn set_control_from_bits(&mut self, bits: u32) -> Result<OperationMode, ()> {
         self.irq_disabled = bits.bit(7);
         self.fiq_disabled = bits.bit(6);
         self.mode = OperationMode::from_bits(bits).ok_or(())?;
 
         Ok(self.mode)
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_bits(bits: u32) -> Result<Self, ()> {
+        let mut psr = Self::default();
+        psr.set_control_from_bits(bits)?;
+        psr.set_flags_from_bits(bits);
+
+        Ok(psr)
     }
 }
 

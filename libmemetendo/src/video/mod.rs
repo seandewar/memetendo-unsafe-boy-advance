@@ -50,23 +50,23 @@ const VBLANK_DOT: u8 = 160;
 
 const CYCLES_PER_DOT: u8 = 4;
 
-pub(super) struct VideoController {
+pub struct Controller {
     frame_buf: FrameBuffer,
     cycle_accum: u8,
     x: u16,
     y: u8,
 
-    pub(super) palette_ram: Box<[u8]>,
-    pub(super) vram: Box<[u8]>,
-    pub(super) oam: Box<[u8]>,
+    pub palette_ram: Box<[u8]>,
+    pub vram: Box<[u8]>,
+    pub oam: Box<[u8]>,
 
-    pub(super) dispcnt: DisplayControl,
-    pub(super) dispstat: DisplayStatus,
-    pub(super) green_swap: u16,
-    pub(super) bgcnt: [BackgroundControl; 4],
+    pub dispcnt: DisplayControl,
+    pub dispstat: DisplayStatus,
+    pub green_swap: u16,
+    pub bgcnt: [BackgroundControl; 4],
 }
 
-impl Default for VideoController {
+impl Default for Controller {
     fn default() -> Self {
         Self::new()
     }
@@ -81,7 +81,8 @@ fn rgb555_to_24(value: u16) -> u32 {
     u32::from_le_bytes([r * 8, g * 8, b * 8, 0])
 }
 
-impl VideoController {
+impl Controller {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             frame_buf: FrameBuffer::default(),
@@ -214,7 +215,8 @@ impl VideoController {
         }
     }
 
-    pub(super) fn dispstat_lo_bits(&self) -> u8 {
+    #[must_use]
+    pub fn dispstat_lo_bits(&self) -> u8 {
         self.dispstat.lo_bits(
             self.y >= VBLANK_DOT && self.y != 227,
             self.x >= HBLANK_DOT,
@@ -222,7 +224,8 @@ impl VideoController {
         )
     }
 
-    pub(super) fn vcount(&self) -> u8 {
+    #[must_use]
+    pub fn vcount(&self) -> u8 {
         self.y
     }
 }

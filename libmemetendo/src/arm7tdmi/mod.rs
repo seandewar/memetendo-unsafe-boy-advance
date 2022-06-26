@@ -21,15 +21,18 @@ pub enum Exception {
 }
 
 impl Exception {
-    fn from_priority(priority: usize) -> Option<Self> {
+    #[must_use]
+    pub fn from_priority(priority: usize) -> Option<Self> {
         Self::from_repr(priority)
     }
 
-    fn priority(self) -> usize {
+    #[must_use]
+    pub fn priority(self) -> usize {
         self as _
     }
 
-    fn vector_addr(self) -> u32 {
+    #[must_use]
+    pub fn vector_addr(self) -> u32 {
         match self {
             Self::Reset => 0x00,
             Self::UndefinedInstr => 0x04,
@@ -41,7 +44,8 @@ impl Exception {
         }
     }
 
-    fn entry_mode(self) -> OperationMode {
+    #[must_use]
+    pub fn entry_mode(self) -> OperationMode {
         match self {
             Self::Reset | Self::SoftwareInterrupt => OperationMode::Supervisor,
             Self::PrefetchAbort | Self::DataAbort => OperationMode::Abort,
@@ -51,13 +55,14 @@ impl Exception {
         }
     }
 
-    fn disables_fiq(self) -> bool {
+    #[must_use]
+    pub fn disables_fiq(self) -> bool {
         self == Self::Reset || self == Self::FastInterrupt
     }
 }
 
 #[derive(PartialEq, Eq, Debug)]
-enum RunState {
+pub enum RunState {
     NotRunning,
     Running,
 }
@@ -77,6 +82,7 @@ pub struct Cpu {
 }
 
 impl Cpu {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -114,6 +120,9 @@ impl Cpu {
         }
     }
 
+    // We only panic if the priority number of a pending exception does not map to an exception,
+    // which should be impossible.
+    #[allow(clippy::missing_panics_doc)]
     pub fn step(&mut self, bus: &mut impl Bus) {
         if self.run_state != RunState::Running {
             return;

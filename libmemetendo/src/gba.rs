@@ -2,25 +2,26 @@ use intbits::Bits;
 
 use crate::{
     arm7tdmi::Cpu,
-    bus::{self, Bus},
+    bus,
     rom::{Bios, Cartridge},
-    video::{Screen, VideoController},
+    video::{self, Screen},
 };
 
 pub struct Gba<'b, 'c> {
-    cpu: Cpu,
-    iwram: Box<[u8]>,
-    ewram: Box<[u8]>,
-    video: VideoController,
-    bios: Bios<'b>,
-    cart: Cartridge<'c>,
+    pub cpu: Cpu,
+    pub iwram: Box<[u8]>,
+    pub ewram: Box<[u8]>,
+    pub video: video::Controller,
+    pub bios: Bios<'b>,
+    pub cart: Cartridge<'c>,
 }
 
 // A member fn would be nicer, but using &mut self over $gba unnecessarily mutably borrows the
 // *whole* Gba struct.
+#[macro_export]
 macro_rules! bus {
     ($gba:ident) => {{
-        GbaBus {
+        Bus {
             iwram: &mut $gba.iwram,
             ewram: &mut $gba.ewram,
             video: &mut $gba.video,
@@ -31,12 +32,13 @@ macro_rules! bus {
 }
 
 impl<'b, 'c> Gba<'b, 'c> {
+    #[must_use]
     pub fn new(bios: Bios<'b>, cart: Cartridge<'c>) -> Self {
         Self {
             cpu: Cpu::new(),
             iwram: vec![0; 0x8000].into_boxed_slice(),
             ewram: vec![0; 0x4_0000].into_boxed_slice(),
-            video: VideoController::new(),
+            video: video::Controller::new(),
             bios,
             cart,
         }
@@ -58,15 +60,15 @@ impl<'b, 'c> Gba<'b, 'c> {
     }
 }
 
-pub(super) struct GbaBus<'a, 'b, 'c> {
+pub struct Bus<'a, 'b, 'c> {
     pub iwram: &'a mut [u8],
     pub ewram: &'a mut [u8],
-    pub video: &'a mut VideoController,
+    pub video: &'a mut video::Controller,
     pub bios: &'a mut Bios<'b>,
     pub cart: &'a mut Cartridge<'c>,
 }
 
-impl GbaBus<'_, '_, '_> {
+impl Bus<'_, '_, '_> {
     fn read_io(&self, addr: u32) -> u8 {
         match addr & 0x3ff {
             // DISPCNT
@@ -127,7 +129,7 @@ impl GbaBus<'_, '_, '_> {
     }
 }
 
-impl Bus for GbaBus<'_, '_, '_> {
+impl bus::Bus for Bus<'_, '_, '_> {
     fn read_byte(&mut self, addr: u32) -> u8 {
         match addr {
             // BIOS

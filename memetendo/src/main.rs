@@ -1,12 +1,5 @@
 #![warn(clippy::pedantic)]
 
-mod arm7tdmi;
-mod bus;
-mod gba;
-mod rom;
-mod util;
-mod video;
-
 use std::{
     path::Path,
     time::{Duration, Instant},
@@ -14,18 +7,17 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use clap::{arg, command, Arg};
+use libmemetendo::{
+    gba::Gba,
+    rom::{Bios, Cartridge, Rom},
+    video::{FrameBuffer, Screen, FRAME_HEIGHT, FRAME_WIDTH},
+};
 use sdl2::{
     event::Event,
     pixels::{Color, PixelFormatEnum},
     render::{Texture, TextureCreator, WindowCanvas},
     video::WindowContext,
     EventPump, Sdl, VideoSubsystem,
-};
-use video::{FrameBuffer, Screen, FRAME_HEIGHT, FRAME_WIDTH};
-
-use crate::{
-    gba::Gba,
-    rom::{Bios, Cartridge, Rom},
 };
 
 struct SdlContext {

@@ -1,0 +1,12 @@
+[package]
+name = "libmemetendo"
+version = "0.1.0"
+description = "A Rust library for emulating the Game Boy Advance"
+authors = ["Sean Dewar <https://github.com/seandewar>"]
+edition = "2021"
+
+[dependencies]
+strum = "0.24.0"
+strum_macros = "0.24.0"
+intbits = "0.2.0"
+bitmatch = "0.1.1"

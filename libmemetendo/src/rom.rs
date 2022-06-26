@@ -1,4 +1,9 @@
-use std::{fs, io, path::Path};
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+    fs, io,
+    path::Path,
+};
 
 use crate::bus::Bus;
 
@@ -6,10 +11,14 @@ use crate::bus::Bus;
 pub struct Rom(Box<[u8]>);
 
 impl Rom {
+    /// # Errors
+    ///
+    /// Returns an error if reading fails. See [`fs::read`].
     pub fn from_file(path: impl AsRef<Path>) -> io::Result<Self> {
         Ok(Self(fs::read(path)?.into_boxed_slice()))
     }
 
+    #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.0
     }
@@ -22,9 +31,12 @@ pub struct Cartridge<'a> {
 }
 
 impl<'a> Cartridge<'a> {
-    pub fn new(rom: &'a Rom) -> Result<Self, ()> {
+    /// # Errors
+    ///
+    /// Returns an error if the size of the cartridge ROM image exceeds 32MiB.
+    pub fn new(rom: &'a Rom) -> Result<Self, BadSize> {
         if rom.bytes().len() > 0x200_0000 {
-            return Err(());
+            return Err(BadSize);
         }
 
         Ok(Self {
@@ -48,9 +60,12 @@ pub struct Bios<'a> {
 }
 
 impl<'a> Bios<'a> {
-    pub fn new(rom: &'a Rom) -> Result<Self, ()> {
+    /// # Errors
+    ///
+    /// Returns an error if the size of the BIOS ROM image is not 16KiB.
+    pub fn new(rom: &'a Rom) -> Result<Self, BadSize> {
         if rom.bytes().len() != 0x4000 {
-            return Err(());
+            return Err(BadSize);
         }
 
         Ok(Self {
@@ -82,3 +97,14 @@ impl Bus for Bios<'_> {
         })
     }
 }
+
+#[derive(Debug)]
+pub struct BadSize;
+
+impl Display for BadSize {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Invalid ROM size")
+    }
+}
+
+impl Error for BadSize {}
