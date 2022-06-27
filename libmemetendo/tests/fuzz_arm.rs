@@ -1,84 +1,39 @@
+//! Test runner for DenSinH/FuzzARM
+
+mod runner;
+mod util;
+
 use std::{borrow::Cow, path::Path};
 
-use libmemetendo::{
-    bus::Bus,
-    gba::Gba,
-    rom::{Bios, Cartridge, Rom},
-    video::NullScreen,
-};
+use image::RgbImage;
+use libmemetendo::{bus::Bus, gba::Gba};
+use once_cell::sync::Lazy;
+use runner::{Runner, Screen, TaskStatus};
+use util::read_image;
 
-fn run_test(test_path: impl AsRef<Path>) {
-    let test_rom =
-        Rom::from_file(test_path).expect("failed to read test ROM; did you fetch the submodules?");
-    let bios_rom = Rom::from_file("tests/bios.bin").expect(
-        "failed to read BIOS ROM; place it in a \"bios.bin\" file within the tests directory",
-    );
-    Runner::new(&bios_rom, &test_rom).run(1_500_000);
-}
+static PASS_SCREEN: Lazy<RgbImage> = Lazy::new(|| read_image("tests/fuzz_arm/ok.png"));
 
-#[test]
-fn arm_any() {
-    run_test("tests/FuzzARM/ARM_Any.gba");
-}
+struct Task;
 
-#[test]
-fn arm_data_processing() {
-    run_test("tests/FuzzARM/ARM_DataProcessing.gba");
-}
-
-#[test]
-fn thumb_any() {
-    run_test("tests/FuzzARM/THUMB_Any.gba");
-}
-
-#[test]
-fn thumb_data_processing() {
-    run_test("tests/FuzzARM/THUMB_DataProcessing.gba");
-}
-
-struct Runner<'a>(Gba<'a, 'a>);
-
-impl<'a> Runner<'a> {
-    fn new(bios_rom: &'a Rom, test_rom: &'a Rom) -> Self {
-        let bios = Bios::new(bios_rom).expect("bad BIOS ROM");
-        let cart = Cartridge::new(test_rom).expect("bad test ROM");
-
-        Self(Gba::new(bios, cart))
-    }
-
-    fn run(&mut self, max_steps: u32) {
-        self.0.reset(true);
-        for step in 0..max_steps {
-            self.0.step(&mut NullScreen);
-
-            if (step % 100 == 99 || step == max_steps - 1) && self.check_finished() {
-                println!("FuzzARM test passed after {step} steps!");
-                return;
-            }
-        }
-
-        panic!("FuzzARM test timed out after {max_steps} steps!");
-    }
-
-    fn check_finished(&mut self) -> bool {
-        const EXPECTED_VRAM: &[u8] = include_bytes!("fuzz_arm_expected_vram.bin");
-
+impl runner::Task for Task {
+    fn check_task(&mut self, gba: &Gba, screen: &Screen) -> TaskStatus {
         // Test dumps 64 bytes to EWRAM when it fails. Check if the state bytes were modified.
-        if self.0.ewram[..4].iter().any(|&b| b != 0) {
-            self.panic_failed();
+        if gba.ewram[..4].iter().any(|&b| b != 0) {
+            TaskStatus::Fail
+        } else if screen.image == *PASS_SCREEN {
+            TaskStatus::Pass
+        } else {
+            TaskStatus::NotDone
         }
-
-        // Test writes 1504 bytes to VRAM to display "End of testing" when it succeeds.
-        self.0.video.vram[1503] == 1 && &self.0.video.vram[..EXPECTED_VRAM.len()] == EXPECTED_VRAM
     }
 
-    fn panic_failed(&mut self) {
+    fn on_fail(&mut self, gba: &mut Gba, screen: &mut Screen) {
         // Wait a bit for the results to be dumped.
         for _ in 0..250_000 {
-            self.0.step(&mut NullScreen);
+            gba.step(screen);
         }
 
-        let mut ewram = self.0.ewram.as_ref();
+        let mut ewram = gba.ewram.as_ref();
         let state = match &ewram[..4] {
             b"AAAA" => Cow::Borrowed("Arm"),
             b"TTTT" => Cow::Borrowed("Thumb"),
@@ -115,4 +70,33 @@ impl<'a> Runner<'a> {
              Expected cpsr: {expected_cpsr:#010x}"
         );
     }
+}
+
+fn run_test(test_path: impl AsRef<Path>) {
+    Runner::new(test_path).run(2000, &mut Task);
+}
+
+// These tests are slow, especially on debug builds, so they are ignored by default.
+#[ignore]
+#[test]
+fn arm_any() {
+    run_test("tests/fuzz_arm/FuzzARM/ARM_Any.gba");
+}
+
+#[ignore]
+#[test]
+fn arm_data_processing() {
+    run_test("tests/fuzz_arm/FuzzARM/ARM_DataProcessing.gba");
+}
+
+#[ignore]
+#[test]
+fn thumb_any() {
+    run_test("tests/fuzz_arm/FuzzARM/THUMB_Any.gba");
+}
+
+#[ignore]
+#[test]
+fn thumb_data_processing() {
+    run_test("tests/fuzz_arm/FuzzARM/THUMB_DataProcessing.gba");
 }

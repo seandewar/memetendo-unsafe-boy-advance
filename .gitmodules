@@ -1,3 +1,6 @@
 [submodule "libmemetendo/tests/FuzzARM"]
-	path = libmemetendo/tests/FuzzARM
+	path = libmemetendo/tests/fuzz_arm/FuzzARM
 	url = https://github.com/DenSinH/FuzzARM
+[submodule "libmemetendo/tests/gba-tests"]
+	path = libmemetendo/tests/jsmolka/gba-tests
+	url = https://github.com/jsmolka/gba-tests

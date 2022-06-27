@@ -15,7 +15,7 @@ use self::reg::{BackgroundControl, DisplayControl, DisplayStatus};
 pub const FRAME_WIDTH: usize = HBLANK_DOT as _;
 pub const FRAME_HEIGHT: usize = VBLANK_DOT as _;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FrameBuffer(pub Box<[u32]>);
 
 impl Default for FrameBuffer {
@@ -42,12 +42,6 @@ pub trait Screen {
     fn present_frame(&mut self, frame_buf: &FrameBuffer);
 }
 
-pub struct NullScreen;
-
-impl Screen for NullScreen {
-    fn present_frame(&mut self, _frame_buf: &FrameBuffer) {}
-}
-
 const HORIZ_DOTS: u16 = 308;
 const VERT_DOTS: u8 = 228;
 
@@ -72,12 +66,6 @@ pub struct Controller {
     pub bgcnt: [BackgroundControl; 4],
 }
 
-impl Default for Controller {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[allow(clippy::cast_possible_truncation)]
 fn rgb555_to_24(value: u16) -> u32 {
     let r = value.bits(..5) as u8;
@@ -85,6 +73,12 @@ fn rgb555_to_24(value: u16) -> u32 {
     let b = value.bits(10..15) as u8;
 
     u32::from_le_bytes([r * 8, g * 8, b * 8, 0])
+}
+
+impl Default for Controller {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Controller {
