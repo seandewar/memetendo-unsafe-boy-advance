@@ -1,0 +1,3 @@
+[submodule "libmemetendo/tests/FuzzARM"]
+	path = libmemetendo/tests/FuzzARM
+	url = https://github.com/DenSinH/FuzzARM

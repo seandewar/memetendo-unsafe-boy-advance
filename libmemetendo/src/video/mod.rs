@@ -42,6 +42,12 @@ pub trait Screen {
     fn present_frame(&mut self, frame_buf: &FrameBuffer);
 }
 
+pub struct NullScreen;
+
+impl Screen for NullScreen {
+    fn present_frame(&mut self, _frame_buf: &FrameBuffer) {}
+}
+
 const HORIZ_DOTS: u16 = 308;
 const VERT_DOTS: u8 = 228;
 
