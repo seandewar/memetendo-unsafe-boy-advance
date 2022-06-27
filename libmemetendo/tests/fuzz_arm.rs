@@ -13,7 +13,7 @@ fn run_test(test_path: impl AsRef<Path>) {
     let bios_rom = Rom::from_file("tests/bios.bin").expect(
         "failed to read BIOS ROM; place it in a \"bios.bin\" file within the tests directory",
     );
-    Runner::new(&bios_rom, &test_rom).run(1_000_000);
+    Runner::new(&bios_rom, &test_rom).run(1_500_000);
 }
 
 #[test]
@@ -51,7 +51,7 @@ impl<'a> Runner<'a> {
         for step in 0..max_steps {
             self.0.step(&mut NullScreen);
 
-            if self.check_finished() {
+            if (step % 100 == 99 || step == max_steps - 1) && self.check_finished() {
                 println!("FuzzARM test passed after {step} steps!");
                 return;
             }
@@ -60,11 +60,11 @@ impl<'a> Runner<'a> {
         panic!("FuzzARM test timed out after {max_steps} steps!");
     }
 
-    fn check_finished(&self) -> bool {
+    fn check_finished(&mut self) -> bool {
         const EXPECTED_VRAM: &[u8] = include_bytes!("fuzz_arm_expected_vram.bin");
 
-        // Test dumps 64 bytes to EWRAM when it fails.
-        if self.0.ewram[63] != 0 {
+        // Test dumps 64 bytes to EWRAM when it fails. Check if the state bytes were modified.
+        if self.0.ewram[..4].iter().any(|&b| b != 0) {
             self.panic_failed();
         }
 
@@ -72,9 +72,13 @@ impl<'a> Runner<'a> {
         self.0.video.vram[1503] == 1 && &self.0.video.vram[..EXPECTED_VRAM.len()] == EXPECTED_VRAM
     }
 
-    fn panic_failed(&self) {
-        let mut ewram = self.0.ewram.as_ref();
+    fn panic_failed(&mut self) {
+        // Wait a bit for the results to be dumped.
+        for _ in 0..250_000 {
+            self.0.step(&mut NullScreen);
+        }
 
+        let mut ewram = self.0.ewram.as_ref();
         let state = match &ewram[..4] {
             b"AAAA" => Cow::Borrowed("Arm"),
             b"TTTT" => Cow::Borrowed("Thumb"),
