@@ -5,7 +5,7 @@ mod util;
 
 use std::path::Path;
 
-use image::{self, RgbImage};
+use image::RgbImage;
 use libmemetendo::gba::Gba;
 use once_cell::sync::Lazy;
 use runner::{Runner, Screen, TaskStatus};

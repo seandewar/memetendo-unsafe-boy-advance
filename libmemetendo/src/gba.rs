@@ -4,7 +4,7 @@ use crate::{
     arm7tdmi::Cpu,
     bus,
     rom::{Bios, Cartridge},
-    video::{self, Screen},
+    video::{self, screen::Screen},
 };
 
 pub struct Gba<'b, 'c> {

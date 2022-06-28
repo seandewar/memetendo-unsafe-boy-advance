@@ -10,7 +10,7 @@ use clap::{arg, command, Arg};
 use libmemetendo::{
     gba::Gba,
     rom::{Bios, Cartridge, Rom},
-    video::{FrameBuffer, Screen, FRAME_HEIGHT, FRAME_WIDTH},
+    video::screen::{FrameBuffer, Screen, FRAME_HEIGHT, FRAME_WIDTH},
 };
 use sdl2::{
     event::Event,
@@ -71,7 +71,7 @@ impl SdlContext {
 
 struct SdlScreen<'r> {
     frame_buf: FrameBuffer,
-    texture_is_stale: bool,
+    is_stale: bool,
     texture: Texture<'r>,
 }
 
@@ -87,27 +87,18 @@ impl<'r> SdlScreen<'r> {
             .context("failed to create screen texture")?;
 
         Ok(Self {
-            frame_buf: FrameBuffer::default(),
-            texture_is_stale: true,
+            frame_buf: FrameBuffer::new(),
+            is_stale: true,
             texture,
         })
     }
 
     fn get_texture(&mut self) -> Result<&Texture> {
-        if self.texture_is_stale {
+        if self.is_stale {
             self.texture
-                .with_lock(None, |buf, pitch| {
-                    for y in 0..FRAME_HEIGHT {
-                        for x in 0..FRAME_WIDTH {
-                            let rgb = &self.frame_buf[(x, y)].to_le_bytes()[..3];
-                            let offset = y * pitch + x * 3;
-                            buf[offset..offset + 3].copy_from_slice(rgb);
-                        }
-                    }
-                })
+                .with_lock(None, |buf, _| buf.copy_from_slice(&self.frame_buf.0[..]))
                 .map_err(|e| anyhow!("failed to lock screen texture: {e}"))?;
-
-            self.texture_is_stale = false;
+            self.is_stale = false;
         }
 
         Ok(&self.texture)
@@ -117,7 +108,7 @@ impl<'r> SdlScreen<'r> {
 impl Screen for SdlScreen<'_> {
     fn present_frame(&mut self, frame_buf: &FrameBuffer) {
         self.frame_buf.0.copy_from_slice(&frame_buf.0[..]);
-        self.texture_is_stale = true;
+        self.is_stale = true;
     }
 }
 

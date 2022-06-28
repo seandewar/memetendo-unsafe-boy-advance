@@ -1,46 +1,18 @@
 mod reg;
-
-use std::ops::{Index, IndexMut};
+pub mod screen;
 
 use intbits::Bits;
 
 use crate::{
     arm7tdmi::{Cpu, Exception},
     bus::Bus,
-    video::reg::ModeType,
+    video::{reg::ModeType, screen::FRAME_WIDTH},
 };
 
-use self::reg::{BackgroundControl, DisplayControl, DisplayStatus};
-
-pub const FRAME_WIDTH: usize = HBLANK_DOT as _;
-pub const FRAME_HEIGHT: usize = VBLANK_DOT as _;
-
-#[derive(Clone, Debug)]
-pub struct FrameBuffer(pub Box<[u32]>);
-
-impl Default for FrameBuffer {
-    fn default() -> Self {
-        Self(vec![0; FRAME_WIDTH * FRAME_HEIGHT].into_boxed_slice())
-    }
-}
-
-impl Index<(usize, usize)> for FrameBuffer {
-    type Output = u32;
-
-    fn index(&self, index: (usize, usize)) -> &Self::Output {
-        &self.0[index.1 * FRAME_WIDTH + index.0]
-    }
-}
-
-impl IndexMut<(usize, usize)> for FrameBuffer {
-    fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
-        &mut self.0[index.1 * FRAME_WIDTH + index.0]
-    }
-}
-
-pub trait Screen {
-    fn present_frame(&mut self, frame_buf: &FrameBuffer);
-}
+use self::{
+    reg::{BackgroundControl, DisplayControl, DisplayStatus},
+    screen::{FrameBuffer, Rgb, Screen},
+};
 
 const HORIZ_DOTS: u16 = 308;
 const VERT_DOTS: u8 = 228;
@@ -66,15 +38,6 @@ pub struct Controller {
     pub bgcnt: [BackgroundControl; 4],
 }
 
-#[allow(clippy::cast_possible_truncation)]
-fn rgb555_to_24(value: u16) -> u32 {
-    let r = value.bits(..5) as u8;
-    let g = value.bits(5..10) as u8;
-    let b = value.bits(10..15) as u8;
-
-    u32::from_le_bytes([r * 8, g * 8, b * 8, 0])
-}
-
 impl Default for Controller {
     fn default() -> Self {
         Self::new()
@@ -85,7 +48,7 @@ impl Controller {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            frame_buf: FrameBuffer::default(),
+            frame_buf: FrameBuffer::new(),
             cycle_accum: 0,
             x: 0,
             y: 0,
@@ -102,7 +65,8 @@ impl Controller {
     pub fn step(&mut self, screen: &mut impl Screen, cpu: &mut Cpu, cycles: u32) {
         for _ in 0..cycles {
             if self.x < HBLANK_DOT && self.y < VBLANK_DOT {
-                self.frame_buf[(self.x.into(), self.y.into())] = self.compute_colour();
+                self.frame_buf
+                    .set_pixel(self.x.into(), self.y.into(), self.compute_pixel());
             }
 
             self.cycle_accum += 1;
@@ -137,11 +101,11 @@ impl Controller {
         }
     }
 
-    fn compute_colour(&self) -> u32 {
+    fn compute_pixel(&self) -> Rgb {
         const TILE_DIMENSION: usize = 8;
 
         if self.dispcnt.forced_blank {
-            return 0xff_ff_ff;
+            return 0xff_ff_ff.into();
         }
 
         // TODO: palette colour 0 is always transparent
@@ -169,7 +133,7 @@ impl Controller {
                 }
 
                 if self.bgcnt[0].color256 {
-                    0x00_ff_00 // TODO
+                    0x00_ff_00.into() // TODO
                 } else {
                     // 4-bit depth
                     let palette_group_idx = usize::from(tile_info.bits(12..));
@@ -179,7 +143,7 @@ impl Controller {
                     #[allow(clippy::cast_possible_truncation)]
                     let palette_offset = 2 * (16 * palette_group_idx + palette_idx) as u32;
 
-                    rgb555_to_24(self.palette_ram.as_ref().read_hword(palette_offset))
+                    Rgb::from_555(self.palette_ram.as_ref().read_hword(palette_offset))
                 }
             }
             ModeType::Bitmap if self.dispcnt.display_bg[2] => {
@@ -190,7 +154,7 @@ impl Controller {
                         let dot_idx = dot_y * FRAME_WIDTH + dot_x;
 
                         #[allow(clippy::cast_possible_truncation)]
-                        rgb555_to_24(self.vram.as_ref().read_hword(2 * dot_idx as u32))
+                        Rgb::from_555(self.vram.as_ref().read_hword(2 * dot_idx as u32))
                     }
                     4 => {
                         let dot_idx =
@@ -199,7 +163,7 @@ impl Controller {
                         //       rendering the object layer
                         let palette_offset = u32::from(2 * self.vram[dot_idx]);
 
-                        rgb555_to_24(self.palette_ram.as_ref().read_hword(palette_offset))
+                        Rgb::from_555(self.palette_ram.as_ref().read_hword(palette_offset))
                     }
                     5 => {
                         // TODO: this is actually 160x128 pixels, we probably want to rescale...
@@ -211,7 +175,7 @@ impl Controller {
                     _ => unreachable!(),
                 }
             }
-            _ => 0xff_ff_ff,
+            _ => 0xff_ff_ff.into(),
         }
     }
 

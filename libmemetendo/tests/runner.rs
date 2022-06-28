@@ -1,10 +1,10 @@
 use std::{mem::replace, path::Path};
 
-use image::{Rgb, RgbImage};
+use image::RgbImage;
 use libmemetendo::{
     gba::Gba,
     rom::{Bios, Cartridge, Rom},
-    video::{self, FrameBuffer, FRAME_HEIGHT, FRAME_WIDTH},
+    video::screen::{self, FrameBuffer, FRAME_HEIGHT, FRAME_WIDTH},
 };
 use once_cell::sync::Lazy;
 
@@ -99,15 +99,12 @@ impl Screen {
     }
 }
 
-impl video::Screen for Screen {
+impl screen::Screen for Screen {
     fn present_frame(&mut self, frame_buf: &FrameBuffer) {
-        for y in 0..FRAME_HEIGHT {
-            for x in 0..FRAME_WIDTH {
-                let bytes = &frame_buf[(x, y)].to_le_bytes()[..3];
-                self.image
-                    .put_pixel(x as u32, y as u32, Rgb(bytes.try_into().unwrap()));
-            }
-        }
+        self.image
+            .as_flat_samples_mut()
+            .as_mut_slice()
+            .copy_from_slice(&frame_buf.0[..]);
         self.is_new_frame = true;
     }
 }
