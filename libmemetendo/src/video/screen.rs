@@ -2,6 +2,13 @@ use intbits::Bits;
 
 use super::{HBLANK_DOT, VBLANK_DOT};
 
+pub const WIDTH: usize = HBLANK_DOT as _;
+pub const HEIGHT: usize = VBLANK_DOT as _;
+
+pub trait Screen {
+    fn present_frame(&mut self, frame_buf: &FrameBuffer);
+}
+
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub struct Rgb {
     r: u8,
@@ -45,9 +52,6 @@ impl Rgb {
     }
 }
 
-pub const FRAME_WIDTH: usize = HBLANK_DOT as _;
-pub const FRAME_HEIGHT: usize = VBLANK_DOT as _;
-
 #[derive(Clone, Debug)]
 pub struct FrameBuffer(pub Box<[u8]>);
 
@@ -60,7 +64,7 @@ impl Default for FrameBuffer {
 impl FrameBuffer {
     #[must_use]
     pub fn new() -> Self {
-        Self(vec![0; FRAME_WIDTH * FRAME_HEIGHT * 3].into_boxed_slice())
+        Self(vec![0; WIDTH * HEIGHT * 3].into_boxed_slice())
     }
 
     // This shouldn't panic, as the slice should always have 3 elements.
@@ -77,10 +81,6 @@ impl FrameBuffer {
     }
 
     fn pixel_index(x: usize, y: usize) -> usize {
-        (y * FRAME_WIDTH + x) * 3
+        (y * WIDTH + x) * 3
     }
-}
-
-pub trait Screen {
-    fn present_frame(&mut self, frame_buf: &FrameBuffer);
 }

@@ -21,7 +21,7 @@ pub struct Gba<'b, 'c> {
 #[macro_export]
 macro_rules! bus {
     ($gba:ident) => {{
-        Bus {
+        $crate::gba::Bus {
             iwram: &mut $gba.iwram,
             ewram: &mut $gba.ewram,
             video: &mut $gba.video,

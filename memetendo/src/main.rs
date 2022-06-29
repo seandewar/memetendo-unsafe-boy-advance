@@ -10,7 +10,7 @@ use clap::{arg, command, Arg};
 use libmemetendo::{
     gba::Gba,
     rom::{Bios, Cartridge, Rom},
-    video::screen::{FrameBuffer, Screen, FRAME_HEIGHT, FRAME_WIDTH},
+    video::screen::{self, FrameBuffer, Screen},
 };
 use sdl2::{
     event::Event,
@@ -44,8 +44,8 @@ impl SdlContext {
         let window = sdl_video
             .window(
                 "Memetendo Unsafe Boy Advance",
-                FRAME_WIDTH as u32,
-                FRAME_HEIGHT as u32,
+                screen::WIDTH as u32,
+                screen::HEIGHT as u32,
             )
             .position_centered()
             .resizable()
@@ -81,8 +81,8 @@ impl<'r> SdlScreen<'r> {
         let texture = texture_creator
             .create_texture_streaming(
                 PixelFormatEnum::RGB24,
-                FRAME_WIDTH as u32,
-                FRAME_HEIGHT as u32,
+                screen::WIDTH as u32,
+                screen::HEIGHT as u32,
             )
             .context("failed to create screen texture")?;
 

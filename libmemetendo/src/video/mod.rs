@@ -6,7 +6,7 @@ use intbits::Bits;
 use crate::{
     arm7tdmi::{Cpu, Exception},
     bus::Bus,
-    video::{reg::ModeType, screen::FRAME_WIDTH},
+    video::reg::ModeType,
 };
 
 use self::{
@@ -151,14 +151,14 @@ impl Controller {
 
                 match self.dispcnt.mode {
                     3 => {
-                        let dot_idx = dot_y * FRAME_WIDTH + dot_x;
+                        let dot_idx = dot_y * screen::WIDTH + dot_x;
 
                         #[allow(clippy::cast_possible_truncation)]
                         Rgb::from_555(self.vram.as_ref().read_hword(2 * dot_idx as u32))
                     }
                     4 => {
                         let dot_idx =
-                            self.dispcnt.frame_vram_offset() + dot_y * FRAME_WIDTH + dot_x;
+                            self.dispcnt.frame_vram_offset() + dot_y * screen::WIDTH + dot_x;
                         // TODO: colour 0 is the backdrop colour, and also acts as transparent when
                         //       rendering the object layer
                         let palette_offset = u32::from(2 * self.vram[dot_idx]);

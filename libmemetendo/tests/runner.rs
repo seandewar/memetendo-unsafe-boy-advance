@@ -4,7 +4,7 @@ use image::RgbImage;
 use libmemetendo::{
     gba::Gba,
     rom::{Bios, Cartridge, Rom},
-    video::screen::{self, FrameBuffer, FRAME_HEIGHT, FRAME_WIDTH},
+    video::screen::{self, FrameBuffer},
 };
 use once_cell::sync::Lazy;
 
@@ -93,7 +93,7 @@ impl Default for Screen {
 impl Screen {
     fn new() -> Self {
         Self {
-            image: RgbImage::new(FRAME_WIDTH as u32, FRAME_HEIGHT as u32),
+            image: RgbImage::new(screen::WIDTH as u32, screen::HEIGHT as u32),
             is_new_frame: false,
         }
     }
