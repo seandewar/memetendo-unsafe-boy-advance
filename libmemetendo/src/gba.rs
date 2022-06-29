@@ -84,7 +84,6 @@ impl Bus<'_, '_, '_> {
             0x5 => self.video.dispstat.vcount_target,
             // VCOUNT
             0x6 => self.video.vcount(),
-            0x7 => 0,
             // BG0CNT
             0x8 => self.video.bgcnt[0].lo_bits(),
             0x9 => self.video.bgcnt[0].hi_bits(),
@@ -97,7 +96,7 @@ impl Bus<'_, '_, '_> {
             // BG3CNT
             0xe => self.video.bgcnt[3].lo_bits(),
             0xf => self.video.bgcnt[3].hi_bits(),
-            _ => 0xff,
+            _ => 0,
         }
     }
 

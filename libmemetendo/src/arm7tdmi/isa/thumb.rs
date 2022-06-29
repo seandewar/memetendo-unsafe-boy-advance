@@ -365,27 +365,24 @@ impl Cpu {
     /// Thumb.18: Unconditional branch.
     fn execute_thumb18(&mut self, bus: &mut impl Bus, instr: u16) {
         // B label
-        self.op_branch(
-            bus,
-            self.reg.r[PC_INDEX],
-            2 * arbitrary_sign_extend!(i32, instr.bits(..11), 11),
-        );
+        let addr_offset = 2 * arbitrary_sign_extend!(i32, instr.bits(..11), 11);
+        self.op_branch(bus, self.reg.r[PC_INDEX], addr_offset);
     }
 
     /// Thumb.19: Long branch with link.
     fn execute_thumb19(&mut self, bus: &mut impl Bus, instr: u16) {
         let hi_part = !instr.bit(11);
-        let addr_offset_part = u32::from(instr.bits(..11));
+        let addr_offset_part = i32::from(instr.bits(..11));
 
         // BL label
         if hi_part {
-            self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_add(addr_offset_part << 12);
+            let addr_offset_hi = arbitrary_sign_extend!(u32, addr_offset_part << 12, 23);
+            self.reg.r[LR_INDEX] = self.reg.r[PC_INDEX].wrapping_add(addr_offset_hi);
         } else {
             // Adjust for pipelining, which has us two instructions ahead.
             let return_addr = self.reg.r[PC_INDEX].wrapping_sub(self.reg.cpsr.state.instr_size());
 
-            #[allow(clippy::cast_possible_wrap)]
-            self.op_branch(bus, self.reg.r[LR_INDEX], (addr_offset_part << 1) as _);
+            self.op_branch(bus, self.reg.r[LR_INDEX], addr_offset_part << 1);
             self.reg.r[LR_INDEX] = return_addr | 1; // bit 0 set indicates Thumb
         };
     }
@@ -1996,14 +1993,24 @@ mod tests {
     #[test]
     fn execute_thumb19() {
         // BL label
-        InstrTest::new_thumb(0b11110_00000010100) // #14000h (hi part)
+        // #14FFEh
+        InstrTest::new_thumb(0b11110_00000010100) // #14000h (hi part))
             .assert_r(LR_INDEX, 0x14000 + 4)
             .run();
-
         InstrTest::new_thumb(0b11111_11111111111) // #FFEh (lo part)
             .setup(&|cpu| cpu.reg.r[LR_INDEX] = 0x14004)
             .assert_r(LR_INDEX, 3)
             .assert_r(PC_INDEX, 0x14004 + 0xffe + 4)
+            .run();
+
+        // #FFFFF802h
+        InstrTest::new_thumb(0b11110_11111111111) // #FFFFF000h (hi part)
+            .assert_r(LR_INDEX, 0xffff_f000 + 4)
+            .run();
+        InstrTest::new_thumb(0b11111_10000000001) // #802h (lo part)
+            .setup(&|cpu| cpu.reg.r[LR_INDEX] = 0xffff_f004)
+            .assert_r(LR_INDEX, 3)
+            .assert_r(PC_INDEX, 0xffff_f004 + 0x802 + 4)
             .run();
     }
 }
