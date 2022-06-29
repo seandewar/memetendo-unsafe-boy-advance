@@ -11,6 +11,15 @@ memory and BIOS tests in [gba-tests](https://github.com/jsmolka/gba-tests)!
 ![gba-tests PPU shade test result](media/gba-tests-ppu-shade-result.png)
 ![gba-tests PPU stripes test result](media/gba-tests-ppu-stripes-result.png)
 
+## Tests
+
+Run `cargo test` to run tests.
+
+Integration tests exist that automate the running of various test ROMs.  
+To set them up, download the submodules in this repository by using `git
+submodule update --init` and copy a GBA BIOS ROM to
+`/libmemetendo/tests/bios.bin`.
+
 ## What's with the name?
 
 ![Origin of the name](media/name-origin.png)
