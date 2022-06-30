@@ -12,10 +12,12 @@ Currently passes:
 - [ARMWrestler GBA](https://github.com/destoer/armwrestler-gba-fixed).
 - Hello world and invalid condition tests in
   [gba\_tests](https://github.com/destoer/gba_tests).
+- Some tests from
+  [shonumi/Emu-Docs](https://github.com/shonumi/Emu-Docs/tree/master/GameBoy%20Advance/test_roms).
 
 ![gba\_tests hello world result](media/destoer-hello-world-result.png)
 ![gba-tests PPU shades result](media/jsmolka-ppu-shades-result.png)
-![gba-tests PPU stripes result](media/jsmolka-ppu-stripes-result.png)
+![key\_demo from tonc\_gba\_demos](media/tonc-key-demo.png)
 
 ## Tests
 
