@@ -1,3 +1,8 @@
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+};
+
 use intbits::Bits;
 use strum_macros::FromRepr;
 
@@ -19,11 +24,13 @@ impl Default for OperationMode {
 }
 
 impl OperationMode {
+    #[must_use]
     pub fn bits(self) -> u32 {
         self as _
     }
 
     #[allow(clippy::cast_possible_truncation)]
+    #[must_use]
     pub fn from_bits(bits: u32) -> Option<Self> {
         Self::from_repr(bits.bits(..5) as _)
     }
@@ -35,7 +42,7 @@ pub const PC_INDEX: usize = 15;
 
 #[derive(Default, Copy, Clone, Debug)]
 pub struct Registers {
-    pub(super) r: [u32; 16],
+    pub r: [u32; 16],
     pub(super) cpsr: StatusRegister,
     pub spsr: u32,
     banks: [Bank; 6],
@@ -93,6 +100,11 @@ impl Registers {
             OperationState::Arm => !0b11,
         };
     }
+
+    #[must_use]
+    pub fn cpsr(&self) -> &StatusRegister {
+        &self.cpsr
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -108,10 +120,12 @@ impl Default for OperationState {
 }
 
 impl OperationState {
+    #[must_use]
     pub fn bits(self) -> u32 {
         self as _
     }
 
+    #[must_use]
     pub fn instr_size(self) -> u32 {
         match self {
             Self::Arm => 4,
@@ -135,6 +149,7 @@ pub struct StatusRegister {
 }
 
 impl StatusRegister {
+    #[must_use]
     pub fn bits(self) -> u32 {
         let mut bits = 0;
         bits.set_bit(31, self.signed);
@@ -157,16 +172,22 @@ impl StatusRegister {
         self.overflow = bits.bit(28);
     }
 
-    pub fn set_control_from_bits(&mut self, bits: u32) -> Result<OperationMode, ()> {
+    /// # Errors
+    ///
+    /// Returns an error if the bits do not map to a valid operation mode.
+    pub fn set_control_from_bits(
+        &mut self,
+        bits: u32,
+    ) -> Result<OperationMode, InvalidOperationMode> {
         self.irq_disabled = bits.bit(7);
         self.fiq_disabled = bits.bit(6);
-        self.mode = OperationMode::from_bits(bits).ok_or(())?;
+        self.mode = OperationMode::from_bits(bits).ok_or(InvalidOperationMode)?;
 
         Ok(self.mode)
     }
 
     #[cfg(test)]
-    pub(super) fn from_bits(bits: u32) -> Result<Self, ()> {
+    pub(super) fn from_bits(bits: u32) -> Result<Self, InvalidOperationMode> {
         let mut psr = Self::default();
         psr.set_control_from_bits(bits)?;
         psr.set_flags_from_bits(bits);
@@ -174,6 +195,17 @@ impl StatusRegister {
         Ok(psr)
     }
 }
+
+#[derive(Debug)]
+pub struct InvalidOperationMode;
+
+impl Display for InvalidOperationMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Invalid operation mode")
+    }
+}
+
+impl Error for InvalidOperationMode {}
 
 #[cfg(test)]
 mod tests {

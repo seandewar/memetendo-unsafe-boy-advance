@@ -34,9 +34,9 @@ impl<'a> Cartridge<'a> {
     /// # Errors
     ///
     /// Returns an error if the size of the cartridge ROM image exceeds 32MiB.
-    pub fn new(rom: &'a Rom) -> Result<Self, BadSize> {
+    pub fn new(rom: &'a Rom) -> Result<Self, InvalidSize> {
         if rom.bytes().len() > 0x200_0000 {
-            return Err(BadSize);
+            return Err(InvalidSize);
         }
 
         Ok(Self {
@@ -63,9 +63,9 @@ impl<'a> Bios<'a> {
     /// # Errors
     ///
     /// Returns an error if the size of the BIOS ROM image is not 16KiB.
-    pub fn new(rom: &'a Rom) -> Result<Self, BadSize> {
+    pub fn new(rom: &'a Rom) -> Result<Self, InvalidSize> {
         if rom.bytes().len() != 0x4000 {
-            return Err(BadSize);
+            return Err(InvalidSize);
         }
 
         Ok(Self {
@@ -99,12 +99,12 @@ impl Bus for Bios<'_> {
 }
 
 #[derive(Debug)]
-pub struct BadSize;
+pub struct InvalidSize;
 
-impl Display for BadSize {
+impl Display for InvalidSize {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "Invalid ROM size")
     }
 }
 
-impl Error for BadSize {}
+impl Error for InvalidSize {}

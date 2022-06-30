@@ -1,5 +1,5 @@
 mod isa;
-mod reg;
+pub mod reg;
 
 use std::mem::replace;
 
@@ -76,7 +76,7 @@ impl Default for RunState {
 #[derive(Default, Debug)]
 pub struct Cpu {
     run_state: RunState,
-    reg: Registers,
+    pub reg: Registers,
     pipeline_instrs: [u32; 2],
     pending_exceptions: [bool; 7],
 }
@@ -165,7 +165,7 @@ impl Cpu {
         self.step_pipeline(bus);
     }
 
-    fn step_pipeline(&mut self, bus: &mut impl Bus) {
+    pub fn step_pipeline(&mut self, bus: &mut impl Bus) {
         self.reg.align_pc();
         self.pipeline_instrs[0] = self.pipeline_instrs[1];
         self.pipeline_instrs[1] = match self.reg.cpsr.state {
@@ -180,7 +180,7 @@ impl Cpu {
 
     /// Forcibly aligns the PC and flushes the instruction pipeline, then fetches the next
     /// instruction at the PC, then advances the PC by one instruction.
-    fn reload_pipeline(&mut self, bus: &mut impl Bus) {
+    pub fn reload_pipeline(&mut self, bus: &mut impl Bus) {
         self.reg.align_pc();
         bus.prefetch_instr(self.reg.r[PC_INDEX]);
         self.step_pipeline(bus);

@@ -9,11 +9,13 @@ use anyhow::{anyhow, Context, Result};
 use clap::{arg, command, Arg};
 use libmemetendo::{
     gba::Gba,
+    keypad::Key,
     rom::{Bios, Cartridge, Rom},
     video::screen::{self, FrameBuffer, Screen},
 };
 use sdl2::{
     event::Event,
+    keyboard::Scancode,
     pixels::{Color, PixelFormatEnum},
     render::{Texture, TextureCreator, WindowCanvas},
     video::WindowContext,
@@ -161,6 +163,19 @@ fn main() -> Result<()> {
                     break 'main_loop;
                 }
             }
+
+            let kb = context.event_pump.keyboard_state();
+            gba.keypad.pressed[Key::A] = kb.is_scancode_pressed(Scancode::X);
+            gba.keypad.pressed[Key::B] = kb.is_scancode_pressed(Scancode::Z);
+            gba.keypad.pressed[Key::Select] = kb.is_scancode_pressed(Scancode::LShift)
+                || kb.is_scancode_pressed(Scancode::RShift);
+            gba.keypad.pressed[Key::Start] = kb.is_scancode_pressed(Scancode::Return);
+            gba.keypad.pressed[Key::Up] = kb.is_scancode_pressed(Scancode::Up);
+            gba.keypad.pressed[Key::Down] = kb.is_scancode_pressed(Scancode::Down);
+            gba.keypad.pressed[Key::Left] = kb.is_scancode_pressed(Scancode::Left);
+            gba.keypad.pressed[Key::Right] = kb.is_scancode_pressed(Scancode::Right);
+            gba.keypad.pressed[Key::L] = kb.is_scancode_pressed(Scancode::A);
+            gba.keypad.pressed[Key::R] = kb.is_scancode_pressed(Scancode::S);
 
             context.win_canvas.clear();
             context

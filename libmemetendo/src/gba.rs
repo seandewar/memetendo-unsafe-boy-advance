@@ -3,6 +3,7 @@ use intbits::Bits;
 use crate::{
     arm7tdmi::Cpu,
     bus,
+    keypad::Keypad,
     rom::{Bios, Cartridge},
     video::{self, screen::Screen},
 };
@@ -12,23 +13,10 @@ pub struct Gba<'b, 'c> {
     pub iwram: Box<[u8]>,
     pub ewram: Box<[u8]>,
     pub video: video::Controller,
+    pub keypad: Keypad,
     pub bios: Bios<'b>,
     pub cart: Cartridge<'c>,
-}
-
-// A member fn would be nicer, but using &mut self over $gba unnecessarily mutably borrows the
-// *whole* Gba struct.
-#[macro_export]
-macro_rules! bus {
-    ($gba:ident) => {{
-        $crate::gba::Bus {
-            iwram: &mut $gba.iwram,
-            ewram: &mut $gba.ewram,
-            video: &mut $gba.video,
-            cart: &mut $gba.cart,
-            bios: &mut $gba.bios,
-        }
-    }};
+    io_todo: Box<[u8]>,
 }
 
 impl<'b, 'c> Gba<'b, 'c> {
@@ -37,10 +25,12 @@ impl<'b, 'c> Gba<'b, 'c> {
         Self {
             cpu: Cpu::new(),
             iwram: vec![0; 0x8000].into_boxed_slice(),
-            ewram: vec![0; 0x4_0000].into_boxed_slice(),
+            ewram: vec![0; 0x40000].into_boxed_slice(),
             video: video::Controller::new(),
+            keypad: Keypad::new(),
             bios,
             cart,
+            io_todo: vec![0; 0x801].into_boxed_slice(),
         }
     }
 
@@ -55,6 +45,7 @@ impl<'b, 'c> Gba<'b, 'c> {
     }
 
     pub fn step(&mut self, screen: &mut impl Screen) {
+        self.keypad.step(&mut self.cpu);
         self.cpu.step(&mut bus!(self));
         self.video.step(screen, &mut self.cpu, 8);
     }
@@ -64,8 +55,27 @@ pub struct Bus<'a, 'b, 'c> {
     pub iwram: &'a mut [u8],
     pub ewram: &'a mut [u8],
     pub video: &'a mut video::Controller,
+    pub keypad: &'a mut Keypad,
     pub bios: &'a mut Bios<'b>,
     pub cart: &'a mut Cartridge<'c>,
+    io_todo: &'a mut [u8],
+}
+
+// A member fn would be nicer, but using &mut self over $gba unnecessarily mutably borrows the
+// *whole* Gba struct.
+#[macro_export]
+macro_rules! bus {
+    ($gba:ident) => {{
+        $crate::gba::Bus {
+            iwram: &mut $gba.iwram,
+            ewram: &mut $gba.ewram,
+            video: &mut $gba.video,
+            keypad: &mut $gba.keypad,
+            cart: &mut $gba.cart,
+            bios: &mut $gba.bios,
+            io_todo: &mut $gba.io_todo,
+        }
+    }};
 }
 
 impl Bus<'_, '_, '_> {
@@ -84,6 +94,7 @@ impl Bus<'_, '_, '_> {
             0x5 => self.video.dispstat.vcount_target,
             // VCOUNT
             0x6 => self.video.vcount(),
+            0x7 => 0,
             // BG0CNT
             0x8 => self.video.bgcnt[0].lo_bits(),
             0x9 => self.video.bgcnt[0].hi_bits(),
@@ -96,6 +107,14 @@ impl Bus<'_, '_, '_> {
             // BG3CNT
             0xe => self.video.bgcnt[3].lo_bits(),
             0xf => self.video.bgcnt[3].hi_bits(),
+            // KEYINPUT
+            0x130 => self.keypad.keyinput_lo_bits(),
+            0x131 => self.keypad.keyinput_hi_bits(),
+            // KEYCNT
+            0x132 => self.keypad.keycnt.lo_bits(),
+            0x133 => self.keypad.keycnt.hi_bits(),
+            // TODO
+            addr @ 0..=0x800 => self.io_todo[addr as usize],
             _ => 0,
         }
     }
@@ -123,6 +142,11 @@ impl Bus<'_, '_, '_> {
             // BG3CNT
             0xe => self.video.bgcnt[3].set_lo_bits(value),
             0xf => self.video.bgcnt[3].set_hi_bits(value),
+            // KEYCNT
+            0x132 => self.keypad.keycnt.set_lo_bits(value),
+            0x133 => self.keypad.keycnt.set_hi_bits(value),
+            // TODO
+            addr @ 0..=0x800 => self.io_todo[addr as usize] = value,
             _ => {}
         }
     }

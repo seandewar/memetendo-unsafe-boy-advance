@@ -3,6 +3,7 @@
 pub mod arm7tdmi;
 pub mod bus;
 pub mod gba;
+pub mod keypad;
 pub mod rom;
 mod util;
 pub mod video;

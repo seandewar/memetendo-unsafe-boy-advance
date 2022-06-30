@@ -288,8 +288,12 @@ impl Cpu {
 
     /// Thumb.12: Get relative address.
     fn execute_thumb12(&mut self, instr: u16) {
-        let offset = u32::from(instr.bits(..8));
-        let base_addr = self.reg.r[if instr.bit(11) { SP_INDEX } else { PC_INDEX }];
+        let offset = u32::from(instr.bits(..8)) * 4;
+        let base_addr = if instr.bit(11) {
+            self.reg.r[SP_INDEX]
+        } else {
+            self.reg.r[PC_INDEX] & !0b10
+        };
 
         // ADD Rd,(PC/SP),#nn
         self.reg.r[r_index(instr, 8)] = self.op_add(false, base_addr, offset);
@@ -298,7 +302,6 @@ impl Cpu {
     /// Thumb.13: Add offset to SP.
     fn execute_thumb13(&mut self, instr: u16) {
         let offset = u32::from(instr.bits(..7)) * 4;
-
         self.reg.r[SP_INDEX] = if instr.bit(7) {
             // SUB SP,#nn
             self.op_sub(false, self.reg.r[SP_INDEX], offset)
@@ -1603,10 +1606,16 @@ mod tests {
     #[test]
     fn execute_thumb12() {
         // ADD Rd,[PC,#nn]
-        InstrTest::new_thumb(0b1010_0_000_11001000) // R0,[PC,#200]
+        InstrTest::new_thumb(0b1010_0_000_11001000) // R0,[PC,#800]
             .setup(&|cpu| cpu.reg.r[PC_INDEX] = 20)
-            .assert_r(0, 220)
+            .assert_r(0, 820)
             .assert_r(PC_INDEX, 22)
+            .run();
+
+        InstrTest::new_thumb(0b1010_0_000_11001000) // R0,[PC,#800]
+            .setup(&|cpu| cpu.reg.r[PC_INDEX] = 22)
+            .assert_r(0, 820)
+            .assert_r(PC_INDEX, 24)
             .run();
 
         InstrTest::new_thumb(0b1010_0_000_00000000) // R0,[PC,#0]
@@ -1615,10 +1624,16 @@ mod tests {
             .run();
 
         // ADD Rd,[SP,#nn]
-        InstrTest::new_thumb(0b1010_1_000_11001000) // R0,[SP,#200]
+        InstrTest::new_thumb(0b1010_1_000_11001000) // R0,[SP,#800]
             .setup(&|cpu| cpu.reg.r[SP_INDEX] = 40)
-            .assert_r(0, 240)
+            .assert_r(0, 840)
             .assert_r(SP_INDEX, 40)
+            .run();
+
+        InstrTest::new_thumb(0b1010_1_000_11001000) // R0,[SP,#800]
+            .setup(&|cpu| cpu.reg.r[SP_INDEX] = 42)
+            .assert_r(0, 842)
+            .assert_r(SP_INDEX, 42)
             .run();
 
         InstrTest::new_thumb(0b1010_1_000_00000000) // R0,[SP,#0]
@@ -1994,7 +2009,7 @@ mod tests {
     fn execute_thumb19() {
         // BL label
         // #14FFEh
-        InstrTest::new_thumb(0b11110_00000010100) // #14000h (hi part))
+        InstrTest::new_thumb(0b11110_00000010100) // #14000h (hi part)
             .assert_r(LR_INDEX, 0x14000 + 4)
             .run();
         InstrTest::new_thumb(0b11111_11111111111) // #FFEh (lo part)

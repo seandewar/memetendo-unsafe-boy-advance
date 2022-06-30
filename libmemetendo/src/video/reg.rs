@@ -1,5 +1,12 @@
 use intbits::Bits;
 
+#[derive(Eq, PartialEq, Debug)]
+pub enum ModeType {
+    Tile,
+    Bitmap,
+    Invalid,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Debug)]
 pub struct DisplayControl {
@@ -13,13 +20,6 @@ pub struct DisplayControl {
     pub display_obj: bool,
     pub display_window: [bool; 2],
     pub display_obj_window: bool,
-}
-
-#[derive(Eq, PartialEq, Debug)]
-pub enum ModeType {
-    Tile,
-    Bitmap,
-    Invalid,
 }
 
 impl DisplayControl {
@@ -150,7 +150,7 @@ impl BackgroundControl {
     }
 
     pub fn hi_bits(self) -> u8 {
-        let mut bits = 0;
+        let mut bits = 0xff;
         bits.set_bits(..5, self.base_block);
         bits.set_bit(5, self.wraparound);
         bits.set_bits(6.., self.screen_size);
