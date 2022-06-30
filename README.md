@@ -9,6 +9,7 @@ Currently passes:
   [FuzzARM](https://github.com/DenSinH/FuzzARM).
 - ARM, THUMB, PPU, memory and BIOS tests in
   [gba-tests](https://github.com/jsmolka/gba-tests).
+- [ARMWrestler GBA](https://github.com/destoer/armwrestler-gba-fixed).
 - Hello world and invalid condition tests in
   [gba\_tests](https://github.com/destoer/gba_tests).
 
