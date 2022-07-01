@@ -61,7 +61,7 @@ impl Exception {
     }
 }
 
-#[derive(Default, PartialEq, Eq, Debug)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RunState {
     #[default]
     NotRunning,

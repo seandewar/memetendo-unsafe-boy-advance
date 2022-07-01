@@ -115,7 +115,7 @@ impl Bus<'_, '_, '_> {
             0x133 => self.keypad.keycnt.hi_bits(),
             // TODO
             addr @ 0..=0x800 => self.io_todo[addr as usize],
-            _ => 0,
+            _ => 0xff,
         }
     }
 
@@ -150,6 +150,16 @@ impl Bus<'_, '_, '_> {
             _ => {}
         }
     }
+
+    fn vram_offset(addr: u32) -> u32 {
+        let offset = addr & 0x1_ffff;
+
+        if offset < 0x1_8000 {
+            offset
+        } else {
+            offset & !0xf000
+        }
+    }
 }
 
 impl bus::Bus for Bus<'_, '_, '_> {
@@ -166,7 +176,9 @@ impl bus::Bus for Bus<'_, '_, '_> {
             // Palette RAM
             0x0500_0000..=0x05ff_ffff => self.video.palette_ram.as_ref().read_byte(addr & 0x3ff),
             // VRAM
-            0x0600_0000..=0x06ff_ffff => self.video.vram.as_ref().read_byte(addr & 0x1_7fff),
+            0x0600_0000..=0x06ff_ffff => {
+                self.video.vram.as_ref().read_byte(Self::vram_offset(addr))
+            }
             // OAM
             0x0700_0000..=0x07ff_ffff => self.video.oam.as_ref().read_byte(addr & 0x3ff),
             // ROM Mirror; TODO: Wait states 0, 1 and 2
@@ -199,11 +211,12 @@ impl bus::Bus for Bus<'_, '_, '_> {
             // VRAM
             0x0600_0000..=0x06ff_ffff => {
                 // Like palette RAM, but only write a hword for BG data.
-                if (addr as usize & 0x1_7fff) < self.video.dispcnt.obj_vram_offset() {
+                let offset = Self::vram_offset(addr);
+                if (offset as usize) < self.video.dispcnt.obj_vram_offset() {
                     self.video
                         .vram
                         .as_mut()
-                        .write_hword(addr & 0x1_7fff, u16::from_le_bytes([value, value]));
+                        .write_hword(offset, u16::from_le_bytes([value, value]));
                 }
             }
             // SRAM
@@ -226,7 +239,10 @@ impl bus::Bus for Bus<'_, '_, '_> {
             }
             // VRAM
             0x0600_0000..=0x06ff_ffff => {
-                self.video.vram.as_mut().write_hword(addr & 0x1_7fff, value);
+                self.video
+                    .vram
+                    .as_mut()
+                    .write_hword(Self::vram_offset(addr), value);
             }
             // OAM
             0x0700_0000..=0x07ff_ffff => self.video.oam.as_mut().write_hword(addr & 0x3ff, value),

@@ -162,18 +162,19 @@ impl Controller {
             }
             4 => {
                 let dot_idx = self.dispcnt.frame_vram_offset() + dot_y * screen::WIDTH + dot_x;
-                // TODO: colour 0 is the backdrop colour, and also acts as transparent when
-                //       rendering the object layer
-                let palette_offset = u32::from(2 * self.vram[dot_idx]);
+                let palette_offset = 2 * u32::from(self.vram[dot_idx]);
 
                 Rgb::from_555(self.palette_ram.as_ref().read_hword(palette_offset))
             }
             5 => {
-                // TODO: this is actually 160x128 pixels, we probably want to rescale...
+                if dot_x >= 160 || dot_y >= 128 {
+                    // Use backdrop colour.
+                    return Rgb::from_555(self.palette_ram.as_ref().read_hword(0));
+                }
                 let dot_idx = self.dispcnt.frame_vram_offset() + dot_y * 160 + dot_x;
 
-                let _ = dot_idx;
-                todo!();
+                #[allow(clippy::cast_possible_truncation)]
+                Rgb::from_555(self.vram.as_ref().read_hword(2 * dot_idx as u32))
             }
             _ => unreachable!(),
         }

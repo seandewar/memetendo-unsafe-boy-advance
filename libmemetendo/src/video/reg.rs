@@ -1,6 +1,6 @@
 use intbits::Bits;
 
-#[derive(Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ModeType {
     Tile,
     Bitmap,
