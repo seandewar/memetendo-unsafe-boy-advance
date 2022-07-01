@@ -6,21 +6,16 @@ use std::{
 use intbits::Bits;
 use strum_macros::FromRepr;
 
-#[derive(Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
 pub enum OperationMode {
     User = 0b10000,
     FastInterrupt = 0b10001,
     Interrupt = 0b10010,
+    #[default]
     Supervisor = 0b10011,
     Abort = 0b10111,
     UndefinedInstr = 0b11011,
     System = 0b11111,
-}
-
-impl Default for OperationMode {
-    fn default() -> Self {
-        Self::Supervisor
-    }
 }
 
 impl OperationMode {
@@ -107,16 +102,11 @@ impl Registers {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum OperationState {
+    #[default]
     Arm = 0,
     Thumb = 1 << 5,
-}
-
-impl Default for OperationState {
-    fn default() -> Self {
-        Self::Arm
-    }
 }
 
 impl OperationState {

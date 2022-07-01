@@ -442,11 +442,7 @@ impl Cpu {
     }
 }
 
-#[allow(
-    clippy::unusual_byte_groupings,
-    clippy::too_many_lines,
-    clippy::unnecessary_cast // lint doesn't work properly with negative literals
-)]
+#[allow(clippy::unusual_byte_groupings, clippy::too_many_lines)]
 #[cfg(test)]
 mod tests {
     use crate::{

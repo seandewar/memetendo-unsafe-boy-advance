@@ -235,7 +235,6 @@ impl bus::Bus for Bus<'_, '_, '_> {
     }
 
     fn prefetch_instr(&mut self, addr: u32) {
-        self.bios
-            .update_protection(if addr < 0x4000 { Some(addr) } else { None });
+        self.bios.update_protection((addr < 0x4000).then_some(addr));
     }
 }

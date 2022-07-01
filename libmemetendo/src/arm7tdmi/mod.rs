@@ -61,16 +61,11 @@ impl Exception {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Default, PartialEq, Eq, Debug)]
 pub enum RunState {
+    #[default]
     NotRunning,
     Running,
-}
-
-impl Default for RunState {
-    fn default() -> Self {
-        Self::NotRunning
-    }
 }
 
 #[derive(Default, Debug)]
