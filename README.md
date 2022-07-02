@@ -4,6 +4,10 @@ Nothing to see here yet; I'll be working on this in my spare time :)
 
 ## Status
 
+![krom 3D engine result](media/krom-3d-engine.png)
+![krom cylinder result](media/krom-cylinder.png)
+![key\_demo from tonc\_gba\_demos](media/tonc-key-demo.png)
+
 Currently passes:
 - All of the pre-generated tests in
   [FuzzARM](https://github.com/DenSinH/FuzzARM).
@@ -17,17 +21,17 @@ Currently passes:
 - Some things from
   [PeterLemon/GBA](https://github.com/PeterLemon/GBA).
 
-![krom 3D engine result](media/krom-3d-engine.png)
-![krom cylinder result](media/krom-cylinder.png)
-![key\_demo from tonc\_gba\_demos](media/tonc-key-demo.png)
-
 ## Tests
 
-Run `cargo test` to run tests.
+Run `cargo test` to run tests.  
+
+Some tests are skipped by default, usually because they are slow.  
+Consider using `cargo test --release -- --ignored` to run them with
+optimizations enabled.
 
 Integration tests exist that automate the running of various test ROMs.  
-To set them up, download the submodules in this repository by using `git
-submodule update --init` and copy a GBA BIOS ROM to
+To set them up, download the submodules in this repository by using
+`git submodule update --init` and copy a GBA BIOS ROM to
 `/libmemetendo/tests/bios.bin`.
 
 ## What's with the name?
