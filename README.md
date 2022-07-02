@@ -25,9 +25,9 @@ Currently passes:
 
 Run `cargo test` to run tests.  
 
-Some tests are skipped by default, usually because they are slow.  
-Consider using `cargo test --release -- --ignored` to run them with
-optimizations enabled.
+Some slow tests are ignored by default in debug builds.  
+Consider using `cargo test -- --ignored` to run them, or test with optimizations
+enabled via `cargo test --release`.
 
 Integration tests exist that automate the running of various test ROMs.  
 To set them up, download the submodules in this repository by using

@@ -48,38 +48,37 @@ fn run_test(menu_entry_idx: u32, pass_screens_dir: impl AsRef<Path>) {
     }
 }
 
-// These tests are slow, especially on debug builds, so they are ignored by default.
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn arm_alu() {
     run_test(0, "tests/armwrestler_gba/arm_alu_ok");
 }
 
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn arm_ldr_str() {
     run_test(1, "tests/armwrestler_gba/arm_ldr_str_ok");
 }
 
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn arm_ldm_stm() {
     run_test(2, "tests/armwrestler_gba/arm_ldm_stm_ok");
 }
 
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn thumb_alu() {
     run_test(3, "tests/armwrestler_gba/thumb_alu_ok");
 }
 
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn thumb_ldr_str() {
     run_test(4, "tests/armwrestler_gba/thumb_ldr_str_ok");
 }
 
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn thumb_ldm_stm() {
     run_test(5, "tests/armwrestler_gba/thumb_ldm_stm_ok");

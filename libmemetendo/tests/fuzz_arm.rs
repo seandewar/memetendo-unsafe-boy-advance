@@ -69,26 +69,25 @@ fn failed(mut runner: Runner) -> ! {
     );
 }
 
-// These tests are slow, especially on debug builds, so they are ignored by default.
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn arm_any() {
     run_test("tests/fuzz_arm/FuzzARM/ARM_Any.gba");
 }
 
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn arm_data_processing() {
     run_test("tests/fuzz_arm/FuzzARM/ARM_DataProcessing.gba");
 }
 
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn thumb_any() {
     run_test("tests/fuzz_arm/FuzzARM/THUMB_Any.gba");
 }
 
-#[ignore]
+#[cfg_attr(debug_assertions, ignore)]
 #[test]
 fn thumb_data_processing() {
     run_test("tests/fuzz_arm/FuzzARM/THUMB_DataProcessing.gba");
