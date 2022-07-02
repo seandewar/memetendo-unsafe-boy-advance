@@ -14,9 +14,11 @@ Currently passes:
   [gba\_tests](https://github.com/destoer/gba_tests).
 - Some tests from
   [shonumi/Emu-Docs](https://github.com/shonumi/Emu-Docs/tree/master/GameBoy%20Advance/test_roms).
+- Some things from
+  [PeterLemon/GBA](https://github.com/PeterLemon/GBA).
 
-![gba\_tests hello world result](media/destoer-hello-world-result.png)
-![gba-tests PPU shades result](media/jsmolka-ppu-shades-result.png)
+![krom 3D engine result](media/krom-3d-engine.png)
+![krom cylinder result](media/krom-cylinder.png)
 ![key\_demo from tonc\_gba\_demos](media/tonc-key-demo.png)
 
 ## Tests
