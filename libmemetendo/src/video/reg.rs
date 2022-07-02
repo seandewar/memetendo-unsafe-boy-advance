@@ -89,6 +89,12 @@ impl DisplayControl {
             0x1_4000 // TODO: invalid type behaviour?
         }
     }
+
+    pub(crate) fn is_bg_hidden(&self, bg_idx: usize) -> bool {
+        !self.display_bg[bg_idx]
+            || (self.mode == 1 && bg_idx == 3)
+            || (self.mode == 2 && bg_idx < 2)
+    }
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -132,7 +138,7 @@ pub struct BackgroundControl {
     pub unused_bit4_5: u8,
     pub mosaic: bool,
     pub color256: bool,
-    pub base_block: u8,
+    pub screen_base_block: u8,
     pub wraparound: bool,
     pub screen_size: u8,
 }
@@ -151,7 +157,7 @@ impl BackgroundControl {
 
     pub fn hi_bits(self) -> u8 {
         let mut bits = 0xff;
-        bits.set_bits(..5, self.base_block);
+        bits.set_bits(..5, self.screen_base_block);
         bits.set_bit(5, self.wraparound);
         bits.set_bits(6.., self.screen_size);
 
@@ -167,16 +173,38 @@ impl BackgroundControl {
     }
 
     pub fn set_hi_bits(&mut self, bits: u8) {
-        self.base_block = bits.bits(..5);
+        self.screen_base_block = bits.bits(..5);
         self.wraparound = bits.bit(5);
         self.screen_size = bits.bits(6..);
     }
 
-    pub fn vram_offset(self) -> usize {
-        0x800 * usize::from(self.base_block)
+    pub(crate) fn dots_vram_offset(
+        self,
+        color256: bool,
+        dots_idx: usize,
+        dot_x: usize,
+        dot_y: usize,
+    ) -> usize {
+        let size_div = if color256 { 1 } else { 2 };
+        let bytes_per_tile = 64 / size_div;
+        let base_offset = 0x4000 * usize::from(self.dots_base_block) + bytes_per_tile * dots_idx;
+
+        base_offset + (8 * dot_y + dot_x) / size_div
     }
 
-    pub fn dots_vram_offset(self) -> usize {
-        0x4000 * usize::from(self.dots_base_block)
+    pub fn screen_vram_offset(self, screen_idx: u8) -> usize {
+        0x800 * usize::from(self.screen_base_block + screen_idx)
+    }
+
+    pub fn screen_index(self, screen_x: usize, screen_y: usize) -> u8 {
+        let layout = match self.screen_size {
+            0 => [0, 0, 0, 0],
+            1 => [0, 1, 0, 1],
+            2 => [0, 0, 1, 1],
+            3 => [0, 1, 2, 3],
+            _ => unreachable!(),
+        };
+
+        layout[(screen_y % 2) * 2 + (screen_x % 2)]
     }
 }

@@ -143,21 +143,29 @@ impl Bus<'_, '_, '_> {
             0xe => self.video.bgcnt[3].set_lo_bits(value),
             0xf => self.video.bgcnt[3].set_hi_bits(value),
             // BG0HOFS
-            0x10 => self.video.bgofs[0].0 = value,
+            0x10 => self.video.bgofs[0].0.set_bits(..8, value.into()),
+            0x11 => self.video.bgofs[0].0.set_bits(8.., value.into()),
             // BG0VOFS
-            0x12 => self.video.bgofs[0].1 = value,
+            0x12 => self.video.bgofs[0].1.set_bits(..8, value.into()),
+            0x13 => self.video.bgofs[0].1.set_bits(8.., value.into()),
             // BG1HOFS
-            0x14 => self.video.bgofs[1].0 = value,
+            0x14 => self.video.bgofs[1].0.set_bits(..8, value.into()),
+            0x15 => self.video.bgofs[1].0.set_bits(8.., value.into()),
             // BG1VOFS
-            0x16 => self.video.bgofs[1].1 = value,
+            0x16 => self.video.bgofs[1].1.set_bits(..8, value.into()),
+            0x17 => self.video.bgofs[1].1.set_bits(8.., value.into()),
             // BG2HOFS
-            0x18 => self.video.bgofs[2].0 = value,
+            0x18 => self.video.bgofs[2].0.set_bits(..8, value.into()),
+            0x19 => self.video.bgofs[2].0.set_bits(8.., value.into()),
             // BG2VOFS
-            0x1a => self.video.bgofs[2].1 = value,
+            0x1a => self.video.bgofs[2].1.set_bits(..8, value.into()),
+            0x1b => self.video.bgofs[2].1.set_bits(8.., value.into()),
             // BG3HOFS
-            0x1c => self.video.bgofs[3].0 = value,
+            0x1c => self.video.bgofs[3].0.set_bits(..8, value.into()),
+            0x1d => self.video.bgofs[3].0.set_bits(8.., value.into()),
             // BG3VOFS
-            0x1e => self.video.bgofs[3].1 = value,
+            0x1e => self.video.bgofs[3].1.set_bits(..8, value.into()),
+            0x1f => self.video.bgofs[3].1.set_bits(8.., value.into()),
             // KEYCNT
             0x132 => self.keypad.keycnt.set_lo_bits(value),
             0x133 => self.keypad.keycnt.set_hi_bits(value),

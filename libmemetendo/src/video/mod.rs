@@ -36,7 +36,7 @@ pub struct Controller {
     pub dispstat: DisplayStatus,
     pub green_swap: u16,
     pub bgcnt: [BackgroundControl; 4],
-    pub bgofs: [(u8, u8); 4],
+    pub bgofs: [(u16, u16); 4],
 }
 
 impl Default for Controller {
@@ -113,14 +113,8 @@ impl Controller {
         }
     }
 
-    fn compute_tile_mode_pixel(&self) -> Option<Rgb> {
-        const TILE_DIM: usize = 8;
-
-        let tile_x = usize::from(self.x) / TILE_DIM;
-        let tile_y = usize::from(self.y) / TILE_DIM;
-        let tile_idx = tile_y * (256 / TILE_DIM) + tile_x;
-
-        // BGs with the same priority set are prioritized based on index (smallest idx = highest).
+    fn bg_draw_order_iter(&self) -> impl Iterator<Item = usize> + '_ {
+        // If many BGs share the same priority, the one with the smallest index wins.
         let mut bg_priorities = [3, 2, 1, 0];
         bg_priorities.sort_unstable_by(|&a, &b| {
             self.bgcnt[b]
@@ -129,43 +123,55 @@ impl Controller {
                 .then_with(|| b.cmp(&a))
         });
 
-        let mut rgb = None;
-        for bg_idx in bg_priorities {
-            if !self.dispcnt.display_bg[bg_idx]
-                || (self.dispcnt.mode == 1 && bg_idx == 3)
-                || (self.dispcnt.mode == 2 && bg_idx < 2)
-            {
-                continue;
-            }
+        bg_priorities
+            .into_iter()
+            .filter(|&i| !self.dispcnt.is_bg_hidden(i))
+    }
 
-            let tile_info_offset = self.bgcnt[bg_idx].vram_offset() + 2 * tile_idx;
+    fn compute_tile_mode_pixel(&self) -> Option<Rgb> {
+        const TILE_LEN: usize = 8;
+        const SCREEN_TILE_LEN: usize = 32;
+
+        let mut rgb = None;
+        for bg_idx in self.bg_draw_order_iter() {
+            let scroll_x = usize::from(self.bgofs[bg_idx].0.bits(..9));
+            let scroll_y = usize::from(self.bgofs[bg_idx].1.bits(..9));
+            let x = scroll_x + usize::from(self.x);
+            let y = scroll_y + usize::from(self.y);
+            let (tile_x, tile_y) = (x / TILE_LEN, y / TILE_LEN);
+
+            let (screen_x, screen_y) = (tile_x / SCREEN_TILE_LEN, tile_y / SCREEN_TILE_LEN);
+            let screen_idx = self.bgcnt[bg_idx].screen_index(screen_x, screen_y);
+            let screen_base_offset = self.bgcnt[bg_idx].screen_vram_offset(screen_idx);
+            let screen_tile_x = tile_x % SCREEN_TILE_LEN;
+            let screen_tile_y = tile_y % SCREEN_TILE_LEN;
+            let screen_tile_idx = screen_tile_y * SCREEN_TILE_LEN + screen_tile_x;
+
             #[allow(clippy::cast_possible_truncation)]
-            let tile_info = self.vram.as_ref().read_hword(tile_info_offset as u32);
+            let tile_info_offset = (screen_base_offset + 2 * screen_tile_idx) as u32;
+            let tile_info = self.vram.as_ref().read_hword(tile_info_offset);
             let dots_idx = usize::from(tile_info.bits(..10));
             let flip_horiz = tile_info.bit(10);
             let flip_vert = tile_info.bit(11);
 
-            let mut dot_x = usize::from(self.x) % TILE_DIM;
+            let (mut dot_x, mut dot_y) = (x % TILE_LEN, y % TILE_LEN);
             if flip_horiz {
-                dot_x = TILE_DIM - 1 - dot_x;
+                dot_x = TILE_LEN - 1 - dot_x;
             }
-            let mut dot_y = usize::from(self.y) % TILE_DIM;
             if flip_vert {
-                dot_y = TILE_DIM - 1 - dot_y;
+                dot_y = TILE_LEN - 1 - dot_y;
             }
 
             let color256 = self.bgcnt[bg_idx].color256
                 || (self.dispcnt.mode == 1 && bg_idx == 2)
                 || self.dispcnt.mode == 2;
-            let palette_color_idx = if color256 {
-                // 8-bit depth
-                let dots_base_offset = self.bgcnt[bg_idx].dots_vram_offset() + 64 * dots_idx;
+            let dots_offset = self.bgcnt[bg_idx].dots_vram_offset(color256, dots_idx, dot_x, dot_y);
 
-                u32::from(self.vram[dots_base_offset + 8 * dot_y + dot_x])
+            let palette_color_idx = if color256 {
+                u32::from(self.vram[dots_offset])
             } else {
                 // 4-bit depth
-                let dots_base_offset = self.bgcnt[bg_idx].dots_vram_offset() + 32 * dots_idx;
-                let dots = self.vram[dots_base_offset + 4 * dot_y + (dot_x / 2)];
+                let dots = self.vram[dots_offset];
                 #[allow(clippy::cast_possible_truncation)]
                 let palette_offset_idx = u32::from(dots >> (4 * (dot_x as u8 % 2))).bits(..4);
 
