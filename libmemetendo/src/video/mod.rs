@@ -36,6 +36,7 @@ pub struct Controller {
     pub dispstat: DisplayStatus,
     pub green_swap: u16,
     pub bgcnt: [BackgroundControl; 4],
+    pub bgofs: [(u8, u8); 4],
 }
 
 impl Default for Controller {
@@ -59,6 +60,7 @@ impl Controller {
             dispstat: DisplayStatus::default(),
             green_swap: 0,
             bgcnt: [BackgroundControl::default(); 4],
+            bgofs: [(0, 0); 4],
         }
     }
 
@@ -68,11 +70,14 @@ impl Controller {
                 let rgb = if self.dispcnt.forced_blank {
                     0xff_ff_ff.into()
                 } else {
-                    match self.dispcnt.mode_type() {
+                    let rgb = match self.dispcnt.mode_type() {
                         ModeType::Tile => self.compute_tile_mode_pixel(),
                         ModeType::Bitmap => self.compute_bitmap_mode_pixel(),
-                        ModeType::Invalid => 0xff_ff_ff.into(), // TODO: what it do?
-                    }
+                        ModeType::Invalid => None, // TODO: what it do?
+                    };
+
+                    // If transparent, use the backdrop colour.
+                    rgb.unwrap_or_else(|| Rgb::from_555(self.palette_ram.as_ref().read_hword(0)))
                 };
 
                 self.frame_buf.set_pixel(self.x.into(), self.y.into(), rgb);
@@ -108,73 +113,109 @@ impl Controller {
         }
     }
 
-    fn compute_tile_mode_pixel(&self) -> Rgb {
+    fn compute_tile_mode_pixel(&self) -> Option<Rgb> {
         const TILE_DIM: usize = 8;
 
-        // TODO: other BGs, other sizes than 256, proper flipping, etc.
         let tile_x = usize::from(self.x) / TILE_DIM;
         let tile_y = usize::from(self.y) / TILE_DIM;
         let tile_idx = tile_y * (256 / TILE_DIM) + tile_x;
-        let tile_info_offset = self.bgcnt[0].vram_offset() + 2 * tile_idx;
 
-        #[allow(clippy::cast_possible_truncation)]
-        let tile_info = self.vram.as_ref().read_hword(tile_info_offset as u32);
-        let dots_idx = usize::from(tile_info.bits(..10));
-        let flip_horiz = tile_info.bit(10);
-        let flip_vert = tile_info.bit(11);
+        // BGs with the same priority set are prioritized based on index (smallest idx = highest).
+        let mut bg_priorities = [3, 2, 1, 0];
+        bg_priorities.sort_unstable_by(|&a, &b| {
+            self.bgcnt[b]
+                .priority
+                .cmp(&self.bgcnt[a].priority)
+                .then_with(|| b.cmp(&a))
+        });
 
-        let mut dot_x = usize::from(self.x) % TILE_DIM;
-        if flip_horiz {
-            dot_x = TILE_DIM - dot_x;
-        }
-        let mut dot_y = usize::from(self.y) % TILE_DIM;
-        if flip_vert {
-            dot_y = TILE_DIM - dot_y;
-        }
+        let mut rgb = None;
+        for bg_idx in bg_priorities {
+            if !self.dispcnt.display_bg[bg_idx]
+                || (self.dispcnt.mode == 1 && bg_idx == 3)
+                || (self.dispcnt.mode == 2 && bg_idx < 2)
+            {
+                continue;
+            }
 
-        if self.bgcnt[0].color256 {
-            0x00_ff_00.into() // TODO
-        } else {
-            // 4-bit depth
-            let palette_group_idx = usize::from(tile_info.bits(12..));
-            let dots_base_offset = self.bgcnt[0].dots_vram_offset() + 32 * dots_idx;
-            let dots = self.vram[dots_base_offset + (4 * dot_y) + (dot_x / 2)];
-            let palette_idx = usize::from(dots >> (4 * (dot_x % 2))).bits(..4);
+            let tile_info_offset = self.bgcnt[bg_idx].vram_offset() + 2 * tile_idx;
             #[allow(clippy::cast_possible_truncation)]
-            let palette_offset = 2 * (16 * palette_group_idx + palette_idx) as u32;
+            let tile_info = self.vram.as_ref().read_hword(tile_info_offset as u32);
+            let dots_idx = usize::from(tile_info.bits(..10));
+            let flip_horiz = tile_info.bit(10);
+            let flip_vert = tile_info.bit(11);
 
-            Rgb::from_555(self.palette_ram.as_ref().read_hword(palette_offset))
+            let mut dot_x = usize::from(self.x) % TILE_DIM;
+            if flip_horiz {
+                dot_x = TILE_DIM - 1 - dot_x;
+            }
+            let mut dot_y = usize::from(self.y) % TILE_DIM;
+            if flip_vert {
+                dot_y = TILE_DIM - 1 - dot_y;
+            }
+
+            let color256 = self.bgcnt[bg_idx].color256
+                || (self.dispcnt.mode == 1 && bg_idx == 2)
+                || self.dispcnt.mode == 2;
+            let palette_color_idx = if color256 {
+                // 8-bit depth
+                let dots_base_offset = self.bgcnt[bg_idx].dots_vram_offset() + 64 * dots_idx;
+
+                u32::from(self.vram[dots_base_offset + 8 * dot_y + dot_x])
+            } else {
+                // 4-bit depth
+                let dots_base_offset = self.bgcnt[bg_idx].dots_vram_offset() + 32 * dots_idx;
+                let dots = self.vram[dots_base_offset + 4 * dot_y + (dot_x / 2)];
+                #[allow(clippy::cast_possible_truncation)]
+                let palette_offset_idx = u32::from(dots >> (4 * (dot_x as u8 % 2))).bits(..4);
+
+                palette_offset_idx
+            };
+
+            if palette_color_idx != 0 {
+                let color_idx = if color256 {
+                    palette_color_idx
+                } else {
+                    16 * u32::from(tile_info.bits(12..)) + palette_color_idx
+                };
+
+                rgb = Some(Rgb::from_555(
+                    self.palette_ram.as_ref().read_hword(2 * color_idx),
+                ));
+            }
         }
+
+        rgb
     }
 
-    fn compute_bitmap_mode_pixel(&self) -> Rgb {
+    fn compute_bitmap_mode_pixel(&self) -> Option<Rgb> {
         if !self.dispcnt.display_bg[2] {
-            return 0xff_ff_ff.into();
+            return None;
         }
 
         let (dot_x, dot_y) = (usize::from(self.x), usize::from(self.y));
         match self.dispcnt.mode {
             3 => {
                 let dot_idx = dot_y * screen::WIDTH + dot_x;
-
                 #[allow(clippy::cast_possible_truncation)]
-                Rgb::from_555(self.vram.as_ref().read_hword(2 * dot_idx as u32))
+                let rgb = Rgb::from_555(self.vram.as_ref().read_hword(2 * dot_idx as u32));
+
+                Some(rgb)
             }
             4 => {
                 let dot_idx = self.dispcnt.frame_vram_offset() + dot_y * screen::WIDTH + dot_x;
-                let palette_offset = 2 * u32::from(self.vram[dot_idx]);
+                let color_idx = u32::from(self.vram[dot_idx]);
+                let rgb = Rgb::from_555(self.palette_ram.as_ref().read_hword(2 * color_idx));
 
-                Rgb::from_555(self.palette_ram.as_ref().read_hword(palette_offset))
+                Some(rgb)
             }
+            5 if dot_x >= 160 || dot_y >= 128 => None,
             5 => {
-                if dot_x >= 160 || dot_y >= 128 {
-                    // Use backdrop colour.
-                    return Rgb::from_555(self.palette_ram.as_ref().read_hword(0));
-                }
                 let dot_idx = self.dispcnt.frame_vram_offset() + dot_y * 160 + dot_x;
-
                 #[allow(clippy::cast_possible_truncation)]
-                Rgb::from_555(self.vram.as_ref().read_hword(2 * dot_idx as u32))
+                let rgb = Rgb::from_555(self.vram.as_ref().read_hword(2 * dot_idx as u32));
+
+                Some(rgb)
             }
             _ => unreachable!(),
         }
