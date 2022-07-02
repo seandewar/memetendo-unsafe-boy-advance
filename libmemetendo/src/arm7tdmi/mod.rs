@@ -3,11 +3,11 @@ pub mod reg;
 
 use std::mem::replace;
 
-use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX, SP_INDEX};
+use strum_macros::{EnumIter, FromRepr};
 
 use crate::bus::Bus;
 
-use strum_macros::{EnumIter, FromRepr};
+use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX, SP_INDEX};
 
 #[derive(Copy, Clone, PartialEq, Eq, FromRepr, EnumIter, Debug)]
 pub enum Exception {

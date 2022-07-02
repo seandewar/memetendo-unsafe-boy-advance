@@ -1,5 +1,3 @@
-use std::{mem::replace, path::Path};
-
 use image::RgbImage;
 use libmemetendo::{
     gba::Gba,
@@ -14,68 +12,48 @@ static BIOS_ROM: Lazy<Rom> = Lazy::new(|| {
     )
 });
 
-pub enum TaskStatus {
-    Pass,
-    Fail,
-    NotDone,
+pub struct Runner<'c> {
+    pub gba: Gba<'static, 'c>,
+    pub screen: Screen,
 }
 
-pub trait Task {
-    fn check_task(&mut self, gba: &Gba, screen: &Screen) -> TaskStatus;
-
-    fn on_success(&mut self, _gba: &mut Gba, _screen: &mut Screen) {}
-
-    fn on_fail(&mut self, _gba: &mut Gba, _screen: &mut Screen) {
-        panic!("task failed!");
-    }
-
-    fn on_timeout(&mut self, _gba: &mut Gba, _screen: &mut Screen) {
-        panic!("task timed out!");
-    }
-}
-
-pub struct Runner {
-    test_rom: Rom,
-}
-
-impl Runner {
-    pub fn new(test_path: impl AsRef<Path>) -> Self {
-        let test_rom = Rom::from_file(test_path)
-            .expect("failed to read test ROM; did you fetch the submodules?");
-
-        Self { test_rom }
-    }
-
-    pub fn run(&self, max_frames: u32, task: &mut dyn Task) {
+impl<'c> Runner<'c> {
+    pub fn new(test_rom: &'c Rom) -> Self {
         let bios = Bios::new(&BIOS_ROM).expect("bad BIOS ROM");
-        let cart = Cartridge::new(&self.test_rom).expect("bad test ROM");
+        let cart = Cartridge::new(test_rom).expect("bad test ROM");
 
-        let mut screen = Screen::new();
         let mut gba = Gba::new(bios, cart);
         gba.reset(true);
 
-        for frame in 0..max_frames {
-            while !replace(&mut screen.is_new_frame, false) {
-                gba.step(&mut screen);
-            }
-
-            match task.check_task(&gba, &screen) {
-                TaskStatus::NotDone => continue,
-                TaskStatus::Pass => {
-                    println!("task passed (frame #{frame})");
-                    task.on_success(&mut gba, &mut screen);
-                    return;
-                }
-                TaskStatus::Fail => {
-                    println!("task failed (frame #{frame})");
-                    task.on_fail(&mut gba, &mut screen);
-                    return;
-                }
-            }
+        Self {
+            gba,
+            screen: Screen::new(),
         }
+    }
 
-        println!("task timed out after {max_frames} frames");
-        task.on_timeout(&mut gba, &mut screen);
+    pub fn step(&mut self) {
+        self.gba.step(&mut self.screen);
+    }
+
+    pub fn step_frame(&mut self) {
+        self.screen.is_new_frame = false;
+        while !self.screen.is_new_frame {
+            self.step();
+        }
+    }
+
+    #[allow(unused)]
+    pub fn step_for(&mut self, steps: u32) {
+        for _ in 0..steps {
+            self.step();
+        }
+    }
+
+    #[allow(unused)]
+    pub fn step_frames(&mut self, frames: u32) {
+        for _ in 0..frames {
+            self.step_frame();
+        }
     }
 }
 

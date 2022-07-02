@@ -6,30 +6,24 @@ mod util;
 use std::path::Path;
 
 use image::RgbImage;
-use libmemetendo::gba::Gba;
 use once_cell::sync::Lazy;
-use runner::{Runner, Screen, TaskStatus};
-use util::read_image;
-
-struct Task<'a> {
-    pass_screen: &'a RgbImage,
-}
-
-impl runner::Task for Task<'_> {
-    fn check_task(&mut self, _gba: &Gba, screen: &Screen) -> TaskStatus {
-        if screen.image == *self.pass_screen {
-            TaskStatus::Pass
-        } else {
-            TaskStatus::NotDone
-        }
-    }
-}
-
-fn run_test(test_path: impl AsRef<Path>, pass_screen: &RgbImage) {
-    Runner::new(test_path).run(4, &mut Task { pass_screen });
-}
+use runner::Runner;
+use util::{read_image, read_test_rom};
 
 static PASS_SCREEN: Lazy<RgbImage> = Lazy::new(|| read_image("tests/jsmolka/ok.png"));
+
+fn run_test(path: impl AsRef<Path>, pass_screen: &RgbImage) {
+    let rom = read_test_rom(path);
+    let mut runner = Runner::new(&rom);
+    for _ in 0..3 {
+        runner.step_frame();
+        if runner.screen.image == *pass_screen {
+            return;
+        }
+    }
+
+    panic!("test failed");
+}
 
 #[test]
 fn arm() {
