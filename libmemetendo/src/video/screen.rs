@@ -71,13 +71,16 @@ impl FrameBuffer {
     #[allow(clippy::missing_panics_doc)]
     #[must_use]
     pub fn pixel(&self, x: usize, y: usize) -> Rgb {
-        let idx = Self::pixel_index(x, y);
-        Rgb::from_le_bytes(self.0[idx..idx + 3].try_into().unwrap())
+        let i = Self::pixel_index(x, y);
+        Rgb::from_le_bytes(self.0[i..i + 3].try_into().unwrap())
     }
 
-    pub fn set_pixel(&mut self, x: usize, y: usize, rgb: Rgb) {
-        let idx = Self::pixel_index(x, y);
-        self.0[idx..idx + 3].copy_from_slice(&rgb.to_le_bytes()[..]);
+    pub fn set_pixel(&mut self, x: usize, y: usize, rgb: Rgb, green_swap: bool) {
+        let i = Self::pixel_index(x, y);
+        self.0[i..i + 3].copy_from_slice(&rgb.to_le_bytes()[..]);
+        if green_swap && x % 2 == 1 {
+            self.0.swap(i + 1, i - 2);
+        }
     }
 
     fn pixel_index(x: usize, y: usize) -> usize {

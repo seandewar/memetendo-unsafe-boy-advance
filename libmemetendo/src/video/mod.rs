@@ -71,8 +71,8 @@ impl Controller {
                     0xff_ff_ff.into()
                 } else {
                     let rgb = match self.dispcnt.mode_type() {
-                        ModeType::Tile => self.compute_tile_mode_pixel(),
-                        ModeType::Bitmap => self.compute_bitmap_mode_pixel(),
+                        ModeType::Tile => self.compute_tile_pixel(),
+                        ModeType::Bitmap => self.compute_bitmap_pixel(),
                         ModeType::Invalid => None, // TODO: what it do?
                     };
 
@@ -80,7 +80,8 @@ impl Controller {
                     rgb.unwrap_or_else(|| Rgb::from_555(self.palette_ram.as_ref().read_hword(0)))
                 };
 
-                self.frame_buf.set_pixel(self.x.into(), self.y.into(), rgb);
+                self.frame_buf
+                    .set_pixel(self.x.into(), self.y.into(), rgb, self.green_swap.bit(0));
             }
 
             self.cycle_accum += 1;
@@ -128,7 +129,7 @@ impl Controller {
             .filter(|&i| !self.dispcnt.is_bg_hidden(i))
     }
 
-    fn compute_tile_mode_pixel(&self) -> Option<Rgb> {
+    fn compute_tile_pixel(&self) -> Option<Rgb> {
         const TILE_LEN: usize = 8;
         const SCREEN_TILE_LEN: usize = 32;
 
@@ -167,15 +168,12 @@ impl Controller {
                 || self.dispcnt.mode == 2;
             let dots_offset = self.bgcnt[bg_idx].dots_vram_offset(color256, dots_idx, dot_x, dot_y);
 
+            #[allow(clippy::cast_possible_truncation)]
             let palette_color_idx = if color256 {
                 u32::from(self.vram[dots_offset])
             } else {
                 // 4-bit depth
-                let dots = self.vram[dots_offset];
-                #[allow(clippy::cast_possible_truncation)]
-                let palette_offset_idx = u32::from(dots >> (4 * (dot_x as u8 % 2))).bits(..4);
-
-                palette_offset_idx
+                u32::from(self.vram[dots_offset] >> (4 * (dot_x as u8 % 2))).bits(..4)
             };
 
             if palette_color_idx != 0 {
@@ -194,37 +192,34 @@ impl Controller {
         rgb
     }
 
-    fn compute_bitmap_mode_pixel(&self) -> Option<Rgb> {
+    fn compute_bitmap_pixel(&self) -> Option<Rgb> {
         if !self.dispcnt.display_bg[2] {
             return None;
         }
 
+        let color_ram = if self.dispcnt.mode == 4 {
+            &self.palette_ram
+        } else {
+            &self.vram
+        };
         let (dot_x, dot_y) = (usize::from(self.x), usize::from(self.y));
-        match self.dispcnt.mode {
-            3 => {
-                let dot_idx = dot_y * screen::WIDTH + dot_x;
-                #[allow(clippy::cast_possible_truncation)]
-                let rgb = Rgb::from_555(self.vram.as_ref().read_hword(2 * dot_idx as u32));
-
-                Some(rgb)
-            }
+        let color_idx = match self.dispcnt.mode {
+            3 => Some(dot_y * screen::WIDTH + dot_x),
             4 => {
-                let dot_idx = self.dispcnt.frame_vram_offset() + dot_y * screen::WIDTH + dot_x;
-                let color_idx = u32::from(self.vram[dot_idx]);
-                let rgb = Rgb::from_555(self.palette_ram.as_ref().read_hword(2 * color_idx));
+                let dot_offset = self.dispcnt.frame_vram_offset() + dot_y * screen::WIDTH + dot_x;
 
-                Some(rgb)
+                Some(self.vram[dot_offset].into())
             }
             5 if dot_x >= 160 || dot_y >= 128 => None,
-            5 => {
-                let dot_idx = self.dispcnt.frame_vram_offset() + dot_y * 160 + dot_x;
-                #[allow(clippy::cast_possible_truncation)]
-                let rgb = Rgb::from_555(self.vram.as_ref().read_hword(2 * dot_idx as u32));
-
-                Some(rgb)
-            }
+            5 => Some(self.dispcnt.frame_vram_offset() + dot_y * 160 + dot_x),
             _ => unreachable!(),
-        }
+        };
+
+        #[allow(clippy::cast_possible_truncation)]
+        color_idx
+            .map(|i| 2 * i)
+            .filter(|&offset| offset < color_ram.len())
+            .map(|offset| Rgb::from_555(color_ram.as_ref().read_hword(offset as u32)))
     }
 
     #[must_use]
