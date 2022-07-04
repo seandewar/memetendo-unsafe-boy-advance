@@ -6,11 +6,11 @@ use intbits::Bits;
 use crate::{
     arm7tdmi::{Cpu, Exception},
     bus::Bus,
-    video::reg::ModeType,
+    video::reg::Mode,
 };
 
 use self::{
-    reg::{BackgroundControl, DisplayControl, DisplayStatus},
+    reg::{BackgroundControl, DisplayControl, DisplayStatus, WindowControl},
     screen::{FrameBuffer, Rgb, Screen},
 };
 
@@ -37,6 +37,11 @@ pub struct Controller {
     pub green_swap: u16,
     pub bgcnt: [BackgroundControl; 4],
     pub bgofs: [(u16, u16); 4],
+    pub winh: [(u8, u8); 2],
+    pub winv: [(u8, u8); 2],
+    pub winin: [WindowControl; 2],
+    pub winout: WindowControl,
+    pub winobj: WindowControl,
 }
 
 impl Default for Controller {
@@ -61,6 +66,11 @@ impl Controller {
             green_swap: 0,
             bgcnt: [BackgroundControl::default(); 4],
             bgofs: [(0, 0); 4],
+            winh: [(0, 0); 2],
+            winv: [(0, 0); 2],
+            winin: [WindowControl::default(); 2],
+            winout: WindowControl::default(),
+            winobj: WindowControl::default(),
         }
     }
 
@@ -71,9 +81,9 @@ impl Controller {
                     0xff_ff_ff.into()
                 } else {
                     let rgb = match self.dispcnt.mode_type() {
-                        ModeType::Tile => self.compute_tile_pixel(),
-                        ModeType::Bitmap => self.compute_bitmap_pixel(),
-                        ModeType::Invalid => None, // TODO: what it do?
+                        Mode::Tile => self.compute_tile_pixel(),
+                        Mode::Bitmap => self.compute_bitmap_pixel(),
+                        Mode::Invalid => None, // TODO: what it do?
                     };
 
                     // If transparent, use the backdrop colour.
@@ -114,7 +124,7 @@ impl Controller {
         }
     }
 
-    fn bg_draw_order_iter(&self) -> impl Iterator<Item = usize> + '_ {
+    fn bg_priority_iter(&self) -> impl Iterator<Item = usize> + '_ {
         // If many BGs share the same priority, the one with the smallest index wins.
         let mut bg_priorities = [3, 2, 1, 0];
         bg_priorities.sort_unstable_by(|&a, &b| {
@@ -124,9 +134,54 @@ impl Controller {
                 .then_with(|| b.cmp(&a))
         });
 
-        bg_priorities
-            .into_iter()
-            .filter(|&i| !self.dispcnt.is_bg_hidden(i))
+        bg_priorities.into_iter()
+    }
+
+    fn should_draw_pixel(&self, bg_idx: usize) -> bool {
+        enum Visibility {
+            Visible,
+            Hidden,
+            Outside,
+        }
+
+        if self.dispcnt.is_bg_hidden(bg_idx) {
+            return false;
+        }
+        let bg_wins_disabled = self.dispcnt.display_bg_window.into_iter().all(|d| !d);
+        if bg_wins_disabled && !self.dispcnt.display_obj_window {
+            return true; // All windows are disabled; show everything.
+        }
+
+        let mut visibility = Visibility::Outside;
+        for win_idx in (0..2).rev() {
+            let mut xs = (self.winh[win_idx].1, self.winh[win_idx].0);
+            #[allow(clippy::cast_possible_truncation)]
+            if xs.0 > xs.1 {
+                xs.1 = screen::WIDTH as u8;
+            }
+
+            let mut ys = (self.winv[win_idx].1, self.winv[win_idx].0);
+            #[allow(clippy::cast_possible_truncation)]
+            if ys.0 > ys.1 {
+                ys.1 = screen::HEIGHT as u8;
+            }
+
+            if self.x >= xs.0.into() && self.x < xs.1.into() && self.y >= ys.0 && self.y < ys.1 {
+                visibility = if self.dispcnt.display_bg_window[win_idx]
+                    && self.winin[win_idx].display_bg[bg_idx]
+                {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                }
+            }
+        }
+
+        match visibility {
+            Visibility::Visible => true,
+            Visibility::Hidden => false,
+            Visibility::Outside => self.winout.display_bg[bg_idx],
+        }
     }
 
     fn compute_tile_pixel(&self) -> Option<Rgb> {
@@ -134,7 +189,11 @@ impl Controller {
         const SCREEN_TILE_LEN: usize = 32;
 
         let mut rgb = None;
-        for bg_idx in self.bg_draw_order_iter() {
+        for bg_idx in self.bg_priority_iter() {
+            if !self.should_draw_pixel(bg_idx) {
+                continue;
+            }
+
             let scroll_x = usize::from(self.bgofs[bg_idx].0.bits(..9));
             let scroll_y = usize::from(self.bgofs[bg_idx].1.bits(..9));
             let x = scroll_x + usize::from(self.x);
@@ -193,7 +252,7 @@ impl Controller {
     }
 
     fn compute_bitmap_pixel(&self) -> Option<Rgb> {
-        if !self.dispcnt.display_bg[2] {
+        if !self.should_draw_pixel(2) {
             return None;
         }
 

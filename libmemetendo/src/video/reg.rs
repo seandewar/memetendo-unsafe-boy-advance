@@ -1,7 +1,7 @@
 use intbits::Bits;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum ModeType {
+pub enum Mode {
     Tile,
     Bitmap,
     Invalid,
@@ -18,7 +18,7 @@ pub struct DisplayControl {
 
     pub display_bg: [bool; 4],
     pub display_obj: bool,
-    pub display_window: [bool; 2],
+    pub display_bg_window: [bool; 2],
     pub display_obj_window: bool,
 }
 
@@ -43,8 +43,8 @@ impl DisplayControl {
         bits.set_bit(3, self.display_bg[3]);
         bits.set_bit(4, self.display_obj);
 
-        bits.set_bit(5, self.display_window[0]);
-        bits.set_bit(6, self.display_window[1]);
+        bits.set_bit(5, self.display_bg_window[0]);
+        bits.set_bit(6, self.display_bg_window[1]);
         bits.set_bit(7, self.display_obj_window);
 
         bits
@@ -65,8 +65,8 @@ impl DisplayControl {
         self.display_bg[3] = bits.bit(3);
         self.display_obj = bits.bit(4);
 
-        self.display_window[0] = bits.bit(5);
-        self.display_window[1] = bits.bit(6);
+        self.display_bg_window[0] = bits.bit(5);
+        self.display_bg_window[1] = bits.bit(6);
         self.display_obj_window = bits.bit(7);
     }
 
@@ -74,16 +74,16 @@ impl DisplayControl {
         self.frame_select * 0xa000
     }
 
-    pub fn mode_type(&self) -> ModeType {
+    pub fn mode_type(&self) -> Mode {
         match self.mode {
-            0..=2 => ModeType::Tile,
-            3..=5 => ModeType::Bitmap,
-            _ => ModeType::Invalid,
+            0..=2 => Mode::Tile,
+            3..=5 => Mode::Bitmap,
+            _ => Mode::Invalid,
         }
     }
 
     pub fn obj_vram_offset(&self) -> usize {
-        if self.mode_type() == ModeType::Tile {
+        if self.mode_type() == Mode::Tile {
             0x1_0000
         } else {
             0x1_4000 // TODO: invalid type behaviour?
@@ -94,6 +94,7 @@ impl DisplayControl {
         !self.display_bg[bg_idx]
             || (self.mode == 1 && bg_idx == 3)
             || (self.mode == 2 && bg_idx < 2)
+            || (self.mode_type() == Mode::Bitmap && bg_idx != 2)
     }
 }
 
@@ -206,5 +207,38 @@ impl BackgroundControl {
         };
 
         layout[(screen_y % 2) * 2 + (screen_x % 2)]
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct WindowControl {
+    pub display_bg: [bool; 4],
+    pub show_obj: bool,
+    pub special_effects: bool,
+    pub unused_bit6_7: u8,
+}
+
+impl WindowControl {
+    pub fn bits(self) -> u8 {
+        let mut bits = 0;
+        bits.set_bit(0, self.display_bg[0]);
+        bits.set_bit(1, self.display_bg[1]);
+        bits.set_bit(2, self.display_bg[2]);
+        bits.set_bit(3, self.display_bg[3]);
+        bits.set_bit(4, self.show_obj);
+        bits.set_bit(5, self.special_effects);
+        bits.set_bits(6.., self.unused_bit6_7);
+
+        bits
+    }
+
+    pub fn set_bits(&mut self, bits: u8) {
+        self.display_bg[0] = bits.bit(0);
+        self.display_bg[1] = bits.bit(1);
+        self.display_bg[2] = bits.bit(2);
+        self.display_bg[3] = bits.bit(3);
+        self.show_obj = bits.bit(4);
+        self.special_effects = bits.bit(5);
+        self.unused_bit6_7 = bits.bits(6..);
     }
 }

@@ -107,6 +107,12 @@ impl Bus<'_, '_, '_> {
             // BG3CNT
             0xe => self.video.bgcnt[3].lo_bits(),
             0xf => self.video.bgcnt[3].hi_bits(),
+            // WININ
+            0x48 => self.video.winin[0].bits(),
+            0x49 => self.video.winin[1].bits(),
+            // WINOUT
+            0x4a => self.video.winout.bits(),
+            0x4b => self.video.winobj.bits(),
             // KEYINPUT
             0x130 => self.keypad.keyinput_lo_bits(),
             0x131 => self.keypad.keyinput_hi_bits(),
@@ -166,6 +172,24 @@ impl Bus<'_, '_, '_> {
             // BG3VOFS
             0x1e => self.video.bgofs[3].1.set_bits(..8, value.into()),
             0x1f => self.video.bgofs[3].1.set_bits(8.., value.into()),
+            // WIN0H
+            0x40 => self.video.winh[0].0 = value,
+            0x41 => self.video.winh[0].1 = value,
+            // WIN1H
+            0x42 => self.video.winh[1].0 = value,
+            0x43 => self.video.winh[1].1 = value,
+            // WIN0V
+            0x44 => self.video.winv[0].0 = value,
+            0x45 => self.video.winv[0].1 = value,
+            // WIN1V
+            0x46 => self.video.winv[1].0 = value,
+            0x47 => self.video.winv[1].1 = value,
+            // WININ
+            0x48 => self.video.winin[0].set_bits(value),
+            0x49 => self.video.winin[1].set_bits(value),
+            // WINOUT
+            0x4a => self.video.winout.set_bits(value),
+            0x4b => self.video.winobj.set_bits(value),
             // KEYCNT
             0x132 => self.keypad.keycnt.set_lo_bits(value),
             0x133 => self.keypad.keycnt.set_hi_bits(value),
