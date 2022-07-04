@@ -190,6 +190,9 @@ impl Bus<'_, '_, '_> {
             // WINOUT
             0x4a => self.video.winout.set_bits(value),
             0x4b => self.video.winobj.set_bits(value),
+            // MOSAIC
+            0x4c => self.video.mosaic_bg = (value.bits(..4), value.bits(4..)),
+            0x4d => self.video.mosaic_obj = (value.bits(..4), value.bits(4..)),
             // KEYCNT
             0x132 => self.keypad.keycnt.set_lo_bits(value),
             0x133 => self.keypad.keycnt.set_hi_bits(value),

@@ -42,6 +42,8 @@ pub struct Controller {
     pub winin: [WindowControl; 2],
     pub winout: WindowControl,
     pub winobj: WindowControl,
+    pub mosaic_bg: (u8, u8),
+    pub mosaic_obj: (u8, u8),
 }
 
 impl Default for Controller {
@@ -71,27 +73,40 @@ impl Controller {
             winin: [WindowControl::default(); 2],
             winout: WindowControl::default(),
             winobj: WindowControl::default(),
+            mosaic_bg: (0, 0),
+            mosaic_obj: (0, 0),
         }
     }
 
     pub fn step(&mut self, screen: &mut impl Screen, cpu: &mut Cpu, cycles: u32) {
         for _ in 0..cycles {
             if self.x < HBLANK_DOT && self.y < VBLANK_DOT {
+                let (x, y) = (usize::from(self.x), usize::from(self.y));
                 let rgb = if self.dispcnt.forced_blank {
                     0xff_ff_ff.into()
                 } else {
-                    let rgb = match self.dispcnt.mode_type() {
-                        Mode::Tile => self.compute_tile_pixel(),
-                        Mode::Bitmap => self.compute_bitmap_pixel(),
-                        Mode::Invalid => None, // TODO: what it do?
+                    let mosaic_offset = (
+                        x % usize::from(self.mosaic_bg.0 + 1),
+                        y % usize::from(self.mosaic_bg.1 + 1),
+                    );
+                    let rgb = if mosaic_offset == (0, 0) {
+                        match self.dispcnt.mode_type() {
+                            Mode::Tile => self.compute_bg_tile_mode_pixel(),
+                            Mode::Bitmap => self.compute_bg_bitmap_mode_pixel(),
+                            Mode::Invalid => None, // TODO: what it do?
+                        }
+                    } else {
+                        Some(
+                            self.frame_buf
+                                .pixel(x - mosaic_offset.0, y - mosaic_offset.1),
+                        )
                     };
 
                     // If transparent, use the backdrop colour.
                     rgb.unwrap_or_else(|| Rgb::from_555(self.palette_ram.as_ref().read_hword(0)))
                 };
 
-                self.frame_buf
-                    .set_pixel(self.x.into(), self.y.into(), rgb, self.green_swap.bit(0));
+                self.frame_buf.set_pixel(x, y, rgb, self.green_swap.bit(0));
             }
 
             self.cycle_accum += 1;
@@ -124,7 +139,7 @@ impl Controller {
         }
     }
 
-    fn bg_priority_iter(&self) -> impl Iterator<Item = usize> + '_ {
+    fn bg_draw_order_iter(&self) -> impl Iterator<Item = usize> + '_ {
         // If many BGs share the same priority, the one with the smallest index wins.
         let mut bg_priorities = [3, 2, 1, 0];
         bg_priorities.sort_unstable_by(|&a, &b| {
@@ -154,19 +169,18 @@ impl Controller {
 
         let mut visibility = Visibility::Outside;
         for win_idx in (0..2).rev() {
-            let mut xs = (self.winh[win_idx].1, self.winh[win_idx].0);
+            let mut x = (self.winh[win_idx].1, self.winh[win_idx].0);
             #[allow(clippy::cast_possible_truncation)]
-            if xs.0 > xs.1 {
-                xs.1 = screen::WIDTH as u8;
+            if x.0 > x.1 {
+                x.1 = screen::WIDTH as u8;
+            }
+            let mut y = (self.winv[win_idx].1, self.winv[win_idx].0);
+            #[allow(clippy::cast_possible_truncation)]
+            if y.0 > y.1 {
+                y.1 = screen::HEIGHT as u8;
             }
 
-            let mut ys = (self.winv[win_idx].1, self.winv[win_idx].0);
-            #[allow(clippy::cast_possible_truncation)]
-            if ys.0 > ys.1 {
-                ys.1 = screen::HEIGHT as u8;
-            }
-
-            if self.x >= xs.0.into() && self.x < xs.1.into() && self.y >= ys.0 && self.y < ys.1 {
+            if self.x >= x.0.into() && self.x < x.1.into() && self.y >= y.0 && self.y < y.1 {
                 visibility = if self.dispcnt.display_bg_window[win_idx]
                     && self.winin[win_idx].display_bg[bg_idx]
                 {
@@ -184,28 +198,31 @@ impl Controller {
         }
     }
 
-    fn compute_tile_pixel(&self) -> Option<Rgb> {
+    fn compute_bg_tile_mode_pixel(&self) -> Option<Rgb> {
         const TILE_LEN: usize = 8;
         const SCREEN_TILE_LEN: usize = 32;
 
         let mut rgb = None;
-        for bg_idx in self.bg_priority_iter() {
+        for bg_idx in self.bg_draw_order_iter() {
             if !self.should_draw_pixel(bg_idx) {
                 continue;
             }
 
-            let scroll_x = usize::from(self.bgofs[bg_idx].0.bits(..9));
-            let scroll_y = usize::from(self.bgofs[bg_idx].1.bits(..9));
-            let x = scroll_x + usize::from(self.x);
-            let y = scroll_y + usize::from(self.y);
-            let (tile_x, tile_y) = (x / TILE_LEN, y / TILE_LEN);
+            let scroll_offset = (
+                usize::from(self.bgofs[bg_idx].0.bits(..9)),
+                usize::from(self.bgofs[bg_idx].1.bits(..9)),
+            );
+            let (x, y) = (
+                scroll_offset.0 + usize::from(self.x),
+                scroll_offset.1 + usize::from(self.y),
+            );
+            let tile_pos = (x / TILE_LEN, y / TILE_LEN);
 
-            let (screen_x, screen_y) = (tile_x / SCREEN_TILE_LEN, tile_y / SCREEN_TILE_LEN);
-            let screen_idx = self.bgcnt[bg_idx].screen_index(screen_x, screen_y);
+            let screen_pos = (tile_pos.0 / SCREEN_TILE_LEN, tile_pos.1 / SCREEN_TILE_LEN);
+            let screen_idx = self.bgcnt[bg_idx].screen_index(screen_pos.0, screen_pos.1);
             let screen_base_offset = self.bgcnt[bg_idx].screen_vram_offset(screen_idx);
-            let screen_tile_x = tile_x % SCREEN_TILE_LEN;
-            let screen_tile_y = tile_y % SCREEN_TILE_LEN;
-            let screen_tile_idx = screen_tile_y * SCREEN_TILE_LEN + screen_tile_x;
+            let screen_tile_pos = (tile_pos.0 % SCREEN_TILE_LEN, tile_pos.1 % SCREEN_TILE_LEN);
+            let screen_tile_idx = screen_tile_pos.1 * SCREEN_TILE_LEN + screen_tile_pos.0;
 
             #[allow(clippy::cast_possible_truncation)]
             let tile_info_offset = (screen_base_offset + 2 * screen_tile_idx) as u32;
@@ -251,7 +268,7 @@ impl Controller {
         rgb
     }
 
-    fn compute_bitmap_pixel(&self) -> Option<Rgb> {
+    fn compute_bg_bitmap_mode_pixel(&self) -> Option<Rgb> {
         if !self.should_draw_pixel(2) {
             return None;
         }
@@ -261,6 +278,7 @@ impl Controller {
         } else {
             &self.vram
         };
+
         let (dot_x, dot_y) = (usize::from(self.x), usize::from(self.y));
         let color_idx = match self.dispcnt.mode {
             3 => Some(dot_y * screen::WIDTH + dot_x),
