@@ -162,8 +162,7 @@ impl Controller {
         if self.dispcnt.is_bg_hidden(bg_idx) {
             return false;
         }
-        let bg_wins_disabled = self.dispcnt.display_bg_window.into_iter().all(|d| !d);
-        if bg_wins_disabled && !self.dispcnt.display_obj_window {
+        if self.dispcnt.display_bg_window == [false; 2] && !self.dispcnt.display_obj_window {
             return true; // All windows are disabled; show everything.
         }
 

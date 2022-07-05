@@ -123,13 +123,13 @@ fn main() -> Result<()> {
                 .long("skip-bios")
                 .help("Skip executing BIOS ROM after boot"),
         )
-        .arg(arg!(-b --bios <FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
-        .arg(arg!(<FILE> "Cartridge ROM file to execute").allow_invalid_utf8(true))
+        .arg(arg!(-b --bios <BIOS_FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
+        .arg(arg!(<ROM_FILE> "Cartridge ROM file to execute").allow_invalid_utf8(true))
         .get_matches();
 
     let skip_bios = matches.is_present("skip-bios");
     let bios_file = Path::new(matches.value_of_os("bios").unwrap());
-    let cart_file = Path::new(matches.value_of_os("FILE").unwrap());
+    let cart_file = Path::new(matches.value_of_os("ROM_FILE").unwrap());
 
     let bios_rom = Rom::from_file(bios_file).context("failed to read BIOS ROM file")?;
     let bios = Bios::new(&bios_rom).map_err(|_| anyhow!("invalid BIOS ROM size"))?;
@@ -148,7 +148,9 @@ fn main() -> Result<()> {
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {
-        gba.step(&mut screen);
+        for _ in 0..5_000 {
+            gba.step(&mut screen);
+        }
 
         let now = Instant::now();
         if now >= next_redraw_time {

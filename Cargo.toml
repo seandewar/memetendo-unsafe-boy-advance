@@ -1,2 +1,8 @@
 [workspace]
 members = ["libmemetendo", "memetendo"]
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = true

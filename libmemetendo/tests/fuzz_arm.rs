@@ -18,7 +18,7 @@ fn run_test(path: impl AsRef<Path>) {
     let mut runner = Runner::new(&rom);
     for _ in 0..1000 {
         runner.step_frame();
-        if runner.gba.ewram[..4].iter().any(|&b| b != 0) {
+        if runner.gba.ewram[..4] != [0; 4] {
             failed(runner);
         } else if runner.screen.image == *PASS_SCREEN {
             return;

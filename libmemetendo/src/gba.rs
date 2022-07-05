@@ -47,7 +47,7 @@ impl<'b, 'c> Gba<'b, 'c> {
     pub fn step(&mut self, screen: &mut impl Screen) {
         self.keypad.step(&mut self.cpu);
         self.cpu.step(&mut bus!(self));
-        self.video.step(screen, &mut self.cpu, 8);
+        self.video.step(screen, &mut self.cpu, 2);
     }
 }
 
