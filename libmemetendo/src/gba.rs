@@ -84,11 +84,11 @@ impl Bus<'_, '_, '_> {
             // DISPCNT
             0x0 => self.video.dispcnt.lo_bits(),
             0x1 => self.video.dispcnt.hi_bits(),
-            // Green swap (undocumented)
+            // GREENSWP (undocumented)
             #[allow(clippy::cast_possible_truncation)]
-            0x2 => self.video.green_swap as u8,
+            0x2 => self.video.greenswp as u8,
             #[allow(clippy::cast_possible_truncation)]
-            0x3 => self.video.green_swap.bits(8..) as u8,
+            0x3 => self.video.greenswp.bits(8..) as u8,
             // DISPSTAT
             0x4 => self.video.dispstat_lo_bits(),
             0x5 => self.video.dispstat.vcount_target,
@@ -113,6 +113,12 @@ impl Bus<'_, '_, '_> {
             // WINOUT
             0x4a => self.video.winout.bits(),
             0x4b => self.video.winobj.bits(),
+            // BLDCNT
+            0x50 => self.video.bldcnt.lo_bits(),
+            0x51 => self.video.bldcnt.hi_bits(),
+            // BLDALPHA
+            0x52 => self.video.bldalpha.get().0,
+            0x53 => self.video.bldalpha.get().1,
             // KEYINPUT
             0x130 => self.keypad.keyinput_lo_bits(),
             0x131 => self.keypad.keyinput_hi_bits(),
@@ -130,9 +136,9 @@ impl Bus<'_, '_, '_> {
             // DISPCNT
             0x0 => self.video.dispcnt.set_lo_bits(value),
             0x1 => self.video.dispcnt.set_hi_bits(value),
-            // Green swap (undocumented)
-            0x2 => self.video.green_swap.set_bits(..8, value.into()),
-            0x3 => self.video.green_swap.set_bits(8.., value.into()),
+            // GREENSWP (undocumented)
+            0x2 => self.video.greenswp.set_bits(..8, value.into()),
+            0x3 => self.video.greenswp.set_bits(8.., value.into()),
             // DISPSTAT
             0x4 => self.video.dispstat.set_lo_bits(value),
             0x5 => self.video.dispstat.vcount_target = value,
@@ -149,29 +155,29 @@ impl Bus<'_, '_, '_> {
             0xe => self.video.bgcnt[3].set_lo_bits(value),
             0xf => self.video.bgcnt[3].set_hi_bits(value),
             // BG0HOFS
-            0x10 => self.video.bgofs[0].0.set_bits(..8, value.into()),
-            0x11 => self.video.bgofs[0].0.set_bits(8.., value.into()),
+            0x10 => self.video.bgofs[0].0.set_lo_bits(value),
+            0x11 => self.video.bgofs[0].0.set_hi_bits(value),
             // BG0VOFS
-            0x12 => self.video.bgofs[0].1.set_bits(..8, value.into()),
-            0x13 => self.video.bgofs[0].1.set_bits(8.., value.into()),
+            0x12 => self.video.bgofs[0].1.set_lo_bits(value),
+            0x13 => self.video.bgofs[0].1.set_hi_bits(value),
             // BG1HOFS
-            0x14 => self.video.bgofs[1].0.set_bits(..8, value.into()),
-            0x15 => self.video.bgofs[1].0.set_bits(8.., value.into()),
+            0x14 => self.video.bgofs[1].0.set_lo_bits(value),
+            0x15 => self.video.bgofs[1].0.set_hi_bits(value),
             // BG1VOFS
-            0x16 => self.video.bgofs[1].1.set_bits(..8, value.into()),
-            0x17 => self.video.bgofs[1].1.set_bits(8.., value.into()),
+            0x16 => self.video.bgofs[1].1.set_lo_bits(value),
+            0x17 => self.video.bgofs[1].1.set_hi_bits(value),
             // BG2HOFS
-            0x18 => self.video.bgofs[2].0.set_bits(..8, value.into()),
-            0x19 => self.video.bgofs[2].0.set_bits(8.., value.into()),
+            0x18 => self.video.bgofs[2].0.set_lo_bits(value),
+            0x19 => self.video.bgofs[2].0.set_hi_bits(value),
             // BG2VOFS
-            0x1a => self.video.bgofs[2].1.set_bits(..8, value.into()),
-            0x1b => self.video.bgofs[2].1.set_bits(8.., value.into()),
+            0x1a => self.video.bgofs[2].1.set_lo_bits(value),
+            0x1b => self.video.bgofs[2].1.set_hi_bits(value),
             // BG3HOFS
-            0x1c => self.video.bgofs[3].0.set_bits(..8, value.into()),
-            0x1d => self.video.bgofs[3].0.set_bits(8.., value.into()),
+            0x1c => self.video.bgofs[3].0.set_lo_bits(value),
+            0x1d => self.video.bgofs[3].0.set_hi_bits(value),
             // BG3VOFS
-            0x1e => self.video.bgofs[3].1.set_bits(..8, value.into()),
-            0x1f => self.video.bgofs[3].1.set_bits(8.., value.into()),
+            0x1e => self.video.bgofs[3].1.set_lo_bits(value),
+            0x1f => self.video.bgofs[3].1.set_hi_bits(value),
             // WIN0H
             0x40 => self.video.winh[0].0 = value,
             0x41 => self.video.winh[0].1 = value,
@@ -191,8 +197,16 @@ impl Bus<'_, '_, '_> {
             0x4a => self.video.winout.set_bits(value),
             0x4b => self.video.winobj.set_bits(value),
             // MOSAIC
-            0x4c => self.video.mosaic_bg = (value.bits(..4), value.bits(4..)),
-            0x4d => self.video.mosaic_obj = (value.bits(..4), value.bits(4..)),
+            0x4c => self.video.mosaic_bg.set_bits(value),
+            0x4d => self.video.mosaic_obj.set_bits(value),
+            // BLDCNT
+            0x50 => self.video.bldcnt.set_lo_bits(value),
+            0x51 => self.video.bldcnt.set_hi_bits(value),
+            // BLDALPHA
+            0x52 => self.video.bldalpha.set_lo_bits(value),
+            0x53 => self.video.bldalpha.set_hi_bits(value),
+            // BLDY
+            0x54 => self.video.bldy.set_bits(value),
             // KEYCNT
             0x132 => self.keypad.keycnt.set_lo_bits(value),
             0x133 => self.keypad.keycnt.set_hi_bits(value),
