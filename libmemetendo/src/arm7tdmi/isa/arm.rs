@@ -10,7 +10,7 @@ use crate::{
     bus::{Bus, BusAlignedExt},
 };
 
-use super::BlockTransferFlags;
+use super::{BlockTransferFlags, Result};
 
 fn r_index(instr: u32, pos: u8) -> usize {
     instr.bits(pos..(pos + 4)) as _
@@ -18,12 +18,16 @@ fn r_index(instr: u32, pos: u8) -> usize {
 
 impl Cpu {
     #[bitmatch]
-    pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl Bus, instr: u32) {
+    pub(in crate::arm7tdmi) fn execute_arm(
+        &mut self,
+        bus: &mut impl Bus,
+        instr: u32,
+    ) -> Result<()> {
         debug_assert!(self.reg.cpsr.state == OperationState::Arm);
 
         #[allow(clippy::cast_possible_truncation)]
         if !self.meets_condition(instr.bits(28..) as u8) {
-            return; // TODO: 1S cycle anyway
+            return Ok(()); // TODO: 1S cycle anyway
         }
 
         // TODO: 2S+1N for SWI, 2N+1N+1I for undefined exception
@@ -32,7 +36,7 @@ impl Cpu {
             "0001_0010_1111_1111_1111_????_????" => self.execute_arm_bx(bus, instr),
             "0001_0?00_????_????_0000_1001_????" => self.execute_arm_swap(bus, instr),
             "0000_????_????_????_????_1001_????" => self.execute_arm_multiply(instr),
-            "00?1_0??0_????_????_????_????_????" => self.execute_arm_psr_transfer(instr),
+            "00?1_0??0_????_????_????_????_????" => self.execute_arm_psr_transfer(instr)?,
             "000?_????_????_????_????_1??1_????" => {
                 self.execute_arm_hword_and_signed_transfer(bus, instr);
             }
@@ -42,9 +46,9 @@ impl Cpu {
             "011?_????_????_????_????_???1_????" => {
                 self.enter_exception(bus, Exception::UndefinedInstr);
             }
-            "100?_????_????_????_????_????_????" => self.execute_arm_block_transfer(bus, instr),
+            "100?_????_????_????_????_????_????" => self.execute_arm_block_transfer(bus, instr)?,
             "101?_????_????_????_????_????_????" => self.execute_arm_b_bl(bus, instr),
-            "00??_????_????_????_????_????_????" => self.execute_arm_data_processing(bus, instr),
+            "00??_????_????_????_????_????_????" => self.execute_arm_data_processing(bus, instr)?,
             "01??_????_????_????_????_????_????" => self.execute_arm_single_transfer(bus, instr),
             "1100_010?_????_????_????_???0_????" => {} // N/A Coprocessor double register transfer
             "1110_????_????_????_????_???0_????" => {} // N/A Coprocessor data operations
@@ -54,6 +58,8 @@ impl Cpu {
                 self.enter_exception(bus, Exception::UndefinedInstr);
             }
         }
+
+        Ok(())
     }
 
     /// Branch and branch with link.
@@ -76,7 +82,7 @@ impl Cpu {
     }
 
     /// Data processing operations.
-    fn execute_arm_data_processing(&mut self, bus: &mut impl Bus, instr: u32) {
+    fn execute_arm_data_processing(&mut self, bus: &mut impl Bus, instr: u32) -> Result<()> {
         let r_value1 = r_index(instr, 16);
         let r_dst = r_index(instr, 12);
         let update_cond = instr.bit(20) && r_dst != PC_INDEX;
@@ -177,12 +183,14 @@ impl Cpu {
             _ => unreachable!(),
         }
 
-        if set_cpsr {
-            self.op_msr(false, true, true, self.reg.spsr);
+        if set_cpsr && self.reg.cpsr.mode() != OperationMode::User {
+            self.reg.set_cpsr(self.reg.spsr)?;
         }
         if r_dst == PC_INDEX && !(8..=11).contains(&op) {
             self.reload_pipeline(bus);
         }
+
+        Ok(())
     }
 
     /// Multiply and multiply-accumulate.
@@ -236,7 +244,7 @@ impl Cpu {
     }
 
     /// PSR transfer.
-    fn execute_arm_psr_transfer(&mut self, instr: u32) {
+    fn execute_arm_psr_transfer(&mut self, instr: u32) -> Result<()> {
         let use_spsr = instr.bit(22);
 
         if instr.bit(21) {
@@ -250,7 +258,7 @@ impl Cpu {
             };
 
             // MSR{cond} Psr{_field},Op
-            self.op_msr(use_spsr, instr.bit(19), instr.bit(16), value);
+            self.op_msr(use_spsr, instr.bit(19), instr.bit(16), value)?;
         } else {
             // MRS{cond} Rd,Psr
             self.reg.r[r_index(instr, 12)] = if use_spsr {
@@ -259,6 +267,8 @@ impl Cpu {
                 self.reg.cpsr.bits()
             };
         }
+
+        Ok(())
     }
 
     /// Single data transfer.
@@ -292,7 +302,7 @@ impl Cpu {
         };
         let transfer_addr = if preindex { final_addr } else { base_addr };
 
-        let saved_mode = self.reg.cpsr.mode;
+        let saved_mode = self.reg.cpsr.mode();
         if force_user {
             self.reg.change_mode(OperationMode::User);
         }
@@ -399,7 +409,7 @@ impl Cpu {
     }
 
     /// Block data transfer.
-    fn execute_arm_block_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
+    fn execute_arm_block_transfer(&mut self, bus: &mut impl Bus, instr: u32) -> Result<()> {
         let flags = BlockTransferFlags {
             preindex: instr.bit(24),
             ascend: instr.bit(23),
@@ -413,11 +423,13 @@ impl Cpu {
 
         if instr.bit(20) {
             // LDM{cond}{amod} Rn{!},<Rlist>{^}
-            self.op_ldm(bus, &flags, r_base_addr, r_list);
+            self.op_ldm(bus, &flags, r_base_addr, r_list)?;
         } else {
             // STM{cond}{amod} Rn{!},<Rlist>{^}
             self.op_stm(bus, &flags, r_base_addr, r_list);
         }
+
+        Ok(())
     }
 
     /// Single data swap.
@@ -585,7 +597,7 @@ mod tests {
             .assert_carry()
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::FastInterrupt);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::FastInterrupt);
 
         // AL S R9,R0,R11,LSL #30
         InstrTest::new_arm(0b1110_00_0_0000_1_0000_1001_11110_00_0_1011)
@@ -898,7 +910,7 @@ mod tests {
             .assert_overflow()
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::Interrupt);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::Interrupt);
 
         // AL R0,#10101010b
         InstrTest::new_arm(0b1110_00_1_1000_1_0000_0000_0000_10101010)
@@ -967,14 +979,15 @@ mod tests {
                 cpu.reg.r[0] = 0b1100_0011.with_bit(31, true);
             })
             .assert_r(0, 0b1100_0011.with_bit(31, true))
-            .assert_r(PC_INDEX, 0b1110_1000.with_bit(31, true) + 8)
+            .assert_r(PC_INDEX, 0b1110_1010.with_bit(31, true) + 4)
             .assert_zero()
             .assert_overflow()
             .assert_irq_enabled()
             .assert_fiq_enabled()
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::User);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::User);
+        assert_eq!(cpu.reg.cpsr.state, OperationState::Thumb);
 
         // AL R15,R0,#10101010b
         let cpu = InstrTest::new_arm(0b1110_00_1_1100_0_0000_1111_0000_10101010)
@@ -986,7 +999,7 @@ mod tests {
             .assert_r(PC_INDEX, 0b1110_1000.with_bit(31, true) + 8)
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::Supervisor);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::Supervisor);
 
         // AL R14,R0,#10101010b
         InstrTest::new_arm(0b1110_00_1_1100_0_0000_1110_0000_10101010)
@@ -1275,7 +1288,7 @@ mod tests {
             .assert_overflow()
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::Supervisor);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::Supervisor);
 
         // AL SPSR_svc_f,#0101b,ROR #4
         let cpu = InstrTest::new_arm(0b1110_00_1_10_1_1_0_1000_1111_0010_00000101).run();
@@ -1288,12 +1301,12 @@ mod tests {
         assert!(!spsr.irq_disabled);
         assert!(!spsr.fiq_disabled);
 
-        // AL CPSR_c,#01110000b
-        let cpu = InstrTest::new_arm(0b1110_00_1_10_0_1_0_0001_1111_0000_01110000)
+        // AL CPSR_c,#01010000b
+        let cpu = InstrTest::new_arm(0b1110_00_1_10_0_1_0_0001_1111_0000_01010000)
             .assert_irq_enabled()
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::User);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::User);
 
         // AL SPSR_svc_fc,#11110000b
         let cpu = InstrTest::new_arm(0b1110_00_1_10_1_1_0_1001_1111_0000_11110000).run();
@@ -1305,7 +1318,7 @@ mod tests {
         assert!(!spsr.carry);
         assert!(spsr.irq_disabled);
         assert!(spsr.fiq_disabled);
-        assert_eq!(spsr.mode, OperationMode::User);
+        assert_eq!(spsr.mode(), OperationMode::User);
 
         // AL CPSR_f,R10
         let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_1000_1111_00000000_1010)
@@ -1315,29 +1328,29 @@ mod tests {
             .assert_carry()
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::Supervisor);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::Supervisor);
 
         // AL CPSR_c,R10
         let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_0001_1111_00000000_1010)
-            .setup(&|cpu| cpu.reg.r[10] = 0b00_1_11111.with_bits(28.., 0b1010))
-            .assert_r(10, 0b00_1_11111.with_bits(28.., 0b1010))
+            .setup(&|cpu| cpu.reg.r[10] = 0b00_0_11111.with_bits(28.., 0b1010))
+            .assert_r(10, 0b00_0_11111.with_bits(28.., 0b1010))
             .assert_irq_enabled()
             .assert_fiq_enabled()
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::System);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::System);
 
         // AL CPSR_fc,R10
         let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_1001_1111_00000000_1010)
-            .setup(&|cpu| cpu.reg.r[10] = 0b00_1_11111.with_bits(28.., 0b1010))
-            .assert_r(10, 0b00_1_11111.with_bits(28.., 0b1010))
+            .setup(&|cpu| cpu.reg.r[10] = 0b00_0_11111.with_bits(28.., 0b1010))
+            .assert_r(10, 0b00_0_11111.with_bits(28.., 0b1010))
             .assert_signed()
             .assert_carry()
             .assert_irq_enabled()
             .assert_fiq_enabled()
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::System);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::System);
 
         // AL CPSR_fc,R10
         let cpu = InstrTest::new_arm(0b1110_00_0_10_0_1_0_1001_1111_00000000_1010)
@@ -1350,7 +1363,7 @@ mod tests {
             .assert_carry()
             .run();
 
-        assert_eq!(cpu.reg.cpsr.mode, OperationMode::User);
+        assert_eq!(cpu.reg.cpsr.mode(), OperationMode::User);
     }
 
     #[test]
@@ -1657,7 +1670,7 @@ mod tests {
                 .assert_overflow()
                 .run_with_bus(bus);
 
-            assert_eq!(cpu.reg.cpsr.mode, OperationMode::Abort);
+            assert_eq!(cpu.reg.cpsr.mode(), OperationMode::Abort);
         });
 
         // AL DB R5!,{R0,R2,R8,R12}

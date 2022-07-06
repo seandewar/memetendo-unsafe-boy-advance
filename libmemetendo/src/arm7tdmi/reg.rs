@@ -1,10 +1,7 @@
-use std::{
-    error::Error,
-    fmt::{self, Display, Formatter},
-};
-
 use intbits::Bits;
 use strum_macros::FromRepr;
+
+use super::{Error, Result};
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
 pub enum OperationMode {
@@ -29,6 +26,11 @@ impl OperationMode {
     pub fn from_bits(bits: u32) -> Option<Self> {
         Self::from_repr(bits.bits(..5) as _)
     }
+
+    #[must_use]
+    pub fn has_spsr(self) -> bool {
+        self != OperationMode::User && self != OperationMode::System
+    }
 }
 
 pub const SP_INDEX: usize = 13;
@@ -38,7 +40,7 @@ pub const PC_INDEX: usize = 15;
 #[derive(Default, Copy, Clone, Debug)]
 pub struct Registers {
     pub r: [u32; 16],
-    pub(super) cpsr: StatusRegister,
+    pub cpsr: StatusRegister,
     pub spsr: u32,
     banks: [Bank; 6],
     fiq_r8_12_bank: [u32; 5],
@@ -71,22 +73,33 @@ impl Registers {
     }
 
     fn change_bank(&mut self, mode: OperationMode) {
-        let old_bank_index = self.cpsr.mode.bank_index();
-        let new_bank_index = mode.bank_index();
-        if old_bank_index == new_bank_index {
+        let old_bank_idx = self.cpsr.mode.bank_index();
+        let new_bank_idx = mode.bank_index();
+        if old_bank_idx == new_bank_idx {
             return;
         }
 
         if self.cpsr.mode == OperationMode::FastInterrupt || mode == OperationMode::FastInterrupt {
             self.fiq_r8_12_bank.swap_with_slice(&mut self.r[8..=12]);
         }
-        self.banks[old_bank_index].sp = self.r[SP_INDEX];
-        self.banks[old_bank_index].lr = self.r[LR_INDEX];
-        self.banks[old_bank_index].spsr = self.spsr;
+        self.banks[old_bank_idx].sp = self.r[SP_INDEX];
+        self.banks[old_bank_idx].lr = self.r[LR_INDEX];
+        self.banks[old_bank_idx].spsr = self.spsr;
 
-        self.r[SP_INDEX] = self.banks[new_bank_index].sp;
-        self.r[LR_INDEX] = self.banks[new_bank_index].lr;
-        self.spsr = self.banks[new_bank_index].spsr;
+        self.r[SP_INDEX] = self.banks[new_bank_idx].sp;
+        self.r[LR_INDEX] = self.banks[new_bank_idx].lr;
+        self.spsr = self.banks[new_bank_idx].spsr;
+    }
+
+    /// # Errors
+    ///
+    /// Returns an error if the mode bits do not map to a valid [`OperationMode`].
+    pub fn set_cpsr(&mut self, bits: u32) -> Result<()> {
+        let new_cpsr = StatusRegister::from_bits(bits)?;
+        self.change_bank(new_cpsr.mode());
+        self.cpsr = new_cpsr;
+
+        Ok(())
     }
 
     pub fn align_pc(&mut self) {
@@ -102,7 +115,7 @@ impl Registers {
     }
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Default, Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
 pub enum OperationState {
     #[default]
     Arm = 0,
@@ -110,6 +123,12 @@ pub enum OperationState {
 }
 
 impl OperationState {
+    #[allow(clippy::cast_possible_truncation)]
+    #[must_use]
+    pub fn from_bits(bits: u32) -> Option<Self> {
+        Self::from_repr((bits & (1 << 5)) as _)
+    }
+
     #[must_use]
     pub fn bits(self) -> u32 {
         self as _
@@ -140,6 +159,11 @@ pub struct StatusRegister {
 
 impl StatusRegister {
     #[must_use]
+    pub fn mode(self) -> OperationMode {
+        self.mode
+    }
+
+    #[must_use]
     pub fn bits(self) -> u32 {
         let mut bits = 0;
         bits.set_bit(31, self.signed);
@@ -155,47 +179,24 @@ impl StatusRegister {
         bits
     }
 
-    pub fn set_flags_from_bits(&mut self, bits: u32) {
-        self.signed = bits.bit(31);
-        self.zero = bits.bit(30);
-        self.carry = bits.bit(29);
-        self.overflow = bits.bit(28);
-    }
+    pub(super) fn from_bits(bits: u32) -> Result<Self> {
+        let state = OperationState::from_bits(bits).unwrap();
+        #[allow(clippy::cast_possible_truncation)]
+        let mode = OperationMode::from_bits(bits)
+            .ok_or_else(|| Error::InvalidOperationMode(bits.bits(..5) as u8))?;
 
-    /// # Errors
-    ///
-    /// Returns an error if the bits do not map to a valid operation mode.
-    pub fn set_control_from_bits(
-        &mut self,
-        bits: u32,
-    ) -> Result<OperationMode, InvalidOperationMode> {
-        self.irq_disabled = bits.bit(7);
-        self.fiq_disabled = bits.bit(6);
-        self.mode = OperationMode::from_bits(bits).ok_or(InvalidOperationMode)?;
-
-        Ok(self.mode)
-    }
-
-    #[cfg(test)]
-    pub(super) fn from_bits(bits: u32) -> Result<Self, InvalidOperationMode> {
-        let mut psr = Self::default();
-        psr.set_control_from_bits(bits)?;
-        psr.set_flags_from_bits(bits);
-
-        Ok(psr)
+        Ok(Self {
+            signed: bits.bit(31),
+            zero: bits.bit(30),
+            carry: bits.bit(29),
+            overflow: bits.bit(28),
+            irq_disabled: bits.bit(7),
+            fiq_disabled: bits.bit(6),
+            state,
+            mode,
+        })
     }
 }
-
-#[derive(Debug)]
-pub struct InvalidOperationMode;
-
-impl Display for InvalidOperationMode {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "Invalid operation mode")
-    }
-}
-
-impl Error for InvalidOperationMode {}
 
 #[cfg(test)]
 mod tests {

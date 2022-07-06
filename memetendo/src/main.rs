@@ -95,7 +95,7 @@ impl<'r> SdlScreen<'r> {
         })
     }
 
-    fn get_texture(&mut self) -> Result<&Texture> {
+    fn texture(&mut self) -> Result<&Texture> {
         if self.is_stale {
             self.texture
                 .with_lock(None, |buf, _| buf.copy_from_slice(&self.frame_buf.0[..]))
@@ -149,7 +149,7 @@ fn main() -> Result<()> {
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {
         for _ in 0..5_000 {
-            gba.step(&mut screen);
+            gba.step(&mut screen).unwrap();
         }
 
         let now = Instant::now();
@@ -182,7 +182,7 @@ fn main() -> Result<()> {
             context.win_canvas.clear();
             context
                 .win_canvas
-                .copy(screen.get_texture()?, None, None)
+                .copy(screen.texture()?, None, None)
                 .map_err(|e| anyhow!("failed to draw screen texture: {e}"))?;
             context.win_canvas.present();
         }
