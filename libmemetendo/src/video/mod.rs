@@ -90,33 +90,12 @@ impl Controller {
     pub fn step(&mut self, screen: &mut impl Screen, cpu: &mut Cpu, cycles: u32) {
         for _ in 0..cycles {
             if self.x < HBLANK_DOT && self.y < VBLANK_DOT {
-                let (x, y) = (usize::from(self.x), usize::from(self.y));
-
-                let rgb = if self.dispcnt.forced_blank {
-                    0xff_ff_ff.into()
-                } else {
-                    let mosaic_offset = (
-                        x % usize::from(self.mosaic_bg.get().0 + 1),
-                        y % usize::from(self.mosaic_bg.get().1 + 1),
-                    );
-
-                    if mosaic_offset == (0, 0) {
-                        // TODO: object layer, rotation & scaling
-                        let rgb15 = match self.dispcnt.mode_type() {
-                            Mode::Tile => self.compute_tile_mode_pixel(),
-                            // TODO: windows, blending fx
-                            Mode::Bitmap => self.compute_bg_bitmap_mode_pixel(),
-                            Mode::Invalid => self.backdrop(), // TODO: what it do?
-                        };
-
-                        rgb15.to_rgb24()
-                    } else {
-                        self.frame_buf
-                            .pixel(x - mosaic_offset.0, y - mosaic_offset.1)
-                    }
-                };
-
-                self.frame_buf.set_pixel(x, y, rgb, self.greenswp.bit(0));
+                self.frame_buf.set_pixel(
+                    self.x.into(),
+                    self.y.into(),
+                    self.compute_rgb(),
+                    self.greenswp.bit(0),
+                );
             }
 
             self.cycle_accum += 1;
@@ -165,28 +144,71 @@ impl Controller {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-struct Rgb15(Rgb);
+struct Dot {
+    r: u8,
+    g: u8,
+    b: u8,
+}
 
-impl From<u16> for Rgb15 {
+const WHITE_DOT: Dot = Dot {
+    r: 31,
+    g: 31,
+    b: 31,
+};
+
+impl From<u16> for Dot {
     #[allow(clippy::cast_possible_truncation)]
     fn from(value: u16) -> Self {
         let r = value.bits(..5) as u8;
         let g = value.bits(5..10) as u8;
         let b = value.bits(10..15) as u8;
 
-        Rgb15(Rgb { r, g, b })
+        Dot { r, g, b }
     }
 }
 
-impl Rgb15 {
-    fn to_rgb24(self) -> Rgb {
-        debug_assert!(self.0.r < 32 && self.0.g < 32 && self.0.b < 32);
+impl Dot {
+    fn to_rgb(self) -> Rgb {
+        debug_assert!(self.r < 32 && self.g < 32 && self.b < 32);
 
         Rgb {
-            r: self.0.r * 8,
-            g: self.0.g * 8,
-            b: self.0.b * 8,
+            r: self.r * 8,
+            g: self.g * 8,
+            b: self.b * 8,
         }
+    }
+}
+
+impl Controller {
+    fn compute_rgb(&self) -> Rgb {
+        if self.dispcnt.forced_blank {
+            WHITE_DOT.to_rgb()
+        } else {
+            let (x, y) = (usize::from(self.x), usize::from(self.y));
+            let mosaic_offset = (
+                x % usize::from(self.mosaic_bg.get().0 + 1),
+                y % usize::from(self.mosaic_bg.get().1 + 1),
+            );
+
+            if mosaic_offset == (0, 0) {
+                // TODO: object layer, rotation & scaling
+                let dot = match self.dispcnt.mode_type() {
+                    Mode::Tile => self.compute_tile_mode_dot(),
+                    // TODO: windows, blending fx
+                    Mode::Bitmap => self.compute_bg_bitmap_mode_dot(),
+                    Mode::Invalid => self.backdrop(), // TODO: what it do?
+                };
+
+                dot.to_rgb()
+            } else {
+                self.frame_buf
+                    .pixel(x - mosaic_offset.0, y - mosaic_offset.1)
+            }
+        }
+    }
+
+    fn backdrop(&self) -> Dot {
+        Dot::from(self.palette_ram.as_ref().read_hword(0))
     }
 }
 
@@ -198,17 +220,7 @@ enum Visibility {
     Hidden,
 }
 
-impl Visibility {
-    fn should_draw_pixel(self) -> bool {
-        self != Visibility::Hidden
-    }
-}
-
 impl Controller {
-    fn backdrop(&self) -> Rgb15 {
-        Rgb15::from(self.palette_ram.as_ref().read_hword(0))
-    }
-
     fn bg_priority_iter(&self) -> impl Iterator<Item = usize> + '_ {
         // If many BGs share the same priority, the one with the smallest index wins.
         let mut bg_priorities = [0, 1, 2, 3];
@@ -222,15 +234,15 @@ impl Controller {
         bg_priorities.into_iter()
     }
 
-    fn compute_tile_mode_pixel(&self) -> Rgb15 {
+    fn compute_tile_mode_dot(&self) -> Dot {
         let mut bg_iter = self.bg_priority_iter();
-        let (bg_idx, mut rgb, visibility) = bg_iter
+        let (bg_idx, mut dot, visibility) = bg_iter
             .by_ref()
-            .map(|i| (i, self.compute_bg_tile_mode_pixel(i)))
-            .find(|(_, (rgb, _))| rgb.is_some())
+            .map(|i| (i, self.compute_bg_tile_mode_dot(i)))
+            .find(|(_, (dot, _))| dot.is_some())
             .map_or_else(
-                || (None, self.backdrop(), self.compute_pixel_visibility(None)),
-                |(i, (rgb, vis))| (Some(i), rgb.unwrap(), vis),
+                || (None, self.backdrop(), self.compute_dot_visibility(None)),
+                |(i, (dot, vis))| (Some(i), dot.unwrap(), vis),
             );
 
         let target_blendfx = bg_idx.map_or(self.bldcnt.backdrop_target.0, |i| {
@@ -245,18 +257,18 @@ impl Controller {
         let blendfx = self.bldcnt.mode != 0 && target_blendfx && win_blendfx;
 
         if blendfx {
-            rgb = match self.bldcnt.mode {
-                1 => self.alpha_blend_pixel(bg_iter, rgb),
-                2 => self.update_pixel_brightness(false, rgb),
-                3 => self.update_pixel_brightness(true, rgb),
+            dot = match self.bldcnt.mode {
+                1 => self.alpha_blend_dot(bg_iter, dot),
+                2 => self.brighten_dot(false, dot),
+                3 => self.brighten_dot(true, dot),
                 _ => unreachable!(),
             };
         }
 
-        rgb
+        dot
     }
 
-    fn update_pixel_brightness(&self, darken: bool, rgb: Rgb15) -> Rgb15 {
+    fn brighten_dot(&self, darken: bool, dot: Dot) -> Dot {
         let mul = if darken {
             |comp| -f32::from(comp)
         } else {
@@ -265,92 +277,44 @@ impl Controller {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let blend = |comp| (f32::from(comp) + mul(comp) * self.bldy.factor()) as u8;
 
-        Rgb15(Rgb {
-            r: blend(rgb.0.r),
-            g: blend(rgb.0.g),
-            b: blend(rgb.0.b),
-        })
+        Dot {
+            r: blend(dot.r),
+            g: blend(dot.g),
+            b: blend(dot.b),
+        }
     }
 
-    fn alpha_blend_pixel(
-        &self,
-        bg_priority_iter: impl Iterator<Item = usize>,
-        rgb: Rgb15,
-    ) -> Rgb15 {
-        let bot_rgb = bg_priority_iter
+    fn alpha_blend_dot(&self, bg_iter: impl Iterator<Item = usize>, dot: Dot) -> Dot {
+        let bot_dot = bg_iter
             .filter(|&i| self.bldcnt.bg_target.1[i])
-            .map(|i| self.compute_bg_tile_mode_pixel(i).0)
+            .map(|i| self.compute_bg_tile_mode_dot(i).0)
             .find(Option::is_some)
             .flatten()
             .or_else(|| self.bldcnt.backdrop_target.1.then(|| self.backdrop()));
 
-        if let Some(bot_rgb) = bot_rgb {
+        if let Some(bot_dot) = bot_dot {
             let factor = (self.bldalpha.0.factor(), self.bldalpha.1.factor());
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let blend = |top: u8, bot: u8| {
-                let sum = f32::from(top) * factor.0 + f32::from(bot) * factor.1;
-
-                31.min(sum as u32) as u8
+                31.min((f32::from(top) * factor.0 + f32::from(bot) * factor.1) as u32) as u8
             };
 
-            Rgb15(Rgb {
-                r: blend(rgb.0.r, bot_rgb.0.r),
-                g: blend(rgb.0.g, bot_rgb.0.g),
-                b: blend(rgb.0.b, bot_rgb.0.b),
-            })
-        } else {
-            rgb
-        }
-    }
-
-    fn compute_pixel_visibility(&self, bg_idx: Option<usize>) -> Visibility {
-        if bg_idx.map_or(false, |i| self.dispcnt.is_bg_hidden(i)) {
-            return Visibility::Hidden;
-        }
-        if self.dispcnt.display_bg_window == [false; 2] && !self.dispcnt.display_obj_window {
-            return Visibility::Visible; // All windows are disabled; show everything.
-        }
-
-        let mut visibility = if bg_idx.map_or(false, |i| !self.winout.display_bg[i]) {
-            Visibility::Hidden
-        } else {
-            Visibility::OutsideWindows
-        };
-        for win_idx in (0..2).rev() {
-            let win_x = (self.winh[win_idx].1, self.winh[win_idx].0);
-            let win_y = (self.winv[win_idx].1, self.winv[win_idx].0);
-
-            let inside_horiz = if win_x.0 <= win_x.1 {
-                self.x >= win_x.0.into() && self.x < win_x.1.into()
-            } else {
-                self.x < win_x.1.into() || self.x >= win_x.0.into()
-            };
-            let inside_vert = if win_y.0 <= win_y.1 {
-                self.y >= win_y.0 && self.y < win_y.1
-            } else {
-                self.y < win_y.1 || self.y >= win_y.0
-            };
-
-            if inside_horiz && inside_vert {
-                if self.dispcnt.display_bg_window[win_idx]
-                    && bg_idx.map_or(true, |i| self.winin[win_idx].display_bg[i])
-                {
-                    visibility = Visibility::InsideWindow(win_idx);
-                } else if bg_idx.is_some() {
-                    visibility = Visibility::Hidden;
-                }
+            Dot {
+                r: blend(dot.r, bot_dot.r),
+                g: blend(dot.g, bot_dot.g),
+                b: blend(dot.b, bot_dot.b),
             }
+        } else {
+            dot
         }
-
-        visibility
     }
 
-    fn compute_bg_tile_mode_pixel(&self, bg_idx: usize) -> (Option<Rgb15>, Visibility) {
+    fn compute_bg_tile_mode_dot(&self, bg_idx: usize) -> (Option<Dot>, Visibility) {
         const TILE_LEN: usize = 8;
         const SCREEN_TILE_LEN: usize = 32;
 
-        let visibility = self.compute_pixel_visibility(Some(bg_idx));
-        if !visibility.should_draw_pixel() {
+        let visibility = self.compute_dot_visibility(Some(bg_idx));
+        if visibility == Visibility::Hidden {
             return (None, visibility);
         }
 
@@ -398,21 +362,21 @@ impl Controller {
             u32::from(self.vram[dots_offset] >> (4 * (dot_x as u8 % 2))).bits(..4)
         };
 
-        let rgb = (palette_color_idx != 0).then(|| {
+        let dot = (palette_color_idx != 0).then(|| {
             let color_idx = if color256 {
                 palette_color_idx
             } else {
                 16 * u32::from(tile_info.bits(12..)) + palette_color_idx
             };
 
-            Rgb15::from(self.palette_ram.as_ref().read_hword(2 * color_idx))
+            Dot::from(self.palette_ram.as_ref().read_hword(2 * color_idx))
         });
 
-        (rgb, visibility)
+        (dot, visibility)
     }
 
-    fn compute_bg_bitmap_mode_pixel(&self) -> Rgb15 {
-        if !self.compute_pixel_visibility(Some(2)).should_draw_pixel() {
+    fn compute_bg_bitmap_mode_dot(&self) -> Dot {
+        if self.compute_dot_visibility(Some(2)) == Visibility::Hidden {
             return self.backdrop();
         }
 
@@ -441,7 +405,49 @@ impl Controller {
             .filter(|&offset| offset < color_ram.len())
             .map_or_else(
                 || self.backdrop(),
-                |offset| Rgb15::from(color_ram.as_ref().read_hword(offset as u32)),
+                |offset| Dot::from(color_ram.as_ref().read_hword(offset as u32)),
             )
+    }
+
+    fn compute_dot_visibility(&self, bg_idx: Option<usize>) -> Visibility {
+        if bg_idx.map_or(false, |i| self.dispcnt.is_bg_hidden(i)) {
+            return Visibility::Hidden;
+        }
+        if self.dispcnt.display_bg_window == [false; 2] && !self.dispcnt.display_obj_window {
+            return Visibility::Visible; // All windows are disabled; show everything.
+        }
+
+        let mut visibility = if bg_idx.map_or(false, |i| !self.winout.display_bg[i]) {
+            Visibility::Hidden
+        } else {
+            Visibility::OutsideWindows
+        };
+        for win_idx in (0..2).rev() {
+            let win_x = (self.winh[win_idx].1, self.winh[win_idx].0);
+            let win_y = (self.winv[win_idx].1, self.winv[win_idx].0);
+
+            let inside_horiz = if win_x.0 <= win_x.1 {
+                self.x >= win_x.0.into() && self.x < win_x.1.into()
+            } else {
+                self.x < win_x.1.into() || self.x >= win_x.0.into()
+            };
+            let inside_vert = if win_y.0 <= win_y.1 {
+                self.y >= win_y.0 && self.y < win_y.1
+            } else {
+                self.y < win_y.1 || self.y >= win_y.0
+            };
+
+            if inside_horiz && inside_vert {
+                if self.dispcnt.display_bg_window[win_idx]
+                    && bg_idx.map_or(true, |i| self.winin[win_idx].display_bg[i])
+                {
+                    visibility = Visibility::InsideWindow(win_idx);
+                } else if bg_idx.is_some() {
+                    visibility = Visibility::Hidden;
+                }
+            }
+        }
+
+        visibility
     }
 }
