@@ -332,38 +332,10 @@ impl BlendControl {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct BlendAlpha(u8, u8);
+pub struct BlendCoefficient(pub u8);
 
-impl BlendAlpha {
-    pub fn get(self) -> (u8, u8) {
-        (self.0, self.1)
-    }
-
-    pub fn set_lo_bits(&mut self, bits: u8) {
-        self.0 = bits.bits(..5);
-    }
-
-    pub fn set_hi_bits(&mut self, bits: u8) {
-        self.1 = bits.bits(..5);
-    }
-
-    pub fn blend_factor(self) -> (f32, f32) {
-        (
-            1.0f32.min(f32::from(self.0) / 16.0),
-            1.0f32.min(f32::from(self.1) / 16.0),
-        )
-    }
-}
-
-#[derive(Copy, Clone, Default, Debug)]
-pub struct BlendBrightness(u8);
-
-impl BlendBrightness {
-    pub fn get(self) -> u8 {
-        self.0
-    }
-
-    pub fn set_bits(&mut self, bits: u8) {
-        self.0 = bits.bits(..4);
+impl BlendCoefficient {
+    pub fn factor(self) -> f32 {
+        1.0f32.min(f32::from(self.0.bits(..5)) / 16.0)
     }
 }

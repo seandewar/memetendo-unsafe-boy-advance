@@ -117,8 +117,8 @@ impl Bus<'_, '_, '_> {
             0x50 => self.video.bldcnt.lo_bits(),
             0x51 => self.video.bldcnt.hi_bits(),
             // BLDALPHA
-            0x52 => self.video.bldalpha.get().0,
-            0x53 => self.video.bldalpha.get().1,
+            0x52 => self.video.bldalpha.0 .0,
+            0x53 => self.video.bldalpha.1 .0,
             // KEYINPUT
             0x130 => self.keypad.keyinput_lo_bits(),
             0x131 => self.keypad.keyinput_hi_bits(),
@@ -203,10 +203,10 @@ impl Bus<'_, '_, '_> {
             0x50 => self.video.bldcnt.set_lo_bits(value),
             0x51 => self.video.bldcnt.set_hi_bits(value),
             // BLDALPHA
-            0x52 => self.video.bldalpha.set_lo_bits(value),
-            0x53 => self.video.bldalpha.set_hi_bits(value),
+            0x52 => self.video.bldalpha.0 .0 = value,
+            0x53 => self.video.bldalpha.1 .0 = value,
             // BLDY
-            0x54 => self.video.bldy.set_bits(value),
+            0x54 => self.video.bldy.0 = value,
             // KEYCNT
             0x132 => self.keypad.keycnt.set_lo_bits(value),
             0x133 => self.keypad.keycnt.set_hi_bits(value),

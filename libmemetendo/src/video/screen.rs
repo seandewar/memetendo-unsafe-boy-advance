@@ -1,5 +1,3 @@
-use intbits::Bits;
-
 use super::{HBLANK_DOT, VBLANK_DOT};
 
 pub const WIDTH: usize = HBLANK_DOT as _;
@@ -35,20 +33,6 @@ impl Rgb {
     #[must_use]
     pub fn to_le_bytes(self) -> [u8; 3] {
         [self.r, self.g, self.b]
-    }
-
-    #[allow(clippy::cast_possible_truncation)]
-    #[must_use]
-    pub fn from_555(value: u16) -> Self {
-        let r = value.bits(..5) as u8;
-        let g = value.bits(5..10) as u8;
-        let b = value.bits(10..15) as u8;
-
-        Self {
-            r: r * 8,
-            g: g * 8,
-            b: b * 8,
-        }
     }
 }
 

@@ -11,8 +11,8 @@ use crate::{
 
 use self::{
     reg::{
-        BackgroundControl, BackgroundOffset, BlendAlpha, BlendBrightness, BlendControl,
-        DisplayControl, DisplayStatus, Mosaic, WindowControl,
+        BackgroundControl, BackgroundOffset, BlendCoefficient, BlendControl, DisplayControl,
+        DisplayStatus, Mosaic, WindowControl,
     },
     screen::{FrameBuffer, Rgb, Screen},
 };
@@ -48,8 +48,8 @@ pub struct Controller {
     pub mosaic_bg: Mosaic,
     pub mosaic_obj: Mosaic,
     pub bldcnt: BlendControl,
-    pub bldalpha: BlendAlpha,
-    pub bldy: BlendBrightness,
+    pub bldalpha: (BlendCoefficient, BlendCoefficient),
+    pub bldy: BlendCoefficient,
 }
 
 impl Default for Controller {
@@ -82,8 +82,8 @@ impl Controller {
             mosaic_bg: Mosaic::default(),
             mosaic_obj: Mosaic::default(),
             bldcnt: BlendControl::default(),
-            bldalpha: BlendAlpha::default(),
-            bldy: BlendBrightness::default(),
+            bldalpha: (BlendCoefficient::default(), BlendCoefficient::default()),
+            bldy: BlendCoefficient::default(),
         }
     }
 
@@ -99,21 +99,21 @@ impl Controller {
                         x % usize::from(self.mosaic_bg.get().0 + 1),
                         y % usize::from(self.mosaic_bg.get().1 + 1),
                     );
-                    let rgb = if mosaic_offset == (0, 0) {
-                        match self.dispcnt.mode_type() {
-                            Mode::Tile => self.compute_tile_mode_pixel(),
-                            Mode::Bitmap => self.compute_bg_bitmap_mode_pixel(),
-                            Mode::Invalid => None, // TODO: what it do?
-                        }
-                    } else {
-                        Some(
-                            self.frame_buf
-                                .pixel(x - mosaic_offset.0, y - mosaic_offset.1),
-                        )
-                    };
 
-                    // If transparent, use the backdrop colour
-                    rgb.unwrap_or_else(|| self.backdrop())
+                    if mosaic_offset == (0, 0) {
+                        // TODO: object layer, rotation & scaling
+                        let rgb15 = match self.dispcnt.mode_type() {
+                            Mode::Tile => self.compute_tile_mode_pixel(),
+                            // TODO: windows, blending fx
+                            Mode::Bitmap => self.compute_bg_bitmap_mode_pixel(),
+                            Mode::Invalid => self.backdrop(), // TODO: what it do?
+                        };
+
+                        rgb15.to_rgb24()
+                    } else {
+                        self.frame_buf
+                            .pixel(x - mosaic_offset.0, y - mosaic_offset.1)
+                    }
                 };
 
                 self.frame_buf.set_pixel(x, y, rgb, self.greenswp.bit(0));
@@ -165,6 +165,32 @@ impl Controller {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct Rgb15(Rgb);
+
+impl From<u16> for Rgb15 {
+    #[allow(clippy::cast_possible_truncation)]
+    fn from(value: u16) -> Self {
+        let r = value.bits(..5) as u8;
+        let g = value.bits(5..10) as u8;
+        let b = value.bits(10..15) as u8;
+
+        Rgb15(Rgb { r, g, b })
+    }
+}
+
+impl Rgb15 {
+    fn to_rgb24(self) -> Rgb {
+        debug_assert!(self.0.r < 32 && self.0.g < 32 && self.0.b < 32);
+
+        Rgb {
+            r: self.0.r * 8,
+            g: self.0.g * 8,
+            b: self.0.b * 8,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum Visibility {
     Visible,
     InsideWindow(usize),
@@ -179,8 +205,8 @@ impl Visibility {
 }
 
 impl Controller {
-    fn backdrop(&self) -> Rgb {
-        Rgb::from_555(self.palette_ram.as_ref().read_hword(0))
+    fn backdrop(&self) -> Rgb15 {
+        Rgb15::from(self.palette_ram.as_ref().read_hword(0))
     }
 
     fn bg_priority_iter(&self) -> impl Iterator<Item = usize> + '_ {
@@ -196,47 +222,61 @@ impl Controller {
         bg_priorities.into_iter()
     }
 
-    fn compute_tile_mode_pixel(&self) -> Option<Rgb> {
+    fn compute_tile_mode_pixel(&self) -> Rgb15 {
         let mut bg_iter = self.bg_priority_iter();
-        let (bg_info, visibility) = bg_iter
+        let (bg_idx, mut rgb, visibility) = bg_iter
             .by_ref()
             .map(|i| (i, self.compute_bg_tile_mode_pixel(i)))
             .find(|(_, (rgb, _))| rgb.is_some())
             .map_or_else(
-                || (None, self.compute_pixel_visibility(None)),
-                |(i, (rgb, vis))| (Some((i, rgb.unwrap())), vis),
+                || (None, self.backdrop(), self.compute_pixel_visibility(None)),
+                |(i, (rgb, vis))| (Some(i), rgb.unwrap(), vis),
             );
 
+        let target_blendfx = bg_idx.map_or(self.bldcnt.backdrop_target.0, |i| {
+            self.bldcnt.bg_target.0[i]
+        });
         let win_blendfx = match visibility {
             Visibility::Visible => true,
             Visibility::InsideWindow(win_id) => self.winin[win_id].blendfx_enabled,
             Visibility::OutsideWindows => self.winout.blendfx_enabled,
             Visibility::Hidden => false,
         };
-        let bg_blendfx = bg_info.map_or(true, |(i, _)| self.bldcnt.bg_target.0[i]);
-        let blendfx = self.bldcnt.mode != 0 && bg_blendfx && win_blendfx;
+        let blendfx = self.bldcnt.mode != 0 && target_blendfx && win_blendfx;
 
-        let mut rgb = bg_info.map(|(_, rgb)| rgb);
         if blendfx {
-            match self.bldcnt.mode {
-                1 => {
-                    rgb =
-                        bg_info.map(|(_, rgb)| self.compute_tile_mode_bg_pixel_blend(bg_iter, rgb));
-                }
-                2 => {} // TODO
-                3 => {} // TODO
+            rgb = match self.bldcnt.mode {
+                1 => self.alpha_blend_pixel(bg_iter, rgb),
+                2 => self.update_pixel_brightness(false, rgb),
+                3 => self.update_pixel_brightness(true, rgb),
                 _ => unreachable!(),
-            }
+            };
         }
 
         rgb
     }
 
-    fn compute_tile_mode_bg_pixel_blend(
+    fn update_pixel_brightness(&self, darken: bool, rgb: Rgb15) -> Rgb15 {
+        let mul = if darken {
+            |comp| -f32::from(comp)
+        } else {
+            |comp| f32::from(31 - comp)
+        };
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let blend = |comp| (f32::from(comp) + mul(comp) * self.bldy.factor()) as u8;
+
+        Rgb15(Rgb {
+            r: blend(rgb.0.r),
+            g: blend(rgb.0.g),
+            b: blend(rgb.0.b),
+        })
+    }
+
+    fn alpha_blend_pixel(
         &self,
         bg_priority_iter: impl Iterator<Item = usize>,
-        rgb: Rgb,
-    ) -> Rgb {
+        rgb: Rgb15,
+    ) -> Rgb15 {
         let bot_rgb = bg_priority_iter
             .filter(|&i| self.bldcnt.bg_target.1[i])
             .map(|i| self.compute_bg_tile_mode_pixel(i).0)
@@ -245,19 +285,19 @@ impl Controller {
             .or_else(|| self.bldcnt.backdrop_target.1.then(|| self.backdrop()));
 
         if let Some(bot_rgb) = bot_rgb {
-            let factor = self.bldalpha.blend_factor();
+            let factor = (self.bldalpha.0.factor(), self.bldalpha.1.factor());
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let blend = |top: u8, bot: u8| {
                 let sum = f32::from(top) * factor.0 + f32::from(bot) * factor.1;
 
-                (8 * 31).min(sum as u32) as u8
+                31.min(sum as u32) as u8
             };
 
-            Rgb {
-                r: blend(rgb.r, bot_rgb.r),
-                g: blend(rgb.g, bot_rgb.g),
-                b: blend(rgb.b, bot_rgb.b),
-            }
+            Rgb15(Rgb {
+                r: blend(rgb.0.r, bot_rgb.0.r),
+                g: blend(rgb.0.g, bot_rgb.0.g),
+                b: blend(rgb.0.b, bot_rgb.0.b),
+            })
         } else {
             rgb
         }
@@ -305,7 +345,7 @@ impl Controller {
         visibility
     }
 
-    fn compute_bg_tile_mode_pixel(&self, bg_idx: usize) -> (Option<Rgb>, Visibility) {
+    fn compute_bg_tile_mode_pixel(&self, bg_idx: usize) -> (Option<Rgb15>, Visibility) {
         const TILE_LEN: usize = 8;
         const SCREEN_TILE_LEN: usize = 32;
 
@@ -365,15 +405,15 @@ impl Controller {
                 16 * u32::from(tile_info.bits(12..)) + palette_color_idx
             };
 
-            Rgb::from_555(self.palette_ram.as_ref().read_hword(2 * color_idx))
+            Rgb15::from(self.palette_ram.as_ref().read_hword(2 * color_idx))
         });
 
         (rgb, visibility)
     }
 
-    fn compute_bg_bitmap_mode_pixel(&self) -> Option<Rgb> {
+    fn compute_bg_bitmap_mode_pixel(&self) -> Rgb15 {
         if !self.compute_pixel_visibility(Some(2)).should_draw_pixel() {
-            return None;
+            return self.backdrop();
         }
 
         let color_ram = if self.dispcnt.mode == 4 {
@@ -399,6 +439,9 @@ impl Controller {
         color_idx
             .map(|i| 2 * i)
             .filter(|&offset| offset < color_ram.len())
-            .map(|offset| Rgb::from_555(color_ram.as_ref().read_hword(offset as u32)))
+            .map_or_else(
+                || self.backdrop(),
+                |offset| Rgb15::from(color_ram.as_ref().read_hword(offset as u32)),
+            )
     }
 }
