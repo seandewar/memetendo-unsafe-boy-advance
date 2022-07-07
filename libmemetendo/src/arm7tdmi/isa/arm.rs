@@ -10,7 +10,7 @@ use crate::{
     bus::{Bus, BusAlignedExt},
 };
 
-use super::{BlockTransferFlags, Result};
+use super::BlockTransferFlags;
 
 fn r_index(instr: u32, pos: u8) -> usize {
     instr.bits(pos..(pos + 4)) as _
@@ -18,16 +18,12 @@ fn r_index(instr: u32, pos: u8) -> usize {
 
 impl Cpu {
     #[bitmatch]
-    pub(in crate::arm7tdmi) fn execute_arm(
-        &mut self,
-        bus: &mut impl Bus,
-        instr: u32,
-    ) -> Result<()> {
+    pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl Bus, instr: u32) {
         debug_assert!(self.reg.cpsr.state == OperationState::Arm);
 
         #[allow(clippy::cast_possible_truncation)]
         if !self.meets_condition(instr.bits(28..) as u8) {
-            return Ok(()); // TODO: 1S cycle anyway
+            return; // TODO: 1S cycle anyway
         }
 
         // TODO: 2S+1N for SWI, 2N+1N+1I for undefined exception
@@ -36,7 +32,7 @@ impl Cpu {
             "0001_0010_1111_1111_1111_????_????" => self.execute_arm_bx(bus, instr),
             "0001_0?00_????_????_0000_1001_????" => self.execute_arm_swap(bus, instr),
             "0000_????_????_????_????_1001_????" => self.execute_arm_multiply(instr),
-            "00?1_0??0_????_????_????_????_????" => self.execute_arm_psr_transfer(instr)?,
+            "00?1_0??0_????_????_????_????_????" => self.execute_arm_psr_transfer(instr),
             "000?_????_????_????_????_1??1_????" => {
                 self.execute_arm_hword_and_signed_transfer(bus, instr);
             }
@@ -46,9 +42,9 @@ impl Cpu {
             "011?_????_????_????_????_???1_????" => {
                 self.enter_exception(bus, Exception::UndefinedInstr);
             }
-            "100?_????_????_????_????_????_????" => self.execute_arm_block_transfer(bus, instr)?,
+            "100?_????_????_????_????_????_????" => self.execute_arm_block_transfer(bus, instr),
             "101?_????_????_????_????_????_????" => self.execute_arm_b_bl(bus, instr),
-            "00??_????_????_????_????_????_????" => self.execute_arm_data_processing(bus, instr)?,
+            "00??_????_????_????_????_????_????" => self.execute_arm_data_processing(bus, instr),
             "01??_????_????_????_????_????_????" => self.execute_arm_single_transfer(bus, instr),
             "1100_010?_????_????_????_???0_????" => {} // N/A Coprocessor double register transfer
             "1110_????_????_????_????_???0_????" => {} // N/A Coprocessor data operations
@@ -58,8 +54,6 @@ impl Cpu {
                 self.enter_exception(bus, Exception::UndefinedInstr);
             }
         }
-
-        Ok(())
     }
 
     /// Branch and branch with link.
@@ -82,7 +76,7 @@ impl Cpu {
     }
 
     /// Data processing operations.
-    fn execute_arm_data_processing(&mut self, bus: &mut impl Bus, instr: u32) -> Result<()> {
+    fn execute_arm_data_processing(&mut self, bus: &mut impl Bus, instr: u32) {
         let r_value1 = r_index(instr, 16);
         let r_dst = r_index(instr, 12);
         let update_cond = instr.bit(20) && r_dst != PC_INDEX;
@@ -184,20 +178,15 @@ impl Cpu {
         }
 
         if set_cpsr && self.reg.cpsr.mode() != OperationMode::User {
-            self.reg.set_cpsr(self.reg.spsr)?;
+            self.reg.set_cpsr(self.reg.spsr());
         }
         if r_dst == PC_INDEX && !(8..=11).contains(&op) {
             self.reload_pipeline(bus);
         }
-
-        Ok(())
     }
 
     /// Multiply and multiply-accumulate.
     fn execute_arm_multiply(&mut self, instr: u32) {
-        // TODO: There are some restrictions; what if they're violated?
-        //       Right now, due to how our opcode parsing is implemented, using unused opcodes may
-        //       be interpreted as valid opcodes; we'll just call it undefined behaviour. :-)
         let update_cond = instr.bit(20);
         let r_dst_or_hi = r_index(instr, 16);
         let r_accum_or_lo = r_index(instr, 12);
@@ -244,7 +233,7 @@ impl Cpu {
     }
 
     /// PSR transfer.
-    fn execute_arm_psr_transfer(&mut self, instr: u32) -> Result<()> {
+    fn execute_arm_psr_transfer(&mut self, instr: u32) {
         let use_spsr = instr.bit(22);
 
         if instr.bit(21) {
@@ -258,17 +247,15 @@ impl Cpu {
             };
 
             // MSR{cond} Psr{_field},Op
-            self.op_msr(use_spsr, instr.bit(19), instr.bit(16), value)?;
+            self.op_msr(use_spsr, instr.bit(19), instr.bit(16), value);
         } else {
             // MRS{cond} Rd,Psr
             self.reg.r[r_index(instr, 12)] = if use_spsr {
-                self.reg.spsr
+                self.reg.spsr()
             } else {
                 self.reg.cpsr.bits()
             };
         }
-
-        Ok(())
     }
 
     /// Single data transfer.
@@ -373,7 +360,7 @@ impl Cpu {
         let op = instr.bits(5..7);
         if load {
             self.reg.r[r_src_or_dst] = match op {
-                // Reserved. TODO: how does it behave?
+                // Reserved
                 0 => self.reg.r[r_src_or_dst],
                 // LDR{cond}H Rd,<Address>
                 1 => Self::op_ldrh_or_ldsh(bus, transfer_addr, false),
@@ -409,7 +396,7 @@ impl Cpu {
     }
 
     /// Block data transfer.
-    fn execute_arm_block_transfer(&mut self, bus: &mut impl Bus, instr: u32) -> Result<()> {
+    fn execute_arm_block_transfer(&mut self, bus: &mut impl Bus, instr: u32) {
         let flags = BlockTransferFlags {
             preindex: instr.bit(24),
             ascend: instr.bit(23),
@@ -423,13 +410,11 @@ impl Cpu {
 
         if instr.bit(20) {
             // LDM{cond}{amod} Rn{!},<Rlist>{^}
-            self.op_ldm(bus, &flags, r_base_addr, r_list)?;
+            self.op_ldm(bus, &flags, r_base_addr, r_list);
         } else {
             // STM{cond}{amod} Rn{!},<Rlist>{^}
             self.op_stm(bus, &flags, r_base_addr, r_list);
         }
-
-        Ok(())
     }
 
     /// Single data swap.
@@ -588,7 +573,7 @@ mod tests {
         // AL S R15,R0,#1011b
         let cpu = InstrTest::new_arm(0b1110_00_1_0000_1_0000_1111_0000_00001011)
             .setup(&|cpu| {
-                cpu.reg.spsr = 0b11_0_10001.with_bits(28.., 0b1010);
+                cpu.reg.set_spsr(0b11_0_10001.with_bits(28.., 0b1010));
                 cpu.reg.r[0] = u32::MAX;
             })
             .assert_r(0, u32::MAX)
@@ -903,7 +888,7 @@ mod tests {
         // AL P R0,#10101010b
         let cpu = InstrTest::new_arm(0b1110_00_1_1000_1_0000_1111_0000_10101010)
             .setup(&|cpu| {
-                cpu.reg.spsr = 0b11_0_10010.with_bits(28.., 0b0001);
+                cpu.reg.set_spsr(0b11_0_10010.with_bits(28.., 0b0001));
                 cpu.reg.r[0] = 1;
             })
             .assert_r(0, 1)
@@ -975,7 +960,7 @@ mod tests {
         // AL S R15,R0,#10101010b
         let cpu = InstrTest::new_arm(0b1110_00_1_1100_1_0000_1111_0000_10101010)
             .setup(&|cpu| {
-                cpu.reg.spsr = 0b00_1_10000.with_bits(28.., 0b0101);
+                cpu.reg.set_spsr(0b00_1_10000.with_bits(28.., 0b0101));
                 cpu.reg.r[0] = 0b1100_0011.with_bit(31, true);
             })
             .assert_r(0, 0b1100_0011.with_bit(31, true))
@@ -992,7 +977,7 @@ mod tests {
         // AL R15,R0,#10101010b
         let cpu = InstrTest::new_arm(0b1110_00_1_1100_0_0000_1111_0000_10101010)
             .setup(&|cpu| {
-                cpu.reg.spsr = 0b00_1_10000.with_bits(28.., 0b0101);
+                cpu.reg.set_spsr(0b00_1_10000.with_bits(28.., 0b0101));
                 cpu.reg.r[0] = 0b1100_0011.with_bit(31, true);
             })
             .assert_r(0, 0b1100_0011.with_bit(31, true))
@@ -1276,7 +1261,7 @@ mod tests {
                     carry: true,
                     ..StatusRegister::default()
                 };
-                cpu.reg.spsr = spsr.bits();
+                cpu.reg.set_spsr(spsr.bits());
             })
             .assert_r(7, 0b10_0_11111.with_bits(28.., 0b1010))
             .run();
@@ -1293,7 +1278,7 @@ mod tests {
         // AL SPSR_svc_f,#0101b,ROR #4
         let cpu = InstrTest::new_arm(0b1110_00_1_10_1_1_0_1000_1111_0010_00000101).run();
 
-        let spsr = StatusRegister::from_bits(cpu.reg.spsr).unwrap();
+        let spsr = StatusRegister::from_bits(cpu.reg.spsr());
         assert!(spsr.zero);
         assert!(spsr.overflow);
         assert!(!spsr.signed);
@@ -1311,7 +1296,7 @@ mod tests {
         // AL SPSR_svc_fc,#11110000b
         let cpu = InstrTest::new_arm(0b1110_00_1_10_1_1_0_1001_1111_0000_11110000).run();
 
-        let spsr = StatusRegister::from_bits(cpu.reg.spsr).unwrap();
+        let spsr = StatusRegister::from_bits(cpu.reg.spsr());
         assert!(!spsr.zero);
         assert!(!spsr.overflow);
         assert!(!spsr.signed);
@@ -1660,7 +1645,7 @@ mod tests {
                         overflow: true,
                         ..StatusRegister::default()
                     };
-                    cpu.reg.spsr = spsr.bits();
+                    cpu.reg.set_spsr(spsr.bits());
                     cpu.reg.cpsr.signed = true;
                     cpu.reg.r[5] = 20;
                 })

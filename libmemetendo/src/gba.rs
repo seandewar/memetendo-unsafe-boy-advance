@@ -1,7 +1,7 @@
 use intbits::Bits;
 
 use crate::{
-    arm7tdmi::{self, Cpu},
+    arm7tdmi::Cpu,
     bus,
     keypad::Keypad,
     rom::{Bios, Cartridge},
@@ -44,15 +44,10 @@ impl<'b, 'c> Gba<'b, 'c> {
         }
     }
 
-    /// # Errors
-    ///
-    /// Returns an error if the CPU enters an invalid state.
-    pub fn step(&mut self, screen: &mut impl Screen) -> arm7tdmi::Result<()> {
+    pub fn step(&mut self, screen: &mut impl Screen) {
         self.keypad.step(&mut self.cpu);
-        self.cpu.step(&mut bus!(self))?;
+        self.cpu.step(&mut bus!(self));
         self.video.step(screen, &mut self.cpu, 2);
-
-        Ok(())
     }
 }
 

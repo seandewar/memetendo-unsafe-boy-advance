@@ -1,8 +1,6 @@
 use intbits::Bits;
 use strum_macros::FromRepr;
 
-use super::{Error, Result};
-
 #[derive(Default, Copy, Clone, PartialEq, Eq, FromRepr, Debug)]
 pub enum OperationMode {
     User = 0b10000,
@@ -41,12 +39,12 @@ pub const PC_INDEX: usize = 15;
 pub struct Registers {
     pub r: [u32; 16],
     pub cpsr: StatusRegister,
-    pub spsr: u32,
+    spsr: u32,
     banks: [Bank; 6],
     fiq_r8_12_bank: [u32; 5],
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 struct Bank {
     sp: u32,
     lr: u32,
@@ -91,17 +89,6 @@ impl Registers {
         self.spsr = self.banks[new_bank_idx].spsr;
     }
 
-    /// # Errors
-    ///
-    /// Returns an error if the mode bits do not map to a valid [`OperationMode`].
-    pub fn set_cpsr(&mut self, bits: u32) -> Result<()> {
-        let new_cpsr = StatusRegister::from_bits(bits)?;
-        self.change_bank(new_cpsr.mode());
-        self.cpsr = new_cpsr;
-
-        Ok(())
-    }
-
     pub fn align_pc(&mut self) {
         self.r[PC_INDEX] &= match self.cpsr.state {
             OperationState::Thumb => !1,
@@ -109,9 +96,30 @@ impl Registers {
         };
     }
 
+    pub fn set_cpsr(&mut self, bits: u32) {
+        let new_cpsr = StatusRegister::from_bits(bits);
+        self.change_bank(new_cpsr.mode());
+        self.cpsr = new_cpsr;
+    }
+
     #[must_use]
     pub fn cpsr(&self) -> &StatusRegister {
         &self.cpsr
+    }
+
+    pub fn set_spsr(&mut self, bits: u32) {
+        if self.cpsr.mode().has_spsr() {
+            self.spsr = bits;
+        }
+    }
+
+    #[must_use]
+    pub fn spsr(&self) -> u32 {
+        if self.cpsr.mode().has_spsr() {
+            self.spsr
+        } else {
+            self.cpsr.bits()
+        }
     }
 }
 
@@ -179,13 +187,12 @@ impl StatusRegister {
         bits
     }
 
-    pub(super) fn from_bits(bits: u32) -> Result<Self> {
+    pub(super) fn from_bits(bits: u32) -> Self {
         let state = OperationState::from_bits(bits).unwrap();
-        #[allow(clippy::cast_possible_truncation)]
-        let mode = OperationMode::from_bits(bits)
-            .ok_or_else(|| Error::InvalidOperationMode(bits.bits(..5) as u8))?;
+        // TODO: What actually happens with an invalid mode?
+        let mode = OperationMode::from_bits(bits).unwrap_or(OperationMode::UndefinedInstr);
 
-        Ok(Self {
+        Self {
             signed: bits.bit(31),
             zero: bits.bit(30),
             carry: bits.bit(29),
@@ -194,7 +201,7 @@ impl StatusRegister {
             fiq_disabled: bits.bit(6),
             state,
             mode,
-        })
+        }
     }
 }
 
@@ -214,12 +221,10 @@ mod tests {
     fn change_mode_works() {
         let mut reg = Registers::default();
         reg.change_mode(OperationMode::User);
-
         assert_eq!(OperationMode::User, reg.cpsr.mode);
 
         reg.r = [1337; 16];
         reg.change_mode(OperationMode::UndefinedInstr);
-
         assert_eq!(OperationMode::UndefinedInstr, reg.cpsr.mode);
 
         let old_bank = reg.banks[OperationMode::User.bank_index()];
@@ -227,39 +232,31 @@ mod tests {
         assert_eq!(1337, old_bank.lr);
 
         reg.r[13..=14].fill(1234);
-
         reg.spsr = 0b1010_1010;
         reg.change_mode(OperationMode::FastInterrupt);
-
         assert_eq!(OperationMode::FastInterrupt, reg.cpsr.mode);
-
         let old_bank = reg.banks[OperationMode::UndefinedInstr.bank_index()];
         assert_eq!(1234, old_bank.sp);
         assert_eq!(1234, old_bank.lr);
         assert_eq!(0b1010_1010, old_bank.spsr);
-        // Should have temporarily saved r8-r12 for later restoration
-        assert_eq!([1337; 5], reg.fiq_r8_12_bank);
+        assert_eq!([1337; 5], reg.fiq_r8_12_bank); // FIQ banks R8-R12 too.
 
         reg.r[8..=12].fill(0xeeee);
         reg.r[13..=14].fill(0xaaaa);
         reg.change_mode(OperationMode::User);
-
-        // Been in usr mode already, so should also have the register values from when we started
+        // We started in USR mode, so we should have the starting values for R13, R14.
         assert_eq!(OperationMode::User, reg.cpsr.mode);
         assert_eq!([1337; 2], reg.r[13..=14]);
         assert_eq!([0xeeee; 5], reg.fiq_r8_12_bank);
-
         let old_bank = reg.banks[OperationMode::FastInterrupt.bank_index()];
         assert_eq!(0xaaaa, old_bank.sp);
         assert_eq!(0xaaaa, old_bank.lr);
 
-        // No need to do banking when switching to the same mode, or when switching between usr and
-        // sys modes (they share the same "bank", which is actually no bank; that's an impl detail)
+        // No need to do banking when switching to the same mode, or when switching between USR and
+        // SYS modes (they share the same "bank", which is actually no bank at all).
         reg.change_mode(OperationMode::System);
-
         assert_eq!(OperationMode::System, reg.cpsr.mode);
         assert_eq!([1337; 2], reg.r[13..=14]);
-
         let bank = reg.banks[OperationMode::System.bank_index()];
         assert_eq!(1337, bank.sp);
         assert_eq!(1337, bank.lr);

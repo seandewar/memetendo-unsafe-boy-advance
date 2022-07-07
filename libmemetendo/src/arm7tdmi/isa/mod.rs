@@ -7,7 +7,7 @@ use crate::bus::{Bus, BusAlignedExt};
 
 use super::{
     reg::{OperationMode, StatusRegister, PC_INDEX},
-    Cpu, Error, OperationState, Result,
+    Cpu, OperationState,
 };
 
 impl StatusRegister {
@@ -420,13 +420,13 @@ impl Cpu {
         flags: &BlockTransferFlags,
         r_base_addr: usize,
         r_list: u16,
-    ) -> Result<()> {
+    ) {
         let base_addr = self.reg.r[r_base_addr];
         let saved_mode = self.reg.cpsr.mode();
 
         let load_psr = flags.load_psr_or_force_user && r_list.bit(PC_INDEX);
         if load_psr && self.reg.cpsr.mode() != OperationMode::User {
-            self.reg.set_cpsr(self.reg.spsr)?;
+            self.reg.set_cpsr(self.reg.spsr());
         } else if flags.load_psr_or_force_user {
             self.reg.change_mode(OperationMode::User);
         }
@@ -450,8 +450,6 @@ impl Cpu {
         if flags.writeback && !r_list.bit(r_base_addr) {
             self.reg.r[r_base_addr] = final_addr;
         }
-
-        Ok(())
     }
 
     fn op_str(bus: &mut impl Bus, addr: u32, value: u32) {
@@ -516,13 +514,7 @@ impl Cpu {
         self.reload_pipeline(bus);
     }
 
-    fn op_msr(
-        &mut self,
-        write_spsr: bool,
-        write_flags: bool,
-        write_control: bool,
-        bits: u32,
-    ) -> Result<()> {
+    fn op_msr(&mut self, write_spsr: bool, write_flags: bool, write_control: bool, bits: u32) {
         let mut mask = !0;
         if write_control && (write_spsr || self.reg.cpsr.mode() != OperationMode::User) {
             mask.set_bits(..8, 0);
@@ -532,25 +524,17 @@ impl Cpu {
         }
 
         let psr = if write_spsr {
-            self.reg.spsr
+            self.reg.spsr()
         } else {
             self.reg.cpsr.bits()
         };
         let bits = (psr & mask) | (bits & !mask);
 
         if write_spsr {
-            // TODO: What happens if the mode has no SPSR?
-            self.reg.spsr = bits;
+            self.reg.set_spsr(bits);
         } else {
-            let old_state = self.reg.cpsr.state;
-            self.reg.set_cpsr(bits)?;
-
-            if old_state != self.reg.cpsr.state {
-                return Err(Error::MsrChangedOperationState(self.reg.cpsr.state));
-            }
+            self.reg.set_cpsr(bits);
         }
-
-        Ok(())
     }
 }
 
@@ -623,10 +607,8 @@ mod tests {
             }
 
             match self.state {
-                OperationState::Thumb => cpu
-                    .execute_thumb(bus, self.instr.try_into().unwrap())
-                    .unwrap(),
-                OperationState::Arm => cpu.execute_arm(bus, self.instr).unwrap(),
+                OperationState::Thumb => cpu.execute_thumb(bus, self.instr.try_into().unwrap()),
+                OperationState::Arm => cpu.execute_arm(bus, self.instr),
             }
             cpu.step_pipeline(bus);
 

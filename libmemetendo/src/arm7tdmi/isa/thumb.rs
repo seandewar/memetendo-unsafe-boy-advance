@@ -10,7 +10,7 @@ use crate::{
     bus::Bus,
 };
 
-use super::{BlockTransferFlags, Result};
+use super::BlockTransferFlags;
 
 fn r_index(instr: u16, pos: u8) -> usize {
     instr.bits(pos..(pos + 3)).into()
@@ -18,11 +18,7 @@ fn r_index(instr: u16, pos: u8) -> usize {
 
 impl Cpu {
     #[bitmatch]
-    pub(in crate::arm7tdmi) fn execute_thumb(
-        &mut self,
-        bus: &mut impl Bus,
-        instr: u16,
-    ) -> Result<()> {
+    pub(in crate::arm7tdmi) fn execute_thumb(&mut self, bus: &mut impl Bus, instr: u16) {
         debug_assert!(self.reg.cpsr.state == OperationState::Thumb);
 
         // TODO: SWI is 2S+1N
@@ -42,8 +38,8 @@ impl Cpu {
             "1000_????" => self.execute_thumb10(bus, instr),
             "1001_????" => self.execute_thumb11(bus, instr),
             "1010_????" => self.execute_thumb12(instr),
-            "1011_????" => self.execute_thumb14(bus, instr)?,
-            "1100_????" => self.execute_thumb15(bus, instr)?,
+            "1011_????" => self.execute_thumb14(bus, instr),
+            "1100_????" => self.execute_thumb15(bus, instr),
             "1101_????" => self.execute_thumb16(bus, instr),
             "1111_????" => self.execute_thumb19(bus, instr),
             "000?_????" => self.execute_thumb1(instr),
@@ -51,8 +47,6 @@ impl Cpu {
             "011?_????" => self.execute_thumb9(bus, instr),
             _ => {}
         }
-
-        Ok(())
     }
 
     /// Thumb.1: Move shifted register.
@@ -318,7 +312,7 @@ impl Cpu {
     }
 
     /// Thumb.14: Push or pop registers.
-    fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) -> Result<()> {
+    fn execute_thumb14(&mut self, bus: &mut impl Bus, instr: u16) {
         let pop = instr.bit(11);
         let flags = BlockTransferFlags {
             preindex: !pop,
@@ -333,17 +327,15 @@ impl Cpu {
 
         if pop {
             // POP {Rlist}{PC} (LDMFD)
-            self.op_ldm(bus, &flags, SP_INDEX, r_list)?;
+            self.op_ldm(bus, &flags, SP_INDEX, r_list);
         } else {
             // PUSH {Rlist}{LR} (STMFD)
             self.op_stm(bus, &flags, SP_INDEX, r_list);
         }
-
-        Ok(())
     }
 
     /// Thumb.15: Multiple load or store.
-    fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) -> Result<()> {
+    fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) {
         #[allow(clippy::cast_possible_truncation)]
         let r_list = (instr as u8).into();
         let r_base = r_index(instr, 8);
@@ -357,13 +349,11 @@ impl Cpu {
 
         if instr.bit(11) {
             // LDMIA Rb!,{Rlist}
-            self.op_ldm(bus, &flags, r_base, r_list)?;
+            self.op_ldm(bus, &flags, r_base, r_list);
         } else {
             // STMIA Rb!,{Rlist}
             self.op_stm(bus, &flags, r_base, r_list);
         }
-
-        Ok(())
     }
 
     /// Thumb.16: Conditional branch.

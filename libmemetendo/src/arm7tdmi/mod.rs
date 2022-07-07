@@ -1,12 +1,7 @@
 mod isa;
 pub mod reg;
 
-use std::{
-    error,
-    fmt::{self, Display, Formatter},
-    mem::replace,
-    result,
-};
+use std::mem::replace;
 
 use strum_macros::{EnumIter, FromRepr};
 
@@ -86,7 +81,6 @@ pub enum RunState {
     #[default]
     NotRunning,
     Running,
-    Errored(Error),
 }
 
 #[derive(Default, Debug)]
@@ -118,12 +112,12 @@ impl Cpu {
             self.reg.change_mode(OperationMode::Supervisor);
             self.reg.r[SP_INDEX] = 0x0300_7fe0;
             self.reg.r[LR_INDEX] = 0;
-            self.reg.spsr = 0;
+            self.reg.set_spsr(0);
 
             self.reg.change_mode(OperationMode::Interrupt);
             self.reg.r[SP_INDEX] = 0x0300_7fa0;
             self.reg.r[LR_INDEX] = 0;
-            self.reg.spsr = 0;
+            self.reg.set_spsr(0);
 
             self.reg.change_mode(OperationMode::System);
             self.reg.r[SP_INDEX] = 0x0300_7f00;
@@ -136,13 +130,9 @@ impl Cpu {
     // We only panic if the priority number of a pending exception does not map to an exception,
     // which should be impossible.
     #[allow(clippy::missing_panics_doc)]
-    /// # Errors
-    ///
-    /// Returns an error if some sort of invalid or unhandled operation occurred.
-    /// See [`Error`] for a list of possibilities.
-    pub fn step(&mut self, bus: &mut impl Bus) -> Result<()> {
+    pub fn step(&mut self, bus: &mut impl Bus) {
         if self.state != RunState::Running {
-            return Ok(());
+            return;
         }
 
         for priority in 0..self.pending_exceptions.len() {
@@ -151,7 +141,7 @@ impl Cpu {
             if raised && self.enter_exception(bus, exception) {
                 // We serviced this exception.
                 self.step_pipeline(bus);
-                return Ok(());
+                return;
             }
         }
 
@@ -168,25 +158,18 @@ impl Cpu {
         //     self.reg.r[PC_INDEX],
         //     self.pipeline_instrs[0],
         //     self.reg.cpsr.bits(),
-        //     self.reg.spsr
+        //     self.reg.spsr()
         // );
 
         let instr = self.pipeline_instrs[0];
-        let result = match self.reg.cpsr.state {
+        match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),
-            OperationState::Thumb =>
-            {
+            OperationState::Thumb => {
                 #[allow(clippy::cast_possible_truncation)]
-                self.execute_thumb(bus, instr as u16)
+                self.execute_thumb(bus, instr as u16);
             }
-        };
-        if let Err(error) = result {
-            self.state = RunState::Errored(error);
-        } else {
-            self.step_pipeline(bus);
         }
-
-        result
+        self.step_pipeline(bus);
     }
 
     pub fn step_pipeline(&mut self, bus: &mut impl Bus) {
@@ -229,35 +212,12 @@ impl Cpu {
 
         let base_pc = self.reg.r[PC_INDEX].wrapping_sub(2 * old_cpsr.state.instr_size());
         self.reg.r[LR_INDEX] = base_pc.wrapping_add(exception.return_addr_offset(old_cpsr.state));
-        self.reg.spsr = old_cpsr.bits();
+        self.reg.set_spsr(old_cpsr.bits());
 
         self.reg.r[PC_INDEX] = exception.vector_addr();
         self.reload_pipeline(bus);
 
         true
-    }
-}
-
-pub type Result<T> = result::Result<T, Error>;
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Error {
-    InvalidOperationMode(u8),
-    MsrChangedOperationState(OperationState),
-}
-
-impl error::Error for Error {}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let message = match self {
-            Error::InvalidOperationMode(bits) => format!("Invalid operation mode ({bits:#07b})"),
-            Error::MsrChangedOperationState(state) => {
-                format!("MSR instruction changed the operation state ({state:?})")
-            }
-        };
-
-        f.write_str(&message)
     }
 }
 
@@ -289,7 +249,7 @@ mod tests {
                 cpu.reg.r[LR_INDEX],
                 old_pc_base.wrapping_add(exception.return_addr_offset(old_reg.cpsr.state))
             );
-            assert_eq!(cpu.reg.spsr, old_reg.cpsr.bits());
+            assert_eq!(cpu.reg.spsr(), old_reg.cpsr.bits());
         }
     }
 
@@ -344,7 +304,7 @@ mod tests {
 
         let assert_exception = |cpu: &mut Cpu, exception| {
             let old_reg = cpu.reg;
-            cpu.step(&mut NullBus).unwrap();
+            cpu.step(&mut NullBus);
             assert_exception_result(cpu, exception, old_reg);
         };
         let assert_no_pending_exceptions = |cpu: &Cpu| {
@@ -400,23 +360,23 @@ mod tests {
         assert_eq!(8, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Arm, cpu.reg.cpsr.state);
 
-        cpu.step(&mut bus).unwrap();
+        cpu.step(&mut bus);
         assert_eq!(4 + 8, cpu.reg.r[PC_INDEX]);
         assert_eq!(8 | 1, cpu.reg.r[0]);
 
-        cpu.step(&mut bus).unwrap();
+        cpu.step(&mut bus);
         assert_eq!(8 + 4, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
 
-        cpu.step(&mut bus).unwrap();
+        cpu.step(&mut bus);
         assert_eq!(10 + 4, cpu.reg.r[PC_INDEX]);
         assert_eq!(101, cpu.reg.r[5]);
 
-        cpu.step(&mut bus).unwrap();
+        cpu.step(&mut bus);
         assert_eq!(100 + 4, cpu.reg.r[PC_INDEX]);
         assert_eq!(OperationState::Thumb, cpu.reg.cpsr.state);
 
-        cpu.step(&mut bus).unwrap();
+        cpu.step(&mut bus);
         assert_eq!(102 + 4, cpu.reg.r[PC_INDEX]);
         assert_eq!(33, cpu.reg.r[1]);
     }
