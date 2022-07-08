@@ -1,5 +1,7 @@
 use intbits::Bits;
 
+use crate::arbitrary_sign_extend;
+
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Mode {
     Tile,
@@ -96,6 +98,10 @@ impl DisplayControl {
             || (self.mode == 2 && bg_idx < 2)
             || (self.mode_type() == Mode::Bitmap && bg_idx != 2)
     }
+
+    pub(super) fn bg_uses_text_mode(&self, bg_idx: usize) -> bool {
+        self.mode == 0 || bg_idx < 2
+    }
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -187,8 +193,8 @@ impl BackgroundControl {
         dot_y: usize,
     ) -> usize {
         let size_div = if color256 { 1 } else { 2 };
-        let bytes_per_tile = 64 / size_div;
-        let base_offset = 0x4000 * usize::from(self.dots_base_block) + bytes_per_tile * dots_idx;
+        let tile_stride = 64 / size_div;
+        let base_offset = 0x4000 * usize::from(self.dots_base_block) + tile_stride * dots_idx;
 
         base_offset + (8 * dot_y + dot_x) / size_div
     }
@@ -197,16 +203,16 @@ impl BackgroundControl {
         0x800 * usize::from(self.screen_base_block + screen_idx)
     }
 
-    pub fn screen_index(self, screen_x: usize, screen_y: usize) -> u8 {
+    pub fn text_mode_screen_index(self, screen_x: usize, screen_y: usize) -> u8 {
         let layout = match self.screen_size {
-            0 => [0, 0, 0, 0],
-            1 => [0, 1, 0, 1],
-            2 => [0, 0, 1, 1],
-            3 => [0, 1, 2, 3],
+            0 => [[0, 0], [0, 0]],
+            1 => [[0, 1], [0, 1]],
+            2 => [[0, 0], [1, 1]],
+            3 => [[0, 1], [2, 3]],
             _ => unreachable!(),
         };
 
-        layout[(screen_y % 2) * 2 + (screen_x % 2)]
+        layout[screen_y % 2][screen_x % 2]
     }
 }
 
@@ -224,6 +230,40 @@ impl BackgroundOffset {
 
     pub fn set_hi_bits(&mut self, bits: u8) {
         self.0.set_bit(8, bits.bit(0));
+    }
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct RefPoint {
+    external: (i32, i32),
+    pub(super) internal: (i32, i32),
+}
+
+impl RefPoint {
+    pub(super) fn external(self) -> (i32, i32) {
+        self.external
+    }
+
+    fn set_byte(coord: &mut i32, idx: usize, bits: u8) {
+        let bit_idx = idx * 8;
+        match idx {
+            0..=2 => coord.set_bits(bit_idx..bit_idx + 8, bits.into()),
+            3 => {
+                coord.set_bits(bit_idx..bit_idx + 4, bits.bits(..4).into());
+                *coord = arbitrary_sign_extend!(i32, *coord, 28);
+            }
+            _ => panic!("byte index out of bounds"),
+        }
+    }
+
+    pub fn set_x_byte(&mut self, idx: usize, bits: u8) {
+        Self::set_byte(&mut self.external.0, idx, bits);
+        self.internal.0 = self.external.0;
+    }
+
+    pub fn set_y_byte(&mut self, idx: usize, bits: u8) {
+        Self::set_byte(&mut self.external.1, idx, bits);
+        self.internal.1 = self.external.1;
     }
 }
 

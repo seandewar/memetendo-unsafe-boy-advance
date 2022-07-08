@@ -178,6 +178,38 @@ impl Bus<'_, '_, '_> {
             // BG3VOFS
             0x1e => self.video.bgofs[3].1.set_lo_bits(value),
             0x1f => self.video.bgofs[3].1.set_hi_bits(value),
+            // BG2PA
+            0x20 => self.video.bgp[0][0].set_bits(..8, value.into()),
+            0x21 => self.video.bgp[0][0].set_bits(8.., value.into()),
+            // BG2PB
+            0x22 => self.video.bgp[0][1].set_bits(..8, value.into()),
+            0x23 => self.video.bgp[0][1].set_bits(8.., value.into()),
+            // BG2PC
+            0x24 => self.video.bgp[0][2].set_bits(..8, value.into()),
+            0x25 => self.video.bgp[0][2].set_bits(8.., value.into()),
+            // BG2PD
+            0x26 => self.video.bgp[0][3].set_bits(..8, value.into()),
+            0x27 => self.video.bgp[0][3].set_bits(8.., value.into()),
+            // BG2X
+            offset @ 0x28..=0x2b => self.video.bg_ref[0].set_x_byte((offset & 3) as usize, value),
+            // BG2Y
+            offset @ 0x2c..=0x2f => self.video.bg_ref[0].set_y_byte((offset & 3) as usize, value),
+            // BG3PA
+            0x30 => self.video.bgp[1][0].set_bits(..8, value.into()),
+            0x31 => self.video.bgp[1][0].set_bits(8.., value.into()),
+            // BG3PB
+            0x32 => self.video.bgp[1][1].set_bits(..8, value.into()),
+            0x33 => self.video.bgp[1][1].set_bits(8.., value.into()),
+            // BG3PC
+            0x34 => self.video.bgp[1][2].set_bits(..8, value.into()),
+            0x35 => self.video.bgp[1][2].set_bits(8.., value.into()),
+            // BG3PD
+            0x36 => self.video.bgp[1][3].set_bits(..8, value.into()),
+            0x37 => self.video.bgp[1][3].set_bits(8.., value.into()),
+            // BG3X
+            offset @ 0x38..=0x3b => self.video.bg_ref[1].set_x_byte((offset & 3) as usize, value),
+            // BG3Y
+            offset @ 0x3c..=0x3f => self.video.bg_ref[1].set_y_byte((offset & 3) as usize, value),
             // WIN0H
             0x40 => self.video.winh[0].0 = value,
             0x41 => self.video.winh[0].1 = value,
