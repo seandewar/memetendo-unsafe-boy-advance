@@ -11,8 +11,8 @@ use crate::{
 
 use self::{
     reg::{
-        BackgroundControl, BackgroundOffset, BlendCoefficient, BlendControl, DisplayControl,
-        DisplayStatus, Mosaic, RefPoint, WindowControl,
+        BackgroundAffine, BackgroundControl, BackgroundOffset, BlendCoefficient, BlendControl,
+        DisplayControl, DisplayStatus, Mosaic, ReferencePoint, WindowControl, WindowDimensions,
     },
     screen::{FrameBuffer, Rgb, Screen},
 };
@@ -39,11 +39,10 @@ pub struct Controller {
     pub dispstat: DisplayStatus,
     pub greenswp: u16,
     pub bgcnt: [BackgroundControl; 4],
-    pub bgofs: [(BackgroundOffset, BackgroundOffset); 4],
-    pub bg_ref: [RefPoint; 2],
-    pub bgp: [[i16; 4]; 2],
-    pub winh: [(u8, u8); 2],
-    pub winv: [(u8, u8); 2],
+    pub bgofs: [BackgroundOffset; 4],
+    pub bgref: [ReferencePoint; 2],
+    pub bgp: [BackgroundAffine; 2],
+    pub win: [WindowDimensions; 2],
     pub winin: [WindowControl; 2],
     pub winout: WindowControl,
     pub winobj: WindowControl,
@@ -75,11 +74,10 @@ impl Controller {
             dispstat: DisplayStatus::default(),
             greenswp: 0,
             bgcnt: [BackgroundControl::default(); 4],
-            bgofs: [(BackgroundOffset::default(), BackgroundOffset::default()); 4],
-            bg_ref: [RefPoint::default(); 2],
-            bgp: [[1 << 8, 0, 0, 1 << 8]; 2],
-            winh: [(0, 0); 2],
-            winv: [(0, 0); 2],
+            bgofs: [BackgroundOffset::default(); 4],
+            bgref: [ReferencePoint::default(); 2],
+            bgp: [BackgroundAffine::default(); 2],
+            win: [WindowDimensions::default(); 2],
             winin: [WindowControl::default(); 2],
             winout: WindowControl::default(),
             winobj: WindowControl::default(),
@@ -115,8 +113,8 @@ impl Controller {
                 if self.x == HBLANK_DOT && self.y < VBLANK_DOT {
                     irq |= self.dispstat.hblank_irq_enabled;
 
-                    for (i, bg_ref) in self.bg_ref.iter_mut().enumerate() {
-                        let (dmx, dmy) = (i32::from(self.bgp[i][1]), i32::from(self.bgp[i][3]));
+                    for (i, bg_ref) in self.bgref.iter_mut().enumerate() {
+                        let (dmx, dmy) = (i32::from(self.bgp[i].b), i32::from(self.bgp[i].d));
                         bg_ref.internal.0 += dmx;
                         bg_ref.internal.1 += dmy;
                     }
@@ -128,7 +126,7 @@ impl Controller {
                     if self.y == VBLANK_DOT {
                         irq |= self.dispstat.vblank_irq_enabled;
 
-                        for bg_ref in &mut self.bg_ref {
+                        for bg_ref in &mut self.bgref {
                             bg_ref.internal = bg_ref.external();
                         }
                     } else if self.y >= VERT_DOTS {
@@ -209,7 +207,7 @@ impl Controller {
             );
 
             if mosaic_offset == (0, 0) {
-                // TODO: object layer, rotation & scaling
+                // TODO: object layer
                 let dot = match self.dispcnt.mode_type() {
                     Mode::Tile => self.compute_tile_mode_dot(),
                     // TODO: windows, blending fx
@@ -244,8 +242,8 @@ impl Controller {
         let mut bg_priorities = [0, 1, 2, 3];
         bg_priorities.sort_unstable_by(|&a, &b| {
             self.bgcnt[a]
-                .priority
-                .cmp(&self.bgcnt[b].priority)
+                .priority()
+                .cmp(&self.bgcnt[b].priority())
                 .then_with(|| a.cmp(&b))
         });
 
@@ -266,8 +264,7 @@ impl Controller {
             Visibility::OutsideWindows
         };
         for win_idx in (0..2).rev() {
-            let win_x = (self.winh[win_idx].1, self.winh[win_idx].0);
-            let win_y = (self.winv[win_idx].1, self.winv[win_idx].0);
+            let (win_x, win_y) = (self.win[win_idx].horiz(), self.win[win_idx].vert());
 
             let inside_horiz = if win_x.0 <= win_x.1 {
                 self.x >= win_x.0.into() && self.x < win_x.1.into()
@@ -320,10 +317,10 @@ impl Controller {
             Visibility::OutsideWindows => self.winout.blendfx_enabled,
             Visibility::Hidden => false,
         };
-        let blendfx = self.bldcnt.mode != 0 && target_blendfx && win_blendfx;
+        let blendfx = self.bldcnt.mode() != 0 && target_blendfx && win_blendfx;
 
         if blendfx {
-            dot = match self.bldcnt.mode {
+            dot = match self.bldcnt.mode() {
                 1 => self.alpha_blend_dot(bg_iter, dot),
                 2 => self.brighten_dot(false, dot),
                 3 => self.brighten_dot(true, dot),
@@ -384,14 +381,14 @@ impl Controller {
         let (x, y) = (i32::from(self.x), i32::from(self.y));
 
         if self.dispcnt.bg_uses_text_mode(bg_idx) {
-            let scroll = &self.bgofs[bg_idx];
-            let (scroll_x, scroll_y) = (i32::from(scroll.0.get()), i32::from(scroll.1.get()));
+            let scroll = self.bgofs[bg_idx].get();
+            let (scroll_x, scroll_y) = (i32::from(scroll.0), i32::from(scroll.1));
 
             (scroll_x + x, scroll_y + y)
         } else {
-            let transform = &self.bgp[bg_idx - 2];
-            let ref_point = &self.bg_ref[bg_idx - 2];
-            let (dx, dy) = (i32::from(transform[0]), i32::from(transform[2]));
+            let affine = &self.bgp[bg_idx - 2];
+            let ref_point = &self.bgref[bg_idx - 2];
+            let (dx, dy) = (i32::from(affine.a), i32::from(affine.c));
             let (ref_x, ref_y) = ref_point.internal;
             let (new_x, new_y) = (ref_x.wrapping_add(x * dx), ref_y.wrapping_add(x * dy));
 
@@ -417,11 +414,7 @@ impl Controller {
         let tile_pos = (x / TILE_LEN, y / TILE_LEN);
 
         let text_mode = self.dispcnt.bg_uses_text_mode(bg_idx);
-        let screen_tile_len = if text_mode {
-            32
-        } else {
-            16 << usize::from(self.bgcnt[bg_idx].screen_size)
-        };
+        let screen_tile_len = self.bgcnt[bg_idx].screen_tile_len(text_mode).into();
         let screen_pos = (tile_pos.0 / screen_tile_len, tile_pos.1 / screen_tile_len);
         let screen_idx = if text_mode {
             self.bgcnt[bg_idx].text_mode_screen_index(screen_pos.0, screen_pos.1)
@@ -449,7 +442,7 @@ impl Controller {
             let tile_info = self.vram.as_ref().read_hword(tile_info_offset);
             let dots_idx = usize::from(tile_info.bits(..10));
 
-            if self.dispcnt.mode == 0 || (self.dispcnt.mode == 1 && bg_idx < 2) {
+            if self.dispcnt.mode() == 0 || (self.dispcnt.mode() == 1 && bg_idx < 2) {
                 if tile_info.bit(10) {
                     dot_x = TILE_LEN - 1 - dot_x; // Flip X
                 }
@@ -459,8 +452,8 @@ impl Controller {
             }
 
             let color256 = self.bgcnt[bg_idx].color256
-                || (self.dispcnt.mode == 1 && bg_idx == 2)
-                || self.dispcnt.mode == 2;
+                || (self.dispcnt.mode() == 1 && bg_idx == 2)
+                || self.dispcnt.mode() == 2;
             let palette_idx = (!color256).then(|| tile_info.bits(12..));
 
             (dots_idx, palette_idx)
@@ -498,20 +491,22 @@ impl Controller {
 
     // TODO: backdrop colour needs to be treated as transparent
     fn compute_bg_bitmap_mode_dot(&self) -> Dot {
-        if self.compute_dot_visibility(Some(2)) == Visibility::Hidden {
+        const BG_INDEX: usize = 2;
+
+        if self.compute_dot_visibility(Some(BG_INDEX)) == Visibility::Hidden {
             return self.read_backdrop_dot();
         }
 
-        let color_ram = if self.dispcnt.mode == 4 {
+        let color_ram = if self.dispcnt.mode() == 4 {
             &self.palette_ram
         } else {
             &self.vram
         };
 
-        let (x, y) = self.transformed_pos(2);
+        let (x, y) = self.transformed_pos(BG_INDEX);
         #[allow(clippy::cast_sign_loss)]
         let (x, y) = (x as usize, y as usize);
-        let color_offset = match self.dispcnt.mode {
+        let color_offset = match self.dispcnt.mode() {
             3 | 4 if x >= screen::WIDTH || y >= screen::HEIGHT => None,
             3 => Some(2 * (y * screen::WIDTH + x)),
             4 => Some(

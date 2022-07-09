@@ -23,8 +23,8 @@ use sdl2::{
 };
 
 struct SdlContext {
-    sdl: Sdl,
-    sdl_video: VideoSubsystem,
+    _sdl: Sdl,
+    _sdl_video: VideoSubsystem,
     win_canvas: WindowCanvas,
     win_texture_creator: TextureCreator<WindowContext>,
     event_pump: EventPump,
@@ -62,8 +62,8 @@ impl SdlContext {
         let win_texture_creator = win_canvas.texture_creator();
 
         Ok(Self {
-            sdl,
-            sdl_video,
+            _sdl: sdl,
+            _sdl_video: sdl_video,
             win_canvas,
             win_texture_creator,
             event_pump,
@@ -148,16 +148,19 @@ fn main() -> Result<()> {
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {
-        for _ in 0..5_000 {
+        for _ in 0..70_000 {
             gba.step(&mut screen);
         }
 
         let now = Instant::now();
         if now >= next_redraw_time {
             next_redraw_time += REDRAW_DURATION;
-            if now >= next_redraw_time {
+            if now - next_redraw_time >= 3 * REDRAW_DURATION {
                 // A simple reschedule if we're too far behind.
                 next_redraw_time = now + REDRAW_DURATION;
+            }
+            if now >= next_redraw_time {
+                continue;
             }
 
             for event in context.event_pump.poll_iter() {
@@ -186,6 +189,8 @@ fn main() -> Result<()> {
                 .map_err(|e| anyhow!("failed to draw screen texture: {e}"))?;
             context.win_canvas.present();
         }
+
+        std::thread::sleep((next_redraw_time - now).max(Duration::ZERO));
     }
 
     Ok(())

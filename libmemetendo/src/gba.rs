@@ -155,73 +155,73 @@ impl Bus<'_, '_, '_> {
             0xe => self.video.bgcnt[3].set_lo_bits(value),
             0xf => self.video.bgcnt[3].set_hi_bits(value),
             // BG0HOFS
-            0x10 => self.video.bgofs[0].0.set_lo_bits(value),
-            0x11 => self.video.bgofs[0].0.set_hi_bits(value),
+            0x10 => self.video.bgofs[0].set_x_lo_bits(value),
+            0x11 => self.video.bgofs[0].set_x_hi_bits(value),
             // BG0VOFS
-            0x12 => self.video.bgofs[0].1.set_lo_bits(value),
-            0x13 => self.video.bgofs[0].1.set_hi_bits(value),
+            0x12 => self.video.bgofs[0].set_y_lo_bits(value),
+            0x13 => self.video.bgofs[0].set_y_hi_bits(value),
             // BG1HOFS
-            0x14 => self.video.bgofs[1].0.set_lo_bits(value),
-            0x15 => self.video.bgofs[1].0.set_hi_bits(value),
+            0x14 => self.video.bgofs[1].set_x_lo_bits(value),
+            0x15 => self.video.bgofs[1].set_x_hi_bits(value),
             // BG1VOFS
-            0x16 => self.video.bgofs[1].1.set_lo_bits(value),
-            0x17 => self.video.bgofs[1].1.set_hi_bits(value),
+            0x16 => self.video.bgofs[1].set_y_lo_bits(value),
+            0x17 => self.video.bgofs[1].set_y_hi_bits(value),
             // BG2HOFS
-            0x18 => self.video.bgofs[2].0.set_lo_bits(value),
-            0x19 => self.video.bgofs[2].0.set_hi_bits(value),
+            0x18 => self.video.bgofs[2].set_x_lo_bits(value),
+            0x19 => self.video.bgofs[2].set_x_hi_bits(value),
             // BG2VOFS
-            0x1a => self.video.bgofs[2].1.set_lo_bits(value),
-            0x1b => self.video.bgofs[2].1.set_hi_bits(value),
+            0x1a => self.video.bgofs[2].set_y_lo_bits(value),
+            0x1b => self.video.bgofs[2].set_y_hi_bits(value),
             // BG3HOFS
-            0x1c => self.video.bgofs[3].0.set_lo_bits(value),
-            0x1d => self.video.bgofs[3].0.set_hi_bits(value),
+            0x1c => self.video.bgofs[3].set_x_lo_bits(value),
+            0x1d => self.video.bgofs[3].set_x_hi_bits(value),
             // BG3VOFS
-            0x1e => self.video.bgofs[3].1.set_lo_bits(value),
-            0x1f => self.video.bgofs[3].1.set_hi_bits(value),
+            0x1e => self.video.bgofs[3].set_y_lo_bits(value),
+            0x1f => self.video.bgofs[3].set_y_hi_bits(value),
             // BG2PA
-            0x20 => self.video.bgp[0][0].set_bits(..8, value.into()),
-            0x21 => self.video.bgp[0][0].set_bits(8.., value.into()),
+            0x20 => self.video.bgp[0].a.set_bits(..8, value.into()),
+            0x21 => self.video.bgp[0].a.set_bits(8.., value.into()),
             // BG2PB
-            0x22 => self.video.bgp[0][1].set_bits(..8, value.into()),
-            0x23 => self.video.bgp[0][1].set_bits(8.., value.into()),
+            0x22 => self.video.bgp[0].b.set_bits(..8, value.into()),
+            0x23 => self.video.bgp[0].b.set_bits(8.., value.into()),
             // BG2PC
-            0x24 => self.video.bgp[0][2].set_bits(..8, value.into()),
-            0x25 => self.video.bgp[0][2].set_bits(8.., value.into()),
+            0x24 => self.video.bgp[0].c.set_bits(..8, value.into()),
+            0x25 => self.video.bgp[0].c.set_bits(8.., value.into()),
             // BG2PD
-            0x26 => self.video.bgp[0][3].set_bits(..8, value.into()),
-            0x27 => self.video.bgp[0][3].set_bits(8.., value.into()),
+            0x26 => self.video.bgp[0].d.set_bits(..8, value.into()),
+            0x27 => self.video.bgp[0].d.set_bits(8.., value.into()),
             // BG2X
-            offset @ 0x28..=0x2b => self.video.bg_ref[0].set_x_byte((offset & 3) as usize, value),
+            offset @ 0x28..=0x2b => self.video.bgref[0].set_x_byte((offset & 3) as usize, value),
             // BG2Y
-            offset @ 0x2c..=0x2f => self.video.bg_ref[0].set_y_byte((offset & 3) as usize, value),
+            offset @ 0x2c..=0x2f => self.video.bgref[0].set_y_byte((offset & 3) as usize, value),
             // BG3PA
-            0x30 => self.video.bgp[1][0].set_bits(..8, value.into()),
-            0x31 => self.video.bgp[1][0].set_bits(8.., value.into()),
+            0x30 => self.video.bgp[1].a.set_bits(..8, value.into()),
+            0x31 => self.video.bgp[1].a.set_bits(8.., value.into()),
             // BG3PB
-            0x32 => self.video.bgp[1][1].set_bits(..8, value.into()),
-            0x33 => self.video.bgp[1][1].set_bits(8.., value.into()),
+            0x32 => self.video.bgp[1].b.set_bits(..8, value.into()),
+            0x33 => self.video.bgp[1].b.set_bits(8.., value.into()),
             // BG3PC
-            0x34 => self.video.bgp[1][2].set_bits(..8, value.into()),
-            0x35 => self.video.bgp[1][2].set_bits(8.., value.into()),
+            0x34 => self.video.bgp[1].c.set_bits(..8, value.into()),
+            0x35 => self.video.bgp[1].c.set_bits(8.., value.into()),
             // BG3PD
-            0x36 => self.video.bgp[1][3].set_bits(..8, value.into()),
-            0x37 => self.video.bgp[1][3].set_bits(8.., value.into()),
+            0x36 => self.video.bgp[1].d.set_bits(..8, value.into()),
+            0x37 => self.video.bgp[1].d.set_bits(8.., value.into()),
             // BG3X
-            offset @ 0x38..=0x3b => self.video.bg_ref[1].set_x_byte((offset & 3) as usize, value),
+            offset @ 0x38..=0x3b => self.video.bgref[1].set_x_byte((offset & 3) as usize, value),
             // BG3Y
-            offset @ 0x3c..=0x3f => self.video.bg_ref[1].set_y_byte((offset & 3) as usize, value),
+            offset @ 0x3c..=0x3f => self.video.bgref[1].set_y_byte((offset & 3) as usize, value),
             // WIN0H
-            0x40 => self.video.winh[0].0 = value,
-            0x41 => self.video.winh[0].1 = value,
+            0x40 => self.video.win[0].set_horiz_lo_bits(value),
+            0x41 => self.video.win[0].set_horiz_hi_bits(value),
             // WIN1H
-            0x42 => self.video.winh[1].0 = value,
-            0x43 => self.video.winh[1].1 = value,
+            0x42 => self.video.win[1].set_horiz_lo_bits(value),
+            0x43 => self.video.win[1].set_horiz_hi_bits(value),
             // WIN0V
-            0x44 => self.video.winv[0].0 = value,
-            0x45 => self.video.winv[0].1 = value,
+            0x44 => self.video.win[0].set_vert_lo_bits(value),
+            0x45 => self.video.win[0].set_vert_hi_bits(value),
             // WIN1V
-            0x46 => self.video.winv[1].0 = value,
-            0x47 => self.video.winv[1].1 = value,
+            0x46 => self.video.win[1].set_vert_lo_bits(value),
+            0x47 => self.video.win[1].set_vert_hi_bits(value),
             // WININ
             0x48 => self.video.winin[0].set_bits(value),
             0x49 => self.video.winin[1].set_bits(value),

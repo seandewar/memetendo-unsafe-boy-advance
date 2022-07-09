@@ -10,10 +10,10 @@ pub enum Mode {
 }
 
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Default, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct DisplayControl {
-    pub mode: u8,
-    pub frame_select: usize,
+    mode: u8,
+    frame_select: u8,
     pub hblank_oam_access: bool,
     pub obj_1d: bool,
     pub forced_blank: bool,
@@ -28,8 +28,7 @@ impl DisplayControl {
     pub fn lo_bits(&self) -> u8 {
         let mut bits = 0;
         bits.set_bits(..3, self.mode.bits(..3));
-        #[allow(clippy::cast_possible_truncation)]
-        bits.set_bits(4..5, self.frame_select as u8);
+        bits.set_bit(4, self.frame_select.bit(0));
         bits.set_bit(5, self.hblank_oam_access);
         bits.set_bit(6, self.obj_1d);
         bits.set_bit(7, self.forced_blank);
@@ -54,7 +53,7 @@ impl DisplayControl {
 
     pub fn set_lo_bits(&mut self, bits: u8) {
         self.mode = bits.bits(..3);
-        self.frame_select = bits.bits(4..5).into();
+        self.frame_select = bits.bits(4..5);
         self.hblank_oam_access = bits.bit(5);
         self.obj_1d = bits.bit(6);
         self.forced_blank = bits.bit(7);
@@ -72,8 +71,8 @@ impl DisplayControl {
         self.display_obj_window = bits.bit(7);
     }
 
-    pub fn frame_vram_offset(&self) -> usize {
-        self.frame_select * 0xa000
+    pub fn mode(&self) -> u8 {
+        self.mode
     }
 
     pub fn mode_type(&self) -> Mode {
@@ -82,6 +81,10 @@ impl DisplayControl {
             3..=5 => Mode::Bitmap,
             _ => Mode::Invalid,
         }
+    }
+
+    pub fn frame_vram_offset(&self) -> usize {
+        usize::from(self.frame_select) * 0xa000
     }
 
     pub fn obj_vram_offset(&self) -> usize {
@@ -105,18 +108,17 @@ impl DisplayControl {
 }
 
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Default, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct DisplayStatus {
     pub vblank_irq_enabled: bool,
     pub hblank_irq_enabled: bool,
     pub vcount_irq_enabled: bool,
-    pub unused_bit7: bool,
     pub vcount_target: u8,
 }
 
 impl DisplayStatus {
     #[allow(clippy::similar_names)]
-    pub fn lo_bits(&self, vblanking: bool, hblanking: bool, vcount: u8) -> u8 {
+    pub fn lo_bits(self, vblanking: bool, hblanking: bool, vcount: u8) -> u8 {
         let mut bits = 0;
         bits.set_bit(0, vblanking);
         bits.set_bit(1, hblanking);
@@ -124,7 +126,6 @@ impl DisplayStatus {
         bits.set_bit(3, self.vblank_irq_enabled);
         bits.set_bit(4, self.hblank_irq_enabled);
         bits.set_bit(5, self.vcount_irq_enabled);
-        bits.set_bit(7, self.unused_bit7);
 
         bits
     }
@@ -134,28 +135,26 @@ impl DisplayStatus {
         self.vblank_irq_enabled = bits.bit(3);
         self.hblank_irq_enabled = bits.bit(4);
         self.vcount_irq_enabled = bits.bit(5);
-        self.unused_bit7 = bits.bit(7);
     }
 }
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct BackgroundControl {
-    pub priority: u8,
-    pub dots_base_block: u8,
-    pub unused_bit4_5: u8,
+    priority: u8,
+    dots_base_block: u8,
     pub mosaic: bool,
     pub color256: bool,
-    pub screen_base_block: u8,
+    screen_base_block: u8,
     pub wraparound: bool,
-    pub screen_size: u8,
+    screen_size: u8,
+    lo_bits: u8,
 }
 
 impl BackgroundControl {
     pub fn lo_bits(self) -> u8 {
-        let mut bits = 0;
+        let mut bits = self.lo_bits;
         bits.set_bits(..2, self.priority);
         bits.set_bits(2..4, self.dots_base_block);
-        bits.set_bits(4..6, self.unused_bit4_5);
         bits.set_bit(6, self.mosaic);
         bits.set_bit(7, self.color256);
 
@@ -174,15 +173,19 @@ impl BackgroundControl {
     pub fn set_lo_bits(&mut self, bits: u8) {
         self.priority = bits.bits(..2);
         self.dots_base_block = bits.bits(2..4);
-        self.unused_bit4_5 = bits.bits(4..6);
         self.mosaic = bits.bit(6);
         self.color256 = bits.bit(7);
+        self.lo_bits = bits;
     }
 
     pub fn set_hi_bits(&mut self, bits: u8) {
         self.screen_base_block = bits.bits(..5);
         self.wraparound = bits.bit(5);
         self.screen_size = bits.bits(6..);
+    }
+
+    pub fn priority(self) -> u8 {
+        self.priority
     }
 
     pub(super) fn dots_vram_offset(
@@ -203,7 +206,15 @@ impl BackgroundControl {
         0x800 * usize::from(self.screen_base_block + screen_idx)
     }
 
-    pub fn text_mode_screen_index(self, screen_x: usize, screen_y: usize) -> u8 {
+    pub(super) fn screen_tile_len(self, text_mode: bool) -> u8 {
+        if text_mode {
+            32
+        } else {
+            16 << self.screen_size
+        }
+    }
+
+    pub(super) fn text_mode_screen_index(self, screen_x: usize, screen_y: usize) -> u8 {
         let layout = match self.screen_size {
             0 => [[0, 0], [0, 0]],
             1 => [[0, 1], [0, 1]],
@@ -217,29 +228,37 @@ impl BackgroundControl {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct BackgroundOffset(u16);
+pub struct BackgroundOffset(u16, u16);
 
 impl BackgroundOffset {
-    pub fn get(self) -> u16 {
-        self.0
+    pub fn get(self) -> (u16, u16) {
+        (self.0, self.1)
     }
 
-    pub fn set_lo_bits(&mut self, bits: u8) {
+    pub fn set_x_lo_bits(&mut self, bits: u8) {
         self.0.set_bits(..8, bits.into());
     }
 
-    pub fn set_hi_bits(&mut self, bits: u8) {
+    pub fn set_x_hi_bits(&mut self, bits: u8) {
         self.0.set_bit(8, bits.bit(0));
+    }
+
+    pub fn set_y_lo_bits(&mut self, bits: u8) {
+        self.1.set_bits(..8, bits.into());
+    }
+
+    pub fn set_y_hi_bits(&mut self, bits: u8) {
+        self.1.set_bit(8, bits.bit(0));
     }
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct RefPoint {
+pub struct ReferencePoint {
     external: (i32, i32),
     pub(super) internal: (i32, i32),
 }
 
-impl RefPoint {
+impl ReferencePoint {
     pub(super) fn external(self) -> (i32, i32) {
         self.external
     }
@@ -267,24 +286,74 @@ impl RefPoint {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct BackgroundAffine {
+    pub a: i16,
+    pub b: i16,
+    pub c: i16,
+    pub d: i16,
+}
+
+impl Default for BackgroundAffine {
+    fn default() -> Self {
+        Self {
+            a: 1 << 8,
+            b: 0,
+            c: 0,
+            d: 1 << 8,
+        }
+    }
+}
+
+#[derive(Default, Copy, Clone, Debug)]
+pub struct WindowDimensions {
+    horiz: (u8, u8),
+    vert: (u8, u8),
+}
+
+impl WindowDimensions {
+    pub(super) fn horiz(self) -> (u8, u8) {
+        self.horiz
+    }
+
+    pub(super) fn vert(self) -> (u8, u8) {
+        self.vert
+    }
+
+    pub fn set_horiz_lo_bits(&mut self, bits: u8) {
+        self.horiz.1 = bits;
+    }
+
+    pub fn set_horiz_hi_bits(&mut self, bits: u8) {
+        self.horiz.0 = bits;
+    }
+
+    pub fn set_vert_lo_bits(&mut self, bits: u8) {
+        self.vert.1 = bits;
+    }
+
+    pub fn set_vert_hi_bits(&mut self, bits: u8) {
+        self.vert.0 = bits;
+    }
+}
+
 #[derive(Copy, Clone, Default, Debug)]
 pub struct WindowControl {
     pub display_bg: [bool; 4],
     pub show_obj: bool,
     pub blendfx_enabled: bool,
-    pub unused_bit6_7: u8,
+    bits: u8,
 }
 
 impl WindowControl {
     pub fn bits(self) -> u8 {
-        let mut bits = 0;
+        let mut bits = self.bits;
         bits.set_bit(0, self.display_bg[0]);
         bits.set_bit(1, self.display_bg[1]);
         bits.set_bit(2, self.display_bg[2]);
         bits.set_bit(3, self.display_bg[3]);
         bits.set_bit(4, self.show_obj);
         bits.set_bit(5, self.blendfx_enabled);
-        bits.set_bits(6.., self.unused_bit6_7);
 
         bits
     }
@@ -296,7 +365,7 @@ impl WindowControl {
         self.display_bg[3] = bits.bit(3);
         self.show_obj = bits.bit(4);
         self.blendfx_enabled = bits.bit(5);
-        self.unused_bit6_7 = bits.bits(6..);
+        self.bits = bits;
     }
 }
 
@@ -319,8 +388,8 @@ pub struct BlendControl {
     pub bg_target: ([bool; 4], [bool; 4]),
     pub obj_target: (bool, bool),
     pub backdrop_target: (bool, bool),
-    pub mode: u8,
-    pub unused_bit14_15: u8,
+    mode: u8,
+    hi_bits: u8,
 }
 
 impl BlendControl {
@@ -338,14 +407,13 @@ impl BlendControl {
     }
 
     pub fn hi_bits(self) -> u8 {
-        let mut bits = 0;
+        let mut bits = self.hi_bits;
         bits.set_bit(0, self.bg_target.1[0]);
         bits.set_bit(1, self.bg_target.1[1]);
         bits.set_bit(2, self.bg_target.1[2]);
         bits.set_bit(3, self.bg_target.1[3]);
         bits.set_bit(4, self.obj_target.1);
         bits.set_bit(5, self.backdrop_target.1);
-        bits.set_bits(6.., self.unused_bit14_15);
 
         bits
     }
@@ -367,7 +435,11 @@ impl BlendControl {
         self.bg_target.1[3] = bits.bit(3);
         self.obj_target.1 = bits.bit(4);
         self.backdrop_target.1 = bits.bit(5);
-        self.unused_bit14_15 = bits.bits(6..);
+        self.hi_bits = bits;
+    }
+
+    pub fn mode(self) -> u8 {
+        self.mode
     }
 }
 
