@@ -92,6 +92,11 @@ impl Controller {
     #[allow(clippy::similar_names)]
     pub fn step(&mut self, screen: &mut impl Screen, cpu: &mut Cpu, cycles: u32) {
         for _ in 0..cycles {
+            self.cycle_accum += 1;
+            if self.cycle_accum < CYCLES_PER_DOT {
+                continue;
+            }
+
             if self.x < HBLANK_DOT && self.y < VBLANK_DOT {
                 self.frame_buf.set_pixel(
                     self.x.into(),
@@ -101,45 +106,41 @@ impl Controller {
                 );
             }
 
-            self.cycle_accum += 1;
-            if self.cycle_accum >= CYCLES_PER_DOT {
-                self.cycle_accum = 0;
-                self.x += 1;
-                if self.x == HBLANK_DOT && self.y == VBLANK_DOT - 1 {
-                    screen.present_frame(&self.frame_buf);
+            self.cycle_accum = 0;
+            self.x += 1;
+            if self.x == HBLANK_DOT && self.y == VBLANK_DOT - 1 {
+                screen.present_frame(&self.frame_buf);
+            }
+
+            let mut irq = false;
+            if self.x == HBLANK_DOT && self.y < VBLANK_DOT {
+                irq |= self.dispstat.hblank_irq_enabled;
+
+                for (i, bg_ref) in self.bgref.iter_mut().enumerate() {
+                    let (dmx, dmy) = (i32::from(self.bgp[i].b), i32::from(self.bgp[i].d));
+                    bg_ref.internal.0 += dmx;
+                    bg_ref.internal.1 += dmy;
                 }
+            }
 
-                let mut irq = false;
-                if self.x == HBLANK_DOT && self.y < VBLANK_DOT {
-                    irq |= self.dispstat.hblank_irq_enabled;
+            if self.x >= HORIZ_DOTS {
+                self.x = 0;
+                self.y += 1;
+                if self.y == VBLANK_DOT {
+                    irq |= self.dispstat.vblank_irq_enabled;
 
-                    for (i, bg_ref) in self.bgref.iter_mut().enumerate() {
-                        let (dmx, dmy) = (i32::from(self.bgp[i].b), i32::from(self.bgp[i].d));
-                        bg_ref.internal.0 += dmx;
-                        bg_ref.internal.1 += dmy;
+                    for bg_ref in &mut self.bgref {
+                        bg_ref.internal = bg_ref.external();
                     }
+                } else if self.y >= VERT_DOTS {
+                    self.y = 0;
                 }
 
-                if self.x >= HORIZ_DOTS {
-                    self.x = 0;
-                    self.y += 1;
-                    if self.y == VBLANK_DOT {
-                        irq |= self.dispstat.vblank_irq_enabled;
+                irq |= self.dispstat.vcount_irq_enabled && self.y == self.dispstat.vcount_target;
+            }
 
-                        for bg_ref in &mut self.bgref {
-                            bg_ref.internal = bg_ref.external();
-                        }
-                    } else if self.y >= VERT_DOTS {
-                        self.y = 0;
-                    }
-
-                    irq |=
-                        self.dispstat.vcount_irq_enabled && self.y == self.dispstat.vcount_target;
-                }
-
-                if irq {
-                    cpu.raise_exception(Exception::Interrupt);
-                }
+            if irq {
+                cpu.raise_exception(Exception::Interrupt);
             }
         }
     }

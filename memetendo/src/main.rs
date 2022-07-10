@@ -2,6 +2,7 @@
 
 use std::{
     path::Path,
+    thread::sleep,
     time::{Duration, Instant},
 };
 
@@ -148,7 +149,7 @@ fn main() -> Result<()> {
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {
-        for _ in 0..70_000 {
+        for _ in 0..100_000 {
             gba.step(&mut screen);
         }
 
@@ -190,7 +191,7 @@ fn main() -> Result<()> {
             context.win_canvas.present();
         }
 
-        std::thread::sleep((next_redraw_time - now).max(Duration::ZERO));
+        sleep(next_redraw_time - now);
     }
 
     Ok(())

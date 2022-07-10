@@ -3,6 +3,7 @@
 use intbits::Bits;
 
 #[allow(clippy::cast_possible_truncation)]
+#[inline]
 pub fn write_hword_as_bytes<T: Bus + ?Sized>(bus: &mut T, addr: u32, value: u16) {
     bus.write_byte(addr, value as u8);
     bus.write_byte(addr.wrapping_add(1), value.bits(8..) as _);
@@ -11,6 +12,7 @@ pub fn write_hword_as_bytes<T: Bus + ?Sized>(bus: &mut T, addr: u32, value: u16)
 pub trait Bus {
     fn read_byte(&mut self, addr: u32) -> u8;
 
+    #[inline]
     fn read_hword(&mut self, addr: u32) -> u16 {
         let lo = self.read_byte(addr);
         let hi = self.read_byte(addr.wrapping_add(1));
@@ -18,6 +20,7 @@ pub trait Bus {
         u16::from_le_bytes([lo, hi])
     }
 
+    #[inline]
     fn read_word(&mut self, addr: u32) -> u32 {
         let lo = self.read_hword(addr);
         let hi = self.read_hword(addr.wrapping_add(2));
@@ -25,32 +28,39 @@ pub trait Bus {
         u32::from(lo).with_bits(16.., hi.into())
     }
 
+    #[inline]
     fn write_byte(&mut self, _addr: u32, _value: u8) {}
 
+    #[inline]
     fn write_hword(&mut self, addr: u32, value: u16) {
         write_hword_as_bytes(self, addr, value);
     }
 
     #[allow(clippy::cast_possible_truncation)]
+    #[inline]
     fn write_word(&mut self, addr: u32, value: u32) {
         self.write_hword(addr, value as u16);
         self.write_hword(addr.wrapping_add(2), value.bits(16..) as _);
     }
 
+    #[inline]
     fn prefetch_instr(&mut self, _addr: u32) {}
 }
 
 impl Bus for &[u8] {
+    #[inline]
     fn read_byte(&mut self, addr: u32) -> u8 {
         self[addr as usize]
     }
 }
 
 impl Bus for &mut [u8] {
+    #[inline]
     fn read_byte(&mut self, addr: u32) -> u8 {
         self[addr as usize]
     }
 
+    #[inline]
     fn write_byte(&mut self, addr: u32, value: u8) {
         self[addr as usize] = value;
     }
@@ -65,18 +75,22 @@ pub trait BusAlignedExt {
 }
 
 impl<T: Bus> BusAlignedExt for T {
+    #[inline]
     fn read_hword_aligned(&mut self, addr: u32) -> u16 {
         self.read_hword(addr & !1)
     }
 
+    #[inline]
     fn read_word_aligned(&mut self, addr: u32) -> u32 {
         self.read_word(addr & !0b11)
     }
 
+    #[inline]
     fn write_hword_aligned(&mut self, addr: u32, value: u16) {
         self.write_hword(addr & !1, value);
     }
 
+    #[inline]
     fn write_word_aligned(&mut self, addr: u32, value: u32) {
         self.write_word(addr & !0b11, value);
     }

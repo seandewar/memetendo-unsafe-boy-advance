@@ -6,3 +6,7 @@ opt-level = 1
 
 [profile.release]
 lto = true
+
+[profile.release-dev]
+inherits = "release"
+debug = true
