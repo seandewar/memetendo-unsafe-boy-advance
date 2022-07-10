@@ -4,8 +4,8 @@ Nothing to see here yet; I'll be working on this in my spare time :)
 
 ## Status
 
-![krom 3D engine result](media/krom-3d-engine.png)
-![krom cylinder result](media/krom-cylinder.png)
+![3D Sage demo screenshot](media/3d-sage-demo.png)
+![krom cylinder screenshot](media/krom-cylinder.png)
 ![key\_demo from tonc\_gba\_demos](media/tonc-key-demo.png)
 
 Currently passes:
@@ -16,7 +16,7 @@ Currently passes:
 - [ARMWrestler GBA](https://github.com/destoer/armwrestler-gba-fixed).
 - Hello world and invalid condition tests in
   [gba\_tests](https://github.com/destoer/gba_tests).
-- Some tests from
+- Most tests from
   [shonumi/Emu-Docs](https://github.com/shonumi/Emu-Docs/tree/master/GameBoy%20Advance/test_roms).
 - Some things from
   [PeterLemon/GBA](https://github.com/PeterLemon/GBA).
