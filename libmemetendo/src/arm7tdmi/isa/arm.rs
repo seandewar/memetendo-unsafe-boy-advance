@@ -7,7 +7,7 @@ use crate::{
         reg::{OperationMode, OperationState, LR_INDEX, PC_INDEX},
         Cpu, Exception,
     },
-    bus::{Bus, BusAlignedExt},
+    bus::{AlignedExt, Bus},
 };
 
 use super::BlockTransferFlags;

@@ -1,5 +1,3 @@
-#![allow(clippy::module_name_repetitions)]
-
 use intbits::Bits;
 
 #[allow(clippy::cast_possible_truncation)]
@@ -66,7 +64,7 @@ impl Bus for &mut [u8] {
     }
 }
 
-pub trait BusAlignedExt {
+pub trait AlignedExt {
     fn read_hword_aligned(&mut self, addr: u32) -> u16;
     fn read_word_aligned(&mut self, addr: u32) -> u32;
 
@@ -74,7 +72,7 @@ pub trait BusAlignedExt {
     fn write_word_aligned(&mut self, addr: u32, value: u32);
 }
 
-impl<T: Bus> BusAlignedExt for T {
+impl<T: Bus> AlignedExt for T {
     #[inline]
     fn read_hword_aligned(&mut self, addr: u32) -> u16 {
         self.read_hword(addr & !1)

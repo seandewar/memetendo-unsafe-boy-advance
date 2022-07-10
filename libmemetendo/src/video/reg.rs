@@ -188,18 +188,8 @@ impl BackgroundControl {
         self.priority
     }
 
-    pub(super) fn dots_vram_offset(
-        self,
-        color256: bool,
-        dots_idx: usize,
-        dot_x: usize,
-        dot_y: usize,
-    ) -> usize {
-        let size_div = if color256 { 1 } else { 2 };
-        let tile_stride = 64 / size_div;
-        let base_offset = 0x4000 * usize::from(self.dots_base_block) + tile_stride * dots_idx;
-
-        base_offset + (8 * dot_y + dot_x) / size_div
+    pub(super) fn dots_vram_offset(self) -> usize {
+        0x4000 * usize::from(self.dots_base_block)
     }
 
     pub fn screen_vram_offset(self, screen_idx: u8) -> usize {
@@ -214,7 +204,7 @@ impl BackgroundControl {
         }
     }
 
-    pub(super) fn text_mode_screen_index(self, screen_x: usize, screen_y: usize) -> u8 {
+    pub(super) fn text_mode_screen_index(self, screen_pos: (u32, u32)) -> u8 {
         let layout = match self.screen_size {
             0 => [[0, 0], [0, 0]],
             1 => [[0, 1], [0, 1]],
@@ -223,7 +213,8 @@ impl BackgroundControl {
             _ => unreachable!(),
         };
 
-        layout[screen_y % 2][screen_x % 2]
+        let (layout_x, layout_y) = ((screen_pos.0 % 2) as usize, (screen_pos.1 % 2) as usize);
+        layout[layout_y % 2][layout_x % 2]
     }
 }
 

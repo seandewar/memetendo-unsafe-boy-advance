@@ -3,7 +3,7 @@ mod thumb;
 
 use intbits::Bits;
 
-use crate::bus::{Bus, BusAlignedExt};
+use crate::bus::{AlignedExt, Bus};
 
 use super::{
     reg::{OperationMode, StatusRegister, PC_INDEX},

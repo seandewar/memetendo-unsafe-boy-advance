@@ -149,7 +149,7 @@ fn main() -> Result<()> {
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {
-        for _ in 0..100_000 {
+        for _ in 0..70_000 {
             gba.step(&mut screen);
         }
 
