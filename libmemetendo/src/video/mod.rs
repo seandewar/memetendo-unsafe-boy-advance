@@ -4,6 +4,7 @@ pub mod screen;
 use intbits::Bits;
 
 use crate::{
+    arbitrary_sign_extend,
     arm7tdmi::{Cpu, Exception},
     bus::Bus,
     video::reg::Mode,
@@ -391,26 +392,22 @@ impl Controller {
 
     #[allow(clippy::similar_names)]
     fn affine_transform_pos(
-        ref_pos: (i32, i32),
-        dm: (i32, i32),
-        d: (i32, i32),
-        pos: (i32, i32),
+        (ref_x, ref_y): (i32, i32),
+        (dmx, dmy): (i32, i32),
+        (dx, dy): (i32, i32),
+        (x, y): (i32, i32),
     ) -> (i32, i32) {
-        let (ref_x, ref_y) = ref_pos;
-        let (dmx, dmy) = dm;
-        let (dx, dy) = d;
-        let (x, y) = pos;
-
         (
             ref_x.wrapping_add(y * dmx).wrapping_add(x * dx) >> 8,
             ref_y.wrapping_add(y * dmy).wrapping_add(x * dy) >> 8,
         )
     }
 
-    fn flip_tile_dot_pos(flip: (bool, bool), tile_size: (u8, u8), dot_pos: (u8, u8)) -> (u8, u8) {
-        let (flip_x, flip_y) = flip;
-        let (tile_width, tile_height) = tile_size;
-        let (mut dot_x, mut dot_y) = dot_pos;
+    fn flip_tile_dot_pos(
+        (flip_x, flip_y): (bool, bool),
+        (tile_width, tile_height): (u8, u8),
+        (mut dot_x, mut dot_y): (u8, u8),
+    ) -> (u8, u8) {
         if flip_x {
             dot_x = tile_width * TILE_DOT_LEN - 1 - dot_x;
         }
@@ -421,12 +418,12 @@ impl Controller {
         (dot_x, dot_y)
     }
 
-    fn dot_vram_offset(color256: bool, dots_idx: usize, dot_pos: (u8, u8)) -> usize {
+    fn dot_vram_offset(color256: bool, dots_idx: usize, (dot_x, dot_y): (u8, u8)) -> usize {
         let size_div = if color256 { 1 } else { 2 };
         let tile_stride = 64 / size_div;
         let base_offset = tile_stride * dots_idx;
 
-        base_offset + (8 * usize::from(dot_pos.1) + usize::from(dot_pos.0)) / size_div
+        base_offset + (8 * usize::from(dot_y) + usize::from(dot_x)) / size_div
     }
 
     fn read_tile_dot(
@@ -490,16 +487,16 @@ impl Controller {
         let screen_base_offset = self.bgcnt[bg_idx].screen_vram_offset(screen_idx);
         let screen_wraparound = text_mode || self.bgcnt[bg_idx].wraparound;
 
-        let screen_tile_pos = if screen_wraparound {
+        let (screen_tile_x, screen_tile_y) = if screen_wraparound {
             (tile_x % screen_tile_len, tile_y % screen_tile_len)
         } else {
             (tile_x, tile_y)
         };
-        if screen_tile_pos.0 >= screen_tile_len || screen_tile_pos.1 >= screen_tile_len {
+        if screen_tile_x >= screen_tile_len || screen_tile_y >= screen_tile_len {
             return (None, visibility);
         }
 
-        let screen_tile_idx = screen_tile_pos.1 * screen_tile_len + screen_tile_pos.0;
+        let screen_tile_idx = screen_tile_y * screen_tile_len + screen_tile_x;
 
         #[allow(clippy::cast_possible_truncation)]
         let (mut dot_x, mut dot_y) = (
@@ -585,8 +582,8 @@ impl Controller {
     fn obj_affine_transform_pos(
         &self,
         param_idx: u32,
-        tile_size: (u8, u8),
-        dot_pos: (i32, i32),
+        (tile_width, tile_height): (u8, u8),
+        (dot_x, dot_y): (i32, i32),
     ) -> (i32, i32) {
         let params_offset = 6 + 32 * param_idx;
         #[allow(clippy::cast_possible_wrap)]
@@ -597,15 +594,15 @@ impl Controller {
             i32::from(self.oam.as_ref().read_hword(params_offset + 24) as i16),
         );
         let (half_dot_width, half_dot_height) = (
-            i32::from(tile_size.0 * TILE_DOT_LEN / 2),
-            i32::from(tile_size.1 * TILE_DOT_LEN / 2),
+            i32::from(tile_width * TILE_DOT_LEN / 2),
+            i32::from(tile_height * TILE_DOT_LEN / 2),
         );
 
         Self::affine_transform_pos(
             (half_dot_width << 8, half_dot_height << 8),
             (dmx, dmy),
             (dx, dy),
-            (dot_pos.0 - half_dot_width, dot_pos.1 - half_dot_height),
+            (dot_x - half_dot_width, dot_y - half_dot_height),
         )
     }
 
@@ -642,18 +639,23 @@ impl Controller {
             let (tile_width, tile_height) = tile_sizes[usize::from(attrs[1].bits(14..))];
             let (obj_width, obj_height) = (tile_width * TILE_DOT_LEN, tile_height * TILE_DOT_LEN);
 
-            let (x, y) = (self.x, u16::from(self.y));
-            let (obj_x, obj_y) = (attrs[1].bits(..9), attrs[0].bits(..8));
+            #[allow(clippy::cast_possible_wrap)]
+            let (x, y) = (self.x as i16, i16::from(self.y));
+            #[allow(clippy::cast_possible_truncation)]
+            let (obj_x, obj_y) = (
+                arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9),
+                i16::from(attrs[0].bits(..8) as i8),
+            );
             let clip_size_mul = if double_clip_size { 2 } else { 1 };
             if x < obj_x
-                || x >= obj_x + u16::from(obj_width) * clip_size_mul
+                || x >= obj_x + i16::from(obj_width) * clip_size_mul
                 || y < obj_y
-                || y >= obj_y + u16::from(obj_height) * clip_size_mul
+                || y >= obj_y + i16::from(obj_height) * clip_size_mul
             {
                 continue; // Clipped
             }
 
-            #[allow(clippy::cast_possible_truncation)]
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let (mut obj_dot_x, mut obj_dot_y) = ((x - obj_x) as u8, (y - obj_y) as u8);
             (obj_dot_x, obj_dot_y) = if affine {
                 let (mut obj_dot_x, mut obj_dot_y) = (i32::from(obj_dot_x), i32::from(obj_dot_y));
