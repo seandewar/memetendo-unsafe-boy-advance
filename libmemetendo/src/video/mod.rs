@@ -1,16 +1,18 @@
+mod bg;
+mod obj;
 mod reg;
 pub mod screen;
 
 use intbits::Bits;
 
 use crate::{
-    arbitrary_sign_extend,
     arm7tdmi::{Cpu, Exception},
     bus::Bus,
     video::reg::Mode,
 };
 
 use self::{
+    obj::Oam,
     reg::{
         BackgroundAffine, BackgroundControl, BackgroundOffset, BlendCoefficient, BlendControl,
         DisplayControl, DisplayStatus, Mosaic, ReferencePoint, WindowControl, WindowDimensions,
@@ -18,23 +20,67 @@ use self::{
     screen::{FrameBuffer, Rgb, Screen},
 };
 
+#[derive(Copy, Clone)]
+pub struct PaletteRam([u8; 0x400]);
+
+impl Default for PaletteRam {
+    fn default() -> Self {
+        Self([0; 0x400])
+    }
+}
+
+impl Bus for PaletteRam {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        self.0.read_byte(addr)
+    }
+
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        // 8-bit writes act weird; write as a hword instead.
+        self.0.write_hword(addr, u16::from_le_bytes([value, value]));
+    }
+
+    fn write_hword(&mut self, addr: u32, value: u16) {
+        self.0.write_hword(addr, value);
+    }
+}
+
+pub struct VramBus<'a>(&'a mut Controller);
+
+impl Bus for VramBus<'_> {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        self.0.vram.read_byte(addr)
+    }
+
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        // Like palette RAM, but only write a hword for BG data.
+        if (addr as usize) < self.0.dispcnt.obj_vram_offset() {
+            self.0
+                .vram
+                .write_hword(addr, u16::from_le_bytes([value, value]));
+        }
+    }
+
+    fn write_hword(&mut self, addr: u32, value: u16) {
+        self.0.vram.write_hword(addr, value);
+    }
+}
+
 const HORIZ_DOTS: u16 = 308;
 const VERT_DOTS: u8 = 228;
 
-const HBLANK_DOT: u16 = 240;
+const HBLANK_DOT: u8 = 240;
 const VBLANK_DOT: u8 = 160;
 
-const CYCLES_PER_DOT: u8 = 4;
-
+#[derive(Clone)]
 pub struct Controller {
     x: u16,
     y: u8,
-    cycle_accum: u8,
+    cycle_accum: u32,
     frame_buf: FrameBuffer,
 
-    pub palette_ram: Box<[u8]>,
-    pub vram: Box<[u8]>,
-    pub oam: Box<[u8]>,
+    vram: Box<[u8]>,
+    pub palette_ram: PaletteRam,
+    pub oam: Oam,
 
     pub dispcnt: DisplayControl,
     pub dispstat: DisplayStatus,
@@ -68,9 +114,9 @@ impl Controller {
             y: 0,
             cycle_accum: 0,
             frame_buf: FrameBuffer::new(),
-            palette_ram: vec![0; 0x400].into_boxed_slice(),
-            vram: vec![0; 0x18000].into_boxed_slice(),
-            oam: vec![0; 0x400].into_boxed_slice(),
+            vram: vec![0; 0x1_8000].into_boxed_slice(),
+            palette_ram: PaletteRam::default(),
+            oam: Oam::default(),
             dispcnt: DisplayControl::default(),
             dispstat: DisplayStatus::default(),
             greenswp: 0,
@@ -92,29 +138,23 @@ impl Controller {
 
     #[allow(clippy::similar_names)]
     pub fn step(&mut self, screen: &mut impl Screen, cpu: &mut Cpu, cycles: u32) {
-        for _ in 0..cycles {
-            self.cycle_accum += 1;
-            if self.cycle_accum < CYCLES_PER_DOT {
-                continue;
+        self.cycle_accum += cycles;
+        while self.cycle_accum >= 4 {
+            self.cycle_accum -= 4;
+
+            if self.x < HBLANK_DOT.into() && self.y < VBLANK_DOT {
+                let rgb = self.compute_rgb();
+                self.frame_buf
+                    .set_pixel(self.x.into(), self.y.into(), rgb, self.greenswp.bit(0));
             }
 
-            if self.x < HBLANK_DOT && self.y < VBLANK_DOT {
-                self.frame_buf.set_pixel(
-                    self.x.into(),
-                    self.y.into(),
-                    self.compute_rgb(),
-                    self.greenswp.bit(0),
-                );
-            }
-
-            self.cycle_accum = 0;
             self.x += 1;
-            if self.x == HBLANK_DOT && self.y == VBLANK_DOT - 1 {
+            if self.x == HBLANK_DOT.into() && self.y == VBLANK_DOT - 1 {
                 screen.present_frame(&self.frame_buf);
             }
 
             let mut irq = false;
-            if self.x == HBLANK_DOT && self.y < VBLANK_DOT {
+            if self.x == HBLANK_DOT.into() && self.y < VBLANK_DOT {
                 irq |= self.dispstat.hblank_irq_enabled;
 
                 for (i, bg_ref) in self.bgref.iter_mut().enumerate() {
@@ -150,7 +190,7 @@ impl Controller {
     pub fn dispstat_lo_bits(&self) -> u8 {
         self.dispstat.lo_bits(
             self.y >= VBLANK_DOT && self.y != 227,
-            self.x >= HBLANK_DOT,
+            self.x >= HBLANK_DOT.into(),
             self.y,
         )
     }
@@ -159,9 +199,14 @@ impl Controller {
     pub fn vcount(&self) -> u8 {
         self.y
     }
+
+    #[must_use]
+    pub fn vram(&mut self) -> VramBus {
+        VramBus(self)
+    }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone)]
 struct Dot {
     r: u8,
     g: u8,
@@ -197,143 +242,138 @@ impl Dot {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+enum DotInfo {
+    Object(obj::DotInfo),
+    Background(bg::DotInfo),
+    Backdrop,
+}
+
 impl Controller {
-    fn compute_rgb(&self) -> Rgb {
+    fn compute_rgb(&mut self) -> Rgb {
         if self.dispcnt.forced_blank {
-            WHITE_DOT.to_rgb()
-        } else {
-            let (x, y) = (usize::from(self.x), usize::from(self.y));
-            let mosaic_offset = (
-                x % usize::from(self.mosaic_bg.get().0 + 1),
-                y % usize::from(self.mosaic_bg.get().1 + 1),
-            );
-
-            if mosaic_offset == (0, 0) {
-                let dot = self.compute_obj_dot().unwrap_or_else(|| {
-                    match self.dispcnt.mode_type() {
-                        Mode::Tile => self.compute_tile_mode_dot(),
-                        // TODO: windows, blending fx
-                        Mode::Bitmap => self.compute_bg_bitmap_mode_dot(),
-                        Mode::Invalid => self.read_backdrop_dot(), // TODO: what it do?
-                    }
-                });
-
-                dot.to_rgb()
-            } else {
-                self.frame_buf
-                    .pixel(x - mosaic_offset.0, y - mosaic_offset.1)
-            }
-        }
-    }
-
-    fn read_backdrop_dot(&self) -> Dot {
-        Dot::from(self.palette_ram.as_ref().read_hword(0))
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum Visibility {
-    Visible,
-    InsideWindow(usize),
-    OutsideWindows,
-    Hidden,
-}
-
-const TILE_DOT_LEN: u8 = 8;
-
-impl Controller {
-    fn bg_priority_iter(&self) -> impl Iterator<Item = usize> + '_ {
-        // If many BGs share the same priority, the one with the smallest index wins.
-        let mut bg_priorities = [0, 1, 2, 3];
-        bg_priorities.sort_unstable_by(|&a, &b| {
-            self.bgcnt[a]
-                .priority()
-                .cmp(&self.bgcnt[b].priority())
-                .then_with(|| a.cmp(&b))
-        });
-
-        bg_priorities.into_iter()
-    }
-
-    fn compute_dot_visibility(&self, bg_idx: Option<usize>) -> Visibility {
-        if bg_idx.map_or(false, |i| self.dispcnt.is_bg_hidden(i)) {
-            return Visibility::Hidden;
-        }
-        if self.dispcnt.display_bg_window == [false; 2] && !self.dispcnt.display_obj_window {
-            return Visibility::Visible; // All windows are disabled; show everything.
+            return WHITE_DOT.to_rgb();
         }
 
-        let mut visibility = if bg_idx.map_or(false, |i| !self.winout.display_bg[i]) {
-            Visibility::Hidden
-        } else {
-            Visibility::OutsideWindows
+        // TODO: mosaics
+        let top_win = self.find_top_window();
+        let top_infos = self.compute_top_dots(top_win);
+        let top_dot = self.read_dot(top_infos[0]);
+
+        let obj_alpha_mode = matches!(
+            top_infos[0],
+            DotInfo::Object(obj::DotInfo {
+                mode: obj::Mode::AlphaBlend,
+                ..
+            })
+        );
+        let is_target = |top_dot_idx: usize| {
+            let targeted = match top_infos[top_dot_idx] {
+                DotInfo::Object(_) => self.bldcnt.obj_target[top_dot_idx],
+                DotInfo::Background(bg) => self.bldcnt.bg_target[top_dot_idx][bg.index()],
+                DotInfo::Backdrop => self.bldcnt.backdrop_target[top_dot_idx],
+            };
+            let win_blendfx = self
+                .window_control(top_win)
+                .map_or(true, |w| w.blendfx_enabled);
+
+            targeted && win_blendfx
         };
-        for win_idx in (0..2).rev() {
-            let (win_x, win_y) = (self.win[win_idx].horiz(), self.win[win_idx].vert());
 
-            let inside_horiz = if win_x.0 <= win_x.1 {
-                self.x >= win_x.0.into() && self.x < win_x.1.into()
-            } else {
-                self.x < win_x.1.into() || self.x >= win_x.0.into()
-            };
-            let inside_vert = if win_y.0 <= win_y.1 {
-                self.y >= win_y.0 && self.y < win_y.1
-            } else {
-                self.y < win_y.1 || self.y >= win_y.0
-            };
+        let dot = match self.bldcnt.mode() {
+            _ if !is_target(0) => top_dot,
+            mode if is_target(1) && (mode == 1 || obj_alpha_mode) => {
+                let bot_dot = self.read_dot(top_infos[1]);
+                self.alpha_blend_dots(top_dot, bot_dot)
+            }
+            0 | 1 => top_dot,
+            2 => self.brighten_dot(false, top_dot),
+            3 => self.brighten_dot(true, top_dot),
+            _ => unreachable!(),
+        };
 
-            if inside_horiz && inside_vert {
-                if self.dispcnt.display_bg_window[win_idx]
-                    && bg_idx.map_or(true, |i| self.winin[win_idx].display_bg[i])
-                {
-                    visibility = Visibility::InsideWindow(win_idx);
-                } else if bg_idx.is_some() {
-                    visibility = Visibility::Hidden;
+        dot.to_rgb()
+    }
+
+    fn read_dot(&mut self, info: DotInfo) -> Dot {
+        let mut palette_ram = |offset| Dot::from(self.palette_ram.read_hword(offset));
+        let vram = |offset| Dot::from(self.vram.as_ref().read_hword(offset));
+
+        match info {
+            DotInfo::Object(info) => palette_ram(0x200 + info.palette.ram_offset()),
+            DotInfo::Background(info) => match info {
+                bg::DotInfo::TileMode { palette, .. } => palette_ram(palette.ram_offset()),
+                bg::DotInfo::Mode3 { pos: (x, y) } => vram(2 * (y * u32::from(HBLANK_DOT) + x)),
+                bg::DotInfo::Mode4 { color_idx } => palette_ram(2 * u32::from(color_idx)),
+                #[allow(clippy::cast_possible_truncation)]
+                bg::DotInfo::Mode5 { pos: (x, y) } => {
+                    vram(self.dispcnt.frame_vram_offset() as u32 + 2 * (y * 160 + x))
+                }
+            },
+            DotInfo::Backdrop => palette_ram(0),
+        }
+    }
+
+    fn compute_top_dots(&mut self, top_win: Window) -> [DotInfo; 2] {
+        let mut obj_info = self.compute_top_obj_dot(top_win);
+
+        match self.dispcnt.mode_type() {
+            Mode::Tile => {
+                let mut infos = [DotInfo::Backdrop; 2];
+                let mut bg_iter = self.compute_bg_tile_mode_dot_iter(top_win).peekable();
+
+                while let DotInfo::Backdrop = infos[1] {
+                    let top = match (obj_info, bg_iter.peek()) {
+                        (Some(obj), Some(bg))
+                            if obj.priority_over_bg <= self.bgcnt[bg.index()].priority() =>
+                        {
+                            DotInfo::Object(obj_info.take().unwrap())
+                        }
+                        (Some(_) | None, Some(_)) => DotInfo::Background(bg_iter.next().unwrap()),
+                        (Some(_), None) => DotInfo::Object(obj_info.take().unwrap()),
+                        (None, None) => break,
+                    };
+
+                    if let DotInfo::Backdrop = infos[0] {
+                        infos[0] = top;
+                    } else {
+                        infos[1] = top;
+                    }
+                }
+
+                infos
+            }
+            Mode::Bitmap => {
+                let bg_info = self.compute_bg_bitmap_mode_dot(top_win);
+
+                match (obj_info, bg_info) {
+                    (Some(obj), Some(bg))
+                        if obj.priority_over_bg <= self.bgcnt[bg.index()].priority() =>
+                    {
+                        [DotInfo::Object(obj), DotInfo::Background(bg)]
+                    }
+                    (Some(obj), Some(bg)) => [DotInfo::Background(bg), DotInfo::Object(obj)],
+                    (Some(obj), None) => [DotInfo::Object(obj), DotInfo::Backdrop],
+                    (None, Some(bg)) => [DotInfo::Background(bg), DotInfo::Backdrop],
+                    (None, None) => [DotInfo::Backdrop; 2],
                 }
             }
+            Mode::Invalid => [DotInfo::Backdrop; 2],
         }
-
-        visibility
     }
 
-    fn compute_tile_mode_dot(&self) -> Dot {
-        let mut bg_iter = self.bg_priority_iter();
-        let (bg_idx, mut dot, visibility) = bg_iter
-            .by_ref()
-            .map(|i| (i, self.compute_bg_tile_mode_dot(i)))
-            .find(|(_, (dot, _))| dot.is_some())
-            .map_or_else(
-                || {
-                    (
-                        None,
-                        self.read_backdrop_dot(),
-                        self.compute_dot_visibility(None),
-                    )
-                },
-                |(i, (dot, vis))| (Some(i), dot.unwrap(), vis),
-            );
-
-        let target_blendfx = bg_idx.map_or(self.bldcnt.backdrop_target.0, |i| {
-            self.bldcnt.bg_target.0[i]
-        });
-        let win_blendfx = match visibility {
-            Visibility::Visible => true,
-            Visibility::InsideWindow(i) => self.winin[i].blendfx_enabled,
-            Visibility::OutsideWindows => self.winout.blendfx_enabled,
-            Visibility::Hidden => false,
+    fn alpha_blend_dots(&self, top: Dot, bot: Dot) -> Dot {
+        let factor = (self.bldalpha.0.factor(), self.bldalpha.1.factor());
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let blend = |top: u8, bot: u8| {
+            31.min((f32::from(top) * factor.0 + f32::from(bot) * factor.1) as u32) as u8
         };
-        let blendfx = self.bldcnt.mode() != 0 && target_blendfx && win_blendfx;
 
-        if blendfx {
-            dot = match self.bldcnt.mode() {
-                1 => self.alpha_blend_dot(bg_iter, dot),
-                2 => self.brighten_dot(false, dot),
-                3 => self.brighten_dot(true, dot),
-                _ => unreachable!(),
-            };
+        Dot {
+            r: blend(top.r, bot.r),
+            g: blend(top.g, bot.g),
+            b: blend(top.b, bot.b),
         }
-
-        dot
     }
 
     fn brighten_dot(&self, darken: bool, dot: Dot) -> Dot {
@@ -351,45 +391,83 @@ impl Controller {
             b: blend(dot.b),
         }
     }
+}
 
-    fn alpha_blend_dot(&self, bg_iter: impl Iterator<Item = usize>, dot: Dot) -> Dot {
-        let bot_dot = bg_iter
-            .filter(|&i| self.bldcnt.bg_target.1[i])
-            .map(|i| self.compute_bg_tile_mode_dot(i).0)
-            .find(Option::is_some)
-            .flatten()
-            .or_else(|| {
-                self.bldcnt
-                    .backdrop_target
-                    .1
-                    .then(|| self.read_backdrop_dot())
-            });
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum Window {
+    None,
+    Inside0,
+    Inside1,
+    Outside,
+}
 
-        if let Some(bot_dot) = bot_dot {
-            let factor = (self.bldalpha.0.factor(), self.bldalpha.1.factor());
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let blend = |top: u8, bot: u8| {
-                31.min((f32::from(top) * factor.0 + f32::from(bot) * factor.1) as u32) as u8
-            };
-
-            Dot {
-                r: blend(dot.r, bot_dot.r),
-                g: blend(dot.g, bot_dot.g),
-                b: blend(dot.b, bot_dot.b),
-            }
-        } else {
-            dot
+impl Controller {
+    fn window_control(&self, win: Window) -> Option<&WindowControl> {
+        match win {
+            Window::None => None,
+            Window::Inside0 => Some(&self.winin[0]),
+            Window::Inside1 => Some(&self.winin[1]),
+            Window::Outside => Some(&self.winout),
         }
     }
 
-    fn bg_affine_transform_pos(&self, bg_idx: usize, x: i32) -> (i32, i32) {
-        let ref_pos = self.bgref[bg_idx - 2].internal;
-        let params = &self.bgp[bg_idx - 2];
-        let d = (i32::from(params.a), i32::from(params.c));
+    fn find_top_window(&self) -> Window {
+        if self.dispcnt.display_bg_window == [false; 2] && !self.dispcnt.display_obj_window {
+            return Window::None;
+        }
 
-        Self::affine_transform_pos(ref_pos, (0, 0), d, (x, 0))
+        // TODO: obj window
+        for win_idx in 0..2 {
+            if !self.dispcnt.display_bg_window[win_idx] {
+                continue;
+            }
+
+            let (win_x, win_y) = (self.win[win_idx].horiz(), self.win[win_idx].vert());
+            let inside_horiz = if win_x.0 <= win_x.1 {
+                self.x >= win_x.0.into() && self.x < win_x.1.into()
+            } else {
+                self.x < win_x.1.into() || self.x >= win_x.0.into()
+            };
+            let inside_vert = if win_y.0 <= win_y.1 {
+                self.y >= win_y.0 && self.y < win_y.1
+            } else {
+                self.y < win_y.1 || self.y >= win_y.0
+            };
+
+            if inside_horiz && inside_vert {
+                return match win_idx {
+                    0 => Window::Inside0,
+                    1 => Window::Inside1,
+                    _ => unreachable!(),
+                };
+            }
+        }
+
+        Window::Outside
     }
+}
 
+#[derive(Debug, Copy, Clone)]
+struct DotPaletteInfo {
+    idx: Option<u16>,
+    color_idx: u32,
+}
+
+impl DotPaletteInfo {
+    fn ram_offset(self) -> u32 {
+        let color_idx = if let Some(palette_idx) = self.idx {
+            16 * u32::from(palette_idx) + self.color_idx
+        } else {
+            self.color_idx
+        };
+
+        2 * color_idx
+    }
+}
+
+const TILE_DOT_LEN: u8 = 8;
+
+impl Controller {
     #[allow(clippy::similar_names)]
     fn affine_transform_pos(
         (ref_x, ref_y): (i32, i32),
@@ -426,287 +504,21 @@ impl Controller {
         base_offset + (8 * usize::from(dot_y) + usize::from(dot_x)) / size_div
     }
 
-    fn read_tile_dot(
+    fn read_tile_dot_palette(
         &self,
-        is_obj: bool,
         palette_idx: Option<u16>,
         dot_offset: usize,
         dot_x: u8,
-    ) -> Option<Dot> {
+    ) -> Option<DotPaletteInfo> {
         let palette_color_idx = if palette_idx.is_some() {
             u32::from(self.vram[dot_offset] >> (4 * (dot_x % 2))).bits(..4)
         } else {
             u32::from(self.vram[dot_offset])
         };
 
-        (palette_color_idx != 0).then(|| {
-            let color_idx = if let Some(palette_idx) = palette_idx {
-                16 * u32::from(palette_idx) + palette_color_idx
-            } else {
-                palette_color_idx
-            };
-            let mut color_offset = 2 * color_idx;
-            if is_obj {
-                color_offset += 0x200;
-            }
-
-            Dot::from(self.palette_ram.as_ref().read_hword(color_offset))
+        (palette_color_idx != 0).then(|| DotPaletteInfo {
+            idx: palette_idx,
+            color_idx: palette_color_idx,
         })
-    }
-
-    fn compute_bg_tile_mode_dot(&self, bg_idx: usize) -> (Option<Dot>, Visibility) {
-        let visibility = self.compute_dot_visibility(Some(bg_idx));
-        if visibility == Visibility::Hidden {
-            return (None, visibility);
-        }
-
-        let (x, y) = if self.dispcnt.bg_uses_text_mode(bg_idx) {
-            let (x, y) = (u32::from(self.x), u32::from(self.y));
-            let (scroll_x, scroll_y) = self.bgofs[bg_idx].get();
-
-            (u32::from(scroll_x) + x, u32::from(scroll_y) + y)
-        } else {
-            let (x, y) = self.bg_affine_transform_pos(bg_idx, i32::from(self.x));
-            if x < 0 || y < 0 {
-                return (None, visibility);
-            }
-
-            #[allow(clippy::cast_sign_loss)]
-            (x as u32, y as u32)
-        };
-        let (tile_x, tile_y) = (x / u32::from(TILE_DOT_LEN), y / u32::from(TILE_DOT_LEN));
-
-        let text_mode = self.dispcnt.bg_uses_text_mode(bg_idx);
-        let screen_tile_len = u32::from(self.bgcnt[bg_idx].screen_tile_len(text_mode));
-        let screen_idx = if text_mode {
-            let screen_pos = (tile_x / screen_tile_len, tile_y / screen_tile_len);
-            self.bgcnt[bg_idx].text_mode_screen_index(screen_pos)
-        } else {
-            0
-        };
-        let screen_base_offset = self.bgcnt[bg_idx].screen_vram_offset(screen_idx);
-        let screen_wraparound = text_mode || self.bgcnt[bg_idx].wraparound;
-
-        let (screen_tile_x, screen_tile_y) = if screen_wraparound {
-            (tile_x % screen_tile_len, tile_y % screen_tile_len)
-        } else {
-            (tile_x, tile_y)
-        };
-        if screen_tile_x >= screen_tile_len || screen_tile_y >= screen_tile_len {
-            return (None, visibility);
-        }
-
-        let screen_tile_idx = screen_tile_y * screen_tile_len + screen_tile_x;
-
-        #[allow(clippy::cast_possible_truncation)]
-        let (mut dot_x, mut dot_y) = (
-            (x % u32::from(TILE_DOT_LEN)) as u8,
-            (y % u32::from(TILE_DOT_LEN)) as u8,
-        );
-        let (dots_idx, palette_idx) = if text_mode {
-            #[allow(clippy::cast_possible_truncation)]
-            let tile_info_offset = screen_base_offset as u32 + 2 * screen_tile_idx;
-            let tile_info = self.vram.as_ref().read_hword(tile_info_offset);
-            let dots_idx = usize::from(tile_info.bits(..10));
-
-            if self.dispcnt.mode() == 0 || (self.dispcnt.mode() == 1 && bg_idx < 2) {
-                (dot_x, dot_y) = Self::flip_tile_dot_pos(
-                    (tile_info.bit(10), tile_info.bit(11)),
-                    (1, 1),
-                    (dot_x, dot_y),
-                );
-            }
-
-            let color256 = self.bgcnt[bg_idx].color256
-                || (self.dispcnt.mode() == 1 && bg_idx == 2)
-                || self.dispcnt.mode() == 2;
-            let palette_idx = (!color256).then(|| tile_info.bits(12..));
-
-            (dots_idx, palette_idx)
-        } else {
-            let dots_idx_offset = screen_base_offset + screen_tile_idx as usize;
-            if dots_idx_offset >= self.vram.len() {
-                return (None, visibility);
-            }
-
-            (usize::from(self.vram[dots_idx_offset]), None)
-        };
-
-        let dot_offset = self.bgcnt[bg_idx].dots_vram_offset()
-            + Self::dot_vram_offset(palette_idx.is_none(), dots_idx, (dot_x, dot_y));
-        let dot = self.read_tile_dot(false, palette_idx, dot_offset, dot_x);
-
-        (dot, visibility)
-    }
-
-    // TODO: backdrop colour needs to be treated as transparent
-    fn compute_bg_bitmap_mode_dot(&self) -> Dot {
-        const BG_INDEX: usize = 2;
-
-        if self.compute_dot_visibility(Some(BG_INDEX)) == Visibility::Hidden {
-            return self.read_backdrop_dot();
-        }
-
-        let (x, y) = self.bg_affine_transform_pos(BG_INDEX, i32::from(self.x));
-        #[allow(clippy::cast_sign_loss)]
-        let (x, y) = (x as usize, y as usize);
-
-        let color_offset = match self.dispcnt.mode() {
-            3 | 4 if x >= screen::WIDTH || y >= screen::HEIGHT => None,
-            3 => Some(2 * (y * screen::WIDTH + x)),
-            4 => Some(
-                2 * usize::from(
-                    self.vram[self.dispcnt.frame_vram_offset() + y * screen::WIDTH + x],
-                ),
-            ),
-            5 if x >= 160 || y >= 128 => None,
-            5 => Some(self.dispcnt.frame_vram_offset() + 2 * (y * 160 + x)),
-            _ => unreachable!(),
-        };
-        let color_ram = if self.dispcnt.mode() == 4 {
-            &self.palette_ram
-        } else {
-            &self.vram
-        };
-
-        #[allow(clippy::cast_possible_truncation)]
-        color_offset
-            .filter(|&offset| offset < color_ram.len())
-            .map_or_else(
-                || self.read_backdrop_dot(),
-                |offset| Dot::from(color_ram.as_ref().read_hword(offset as u32)),
-            )
-    }
-
-    #[allow(clippy::similar_names)]
-    fn obj_affine_transform_pos(
-        &self,
-        param_idx: u32,
-        (tile_width, tile_height): (u8, u8),
-        (dot_x, dot_y): (i32, i32),
-    ) -> (i32, i32) {
-        let params_offset = 6 + 32 * param_idx;
-        #[allow(clippy::cast_possible_wrap)]
-        let (dx, dmx, dy, dmy) = (
-            i32::from(self.oam.as_ref().read_hword(params_offset) as i16),
-            i32::from(self.oam.as_ref().read_hword(params_offset + 8) as i16),
-            i32::from(self.oam.as_ref().read_hword(params_offset + 16) as i16),
-            i32::from(self.oam.as_ref().read_hword(params_offset + 24) as i16),
-        );
-        let (half_dot_width, half_dot_height) = (
-            i32::from(tile_width * TILE_DOT_LEN / 2),
-            i32::from(tile_height * TILE_DOT_LEN / 2),
-        );
-
-        Self::affine_transform_pos(
-            (half_dot_width << 8, half_dot_height << 8),
-            (dmx, dmy),
-            (dx, dy),
-            (dot_x - half_dot_width, dot_y - half_dot_height),
-        )
-    }
-
-    fn compute_obj_dot(&self) -> Option<Dot> {
-        if !self.dispcnt.display_obj {
-            return None;
-        }
-
-        for obj_idx in 0..128 {
-            let attrs_offset = obj_idx * 8;
-            let attrs = [
-                self.oam.as_ref().read_hword(attrs_offset),
-                self.oam.as_ref().read_hword(attrs_offset + 2),
-                self.oam.as_ref().read_hword(attrs_offset + 4),
-            ];
-
-            let affine = attrs[0].bit(8);
-            let double_clip_size = attrs[0].bit(9);
-            if !affine && double_clip_size {
-                continue; // Hidden
-            }
-
-            let _mode = attrs[0].bits(10..12);
-            let _mosaic = attrs[0].bit(12);
-            let _priority = attrs[2].bits(10..12);
-
-            let tile_sizes = match attrs[0].bits(14..) {
-                0 => [(1, 1), (2, 2), (4, 4), (8, 8)],
-                1 => [(2, 1), (4, 1), (4, 2), (8, 4)],
-                2 => [(1, 2), (1, 4), (2, 4), (4, 8)],
-                3 => continue, // Prohibited (TODO: what it do tho?)
-                _ => unreachable!(),
-            };
-            let (tile_width, tile_height) = tile_sizes[usize::from(attrs[1].bits(14..))];
-            let (obj_width, obj_height) = (tile_width * TILE_DOT_LEN, tile_height * TILE_DOT_LEN);
-
-            #[allow(clippy::cast_possible_wrap)]
-            let (x, y) = (self.x as i16, i16::from(self.y));
-            #[allow(clippy::cast_possible_truncation)]
-            let (obj_x, obj_y) = (
-                arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9),
-                i16::from(attrs[0].bits(..8) as i8),
-            );
-            let clip_size_mul = if double_clip_size { 2 } else { 1 };
-            if x < obj_x
-                || x >= obj_x + i16::from(obj_width) * clip_size_mul
-                || y < obj_y
-                || y >= obj_y + i16::from(obj_height) * clip_size_mul
-            {
-                continue; // Clipped
-            }
-
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let (mut obj_dot_x, mut obj_dot_y) = ((x - obj_x) as u8, (y - obj_y) as u8);
-            (obj_dot_x, obj_dot_y) = if affine {
-                let (mut obj_dot_x, mut obj_dot_y) = (i32::from(obj_dot_x), i32::from(obj_dot_y));
-                if double_clip_size {
-                    obj_dot_x -= i32::from(obj_width / 2);
-                    obj_dot_y -= i32::from(obj_height / 2);
-                }
-
-                (obj_dot_x, obj_dot_y) = self.obj_affine_transform_pos(
-                    u32::from(attrs[1].bits(9..14)),
-                    (tile_width, tile_height),
-                    (obj_dot_x, obj_dot_y),
-                );
-                if obj_dot_x < 0
-                    || obj_dot_x >= i32::from(obj_width)
-                    || obj_dot_y < 0
-                    || obj_dot_y >= i32::from(obj_height)
-                {
-                    continue; // Out of sprite bounds
-                }
-
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                (obj_dot_x as u8, obj_dot_y as u8)
-            } else {
-                Self::flip_tile_dot_pos(
-                    (attrs[1].bit(12), attrs[1].bit(13)),
-                    (tile_width, tile_height),
-                    (obj_dot_x, obj_dot_y),
-                )
-            };
-
-            let (tile_x, tile_y) = (obj_dot_x / TILE_DOT_LEN, obj_dot_y / TILE_DOT_LEN);
-            let dots_base_idx = usize::from(attrs[2].bits(..10));
-            let dots_row_stride = usize::from(if self.dispcnt.obj_1d { tile_width } else { 32 });
-            let dots_idx =
-                dots_base_idx + usize::from(tile_y) * dots_row_stride + usize::from(tile_x);
-
-            let (dot_x, dot_y) = (obj_dot_x % TILE_DOT_LEN, obj_dot_y % TILE_DOT_LEN);
-            let dot_offset = 0x1_0000 + Self::dot_vram_offset(false, dots_idx, (dot_x, dot_y));
-            if dot_offset < self.dispcnt.obj_vram_offset() || dot_offset >= self.vram.len() {
-                continue; // Hidden (outside of obj VRAM)
-            }
-
-            let color256 = attrs[0].bit(13);
-            let palette_idx = (!color256).then_some(attrs[2].bits(12..));
-            let dot = self.read_tile_dot(true, palette_idx, dot_offset, dot_x);
-            if dot.is_some() {
-                return dot;
-            }
-        }
-
-        None
     }
 }

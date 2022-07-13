@@ -36,7 +36,7 @@ impl Rgb {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct FrameBuffer(pub Box<[u8]>);
 
 impl Default for FrameBuffer {

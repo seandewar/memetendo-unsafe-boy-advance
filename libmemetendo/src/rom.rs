@@ -7,7 +7,7 @@ use std::{
 
 use crate::bus::Bus;
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct Rom(Box<[u8]>);
 
 impl Rom {
@@ -24,7 +24,7 @@ impl Rom {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct Cartridge<'a> {
     rom: &'a Rom,
     pub sram: Box<[u8]>,
@@ -52,7 +52,7 @@ impl Bus for Cartridge<'_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct Bios<'a> {
     rom: &'a Rom,
     readable: bool,
@@ -98,7 +98,7 @@ impl Bus for Bios<'_> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub struct InvalidSize;
 
 impl Display for InvalidSize {

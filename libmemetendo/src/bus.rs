@@ -52,7 +52,7 @@ impl Bus for &[u8] {
     }
 }
 
-impl Bus for &mut [u8] {
+impl Bus for [u8] {
     #[inline]
     fn read_byte(&mut self, addr: u32) -> u8 {
         self[addr as usize]

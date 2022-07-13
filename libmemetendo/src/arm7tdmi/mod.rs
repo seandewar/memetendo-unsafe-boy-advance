@@ -83,7 +83,7 @@ pub enum RunState {
     Running,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct Cpu {
     state: RunState,
     pub reg: Registers,

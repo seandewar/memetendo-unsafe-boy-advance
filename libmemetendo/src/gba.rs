@@ -271,13 +271,11 @@ impl bus::Bus for Bus<'_, '_, '_> {
             // I/O Registers
             0x0400_0000..=0x0400_03fe => self.read_io(addr),
             // Palette RAM
-            0x0500_0000..=0x05ff_ffff => self.video.palette_ram.as_ref().read_byte(addr & 0x3ff),
+            0x0500_0000..=0x05ff_ffff => self.video.palette_ram.read_byte(addr & 0x3ff),
             // VRAM
-            0x0600_0000..=0x06ff_ffff => {
-                self.video.vram.as_ref().read_byte(Self::vram_offset(addr))
-            }
+            0x0600_0000..=0x06ff_ffff => self.video.vram().read_byte(Self::vram_offset(addr)),
             // OAM
-            0x0700_0000..=0x07ff_ffff => self.video.oam.as_ref().read_byte(addr & 0x3ff),
+            0x0700_0000..=0x07ff_ffff => self.video.oam.read_byte(addr & 0x3ff),
             // ROM Mirror; TODO: Wait states 0, 1 and 2
             0x0800_0000..=0x09ff_ffff | 0x0a00_0000..=0x0bff_ffff | 0x0c00_0000..=0x0dff_ffff => {
                 self.cart.read_byte(addr & 0x1ff_ffff)
@@ -298,23 +296,10 @@ impl bus::Bus for Bus<'_, '_, '_> {
             // I/O Registers
             0x0400_0000..=0x0400_03fe => self.write_io(addr, value),
             // Palette RAM
-            0x0500_0000..=0x05ff_ffff => {
-                // 8-bit writes act weird; write as a hword.
-                self.video
-                    .palette_ram
-                    .as_mut()
-                    .write_hword(addr & 0x3ff, u16::from_le_bytes([value, value]));
-            }
+            0x0500_0000..=0x05ff_ffff => self.video.palette_ram.write_byte(addr & 0x3ff, value),
             // VRAM
             0x0600_0000..=0x06ff_ffff => {
-                // Like palette RAM, but only write a hword for BG data.
-                let offset = Self::vram_offset(addr);
-                if (offset as usize) < self.video.dispcnt.obj_vram_offset() {
-                    self.video
-                        .vram
-                        .as_mut()
-                        .write_hword(offset, u16::from_le_bytes([value, value]));
-                }
+                self.video.vram().write_byte(Self::vram_offset(addr), value);
             }
             // SRAM
             0x0e00_0000..=0x0e00_ffff => self.cart.sram.as_mut().write_byte(addr & 0xffff, value),
@@ -328,21 +313,14 @@ impl bus::Bus for Bus<'_, '_, '_> {
         // such writes to write_hword_as_bytes.
         match addr {
             // Palette RAM
-            0x0500_0000..=0x05ff_ffff => {
-                self.video
-                    .palette_ram
-                    .as_mut()
-                    .write_hword(addr & 0x3ff, value);
-            }
+            0x0500_0000..=0x05ff_ffff => self.video.palette_ram.write_hword(addr & 0x3ff, value),
             // VRAM
-            0x0600_0000..=0x06ff_ffff => {
-                self.video
-                    .vram
-                    .as_mut()
-                    .write_hword(Self::vram_offset(addr), value);
-            }
+            0x0600_0000..=0x06ff_ffff => self
+                .video
+                .vram()
+                .write_hword(Self::vram_offset(addr), value),
             // OAM
-            0x0700_0000..=0x07ff_ffff => self.video.oam.as_mut().write_hword(addr & 0x3ff, value),
+            0x0700_0000..=0x07ff_ffff => self.video.oam.write_hword(addr & 0x3ff, value),
             _ => bus::write_hword_as_bytes(self, addr, value),
         }
     }

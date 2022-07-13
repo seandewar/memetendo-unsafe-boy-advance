@@ -41,7 +41,7 @@ impl IndexMut<Key> for KeyStates {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct Keypad {
     pub pressed: KeyStates,
     pub keycnt: InterruptControl,
@@ -102,7 +102,7 @@ impl Keypad {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct InterruptControl {
     pub irq_keys: KeyStates,
     pub irq_enabled: bool,

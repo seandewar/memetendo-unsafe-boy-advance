@@ -88,18 +88,10 @@ impl DisplayControl {
     }
 
     pub fn obj_vram_offset(&self) -> usize {
-        if self.mode_type() == Mode::Tile {
-            0x1_0000
-        } else {
-            0x1_4000 // TODO: invalid type behaviour?
+        match self.mode_type() {
+            Mode::Tile => 0x1_0000,
+            Mode::Bitmap | Mode::Invalid => 0x1_4000, // TODO: what does invalid actually do?
         }
-    }
-
-    pub(super) fn is_bg_hidden(&self, bg_idx: usize) -> bool {
-        !self.display_bg[bg_idx]
-            || (self.mode == 1 && bg_idx == 3)
-            || (self.mode == 2 && bg_idx < 2)
-            || (self.mode_type() == Mode::Bitmap && bg_idx != 2)
     }
 
     pub(super) fn bg_uses_text_mode(&self, bg_idx: usize) -> bool {
@@ -331,7 +323,7 @@ impl WindowDimensions {
 #[derive(Copy, Clone, Default, Debug)]
 pub struct WindowControl {
     pub display_bg: [bool; 4],
-    pub show_obj: bool,
+    pub display_obj: bool,
     pub blendfx_enabled: bool,
     bits: u8,
 }
@@ -343,7 +335,7 @@ impl WindowControl {
         bits.set_bit(1, self.display_bg[1]);
         bits.set_bit(2, self.display_bg[2]);
         bits.set_bit(3, self.display_bg[3]);
-        bits.set_bit(4, self.show_obj);
+        bits.set_bit(4, self.display_obj);
         bits.set_bit(5, self.blendfx_enabled);
 
         bits
@@ -354,7 +346,7 @@ impl WindowControl {
         self.display_bg[1] = bits.bit(1);
         self.display_bg[2] = bits.bit(2);
         self.display_bg[3] = bits.bit(3);
-        self.show_obj = bits.bit(4);
+        self.display_obj = bits.bit(4);
         self.blendfx_enabled = bits.bit(5);
         self.bits = bits;
     }
@@ -376,9 +368,9 @@ impl Mosaic {
 
 #[derive(Copy, Clone, Default, Debug)]
 pub struct BlendControl {
-    pub bg_target: ([bool; 4], [bool; 4]),
-    pub obj_target: (bool, bool),
-    pub backdrop_target: (bool, bool),
+    pub bg_target: [[bool; 4]; 2],
+    pub obj_target: [bool; 2],
+    pub backdrop_target: [bool; 2],
     mode: u8,
     hi_bits: u8,
 }
@@ -386,12 +378,12 @@ pub struct BlendControl {
 impl BlendControl {
     pub fn lo_bits(self) -> u8 {
         let mut bits = 0;
-        bits.set_bit(0, self.bg_target.0[0]);
-        bits.set_bit(1, self.bg_target.0[1]);
-        bits.set_bit(2, self.bg_target.0[2]);
-        bits.set_bit(3, self.bg_target.0[3]);
-        bits.set_bit(4, self.obj_target.0);
-        bits.set_bit(5, self.backdrop_target.0);
+        bits.set_bit(0, self.bg_target[0][0]);
+        bits.set_bit(1, self.bg_target[0][1]);
+        bits.set_bit(2, self.bg_target[0][2]);
+        bits.set_bit(3, self.bg_target[0][3]);
+        bits.set_bit(4, self.obj_target[0]);
+        bits.set_bit(5, self.backdrop_target[0]);
         bits.set_bits(6.., self.mode);
 
         bits
@@ -399,33 +391,33 @@ impl BlendControl {
 
     pub fn hi_bits(self) -> u8 {
         let mut bits = self.hi_bits;
-        bits.set_bit(0, self.bg_target.1[0]);
-        bits.set_bit(1, self.bg_target.1[1]);
-        bits.set_bit(2, self.bg_target.1[2]);
-        bits.set_bit(3, self.bg_target.1[3]);
-        bits.set_bit(4, self.obj_target.1);
-        bits.set_bit(5, self.backdrop_target.1);
+        bits.set_bit(0, self.bg_target[1][0]);
+        bits.set_bit(1, self.bg_target[1][1]);
+        bits.set_bit(2, self.bg_target[1][2]);
+        bits.set_bit(3, self.bg_target[1][3]);
+        bits.set_bit(4, self.obj_target[1]);
+        bits.set_bit(5, self.backdrop_target[1]);
 
         bits
     }
 
     pub fn set_lo_bits(&mut self, bits: u8) {
-        self.bg_target.0[0] = bits.bit(0);
-        self.bg_target.0[1] = bits.bit(1);
-        self.bg_target.0[2] = bits.bit(2);
-        self.bg_target.0[3] = bits.bit(3);
-        self.obj_target.0 = bits.bit(4);
-        self.backdrop_target.0 = bits.bit(5);
+        self.bg_target[0][0] = bits.bit(0);
+        self.bg_target[0][1] = bits.bit(1);
+        self.bg_target[0][2] = bits.bit(2);
+        self.bg_target[0][3] = bits.bit(3);
+        self.obj_target[0] = bits.bit(4);
+        self.backdrop_target[0] = bits.bit(5);
         self.mode = bits.bits(6..);
     }
 
     pub fn set_hi_bits(&mut self, bits: u8) {
-        self.bg_target.1[0] = bits.bit(0);
-        self.bg_target.1[1] = bits.bit(1);
-        self.bg_target.1[2] = bits.bit(2);
-        self.bg_target.1[3] = bits.bit(3);
-        self.obj_target.1 = bits.bit(4);
-        self.backdrop_target.1 = bits.bit(5);
+        self.bg_target[1][0] = bits.bit(0);
+        self.bg_target[1][1] = bits.bit(1);
+        self.bg_target[1][2] = bits.bit(2);
+        self.bg_target[1][3] = bits.bit(3);
+        self.obj_target[1] = bits.bit(4);
+        self.backdrop_target[1] = bits.bit(5);
         self.hi_bits = bits;
     }
 
