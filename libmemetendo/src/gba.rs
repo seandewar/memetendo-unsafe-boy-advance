@@ -82,8 +82,8 @@ impl Bus<'_, '_, '_> {
     fn read_io(&self, addr: u32) -> u8 {
         match addr & 0x3ff {
             // DISPCNT
-            0x0 => self.video.dispcnt.lo_bits(),
-            0x1 => self.video.dispcnt.hi_bits(),
+            0x0 => self.video.dispcnt().lo_bits(),
+            0x1 => self.video.dispcnt().hi_bits(),
             // GREENSWP (undocumented)
             #[allow(clippy::cast_possible_truncation)]
             0x2 => self.video.greenswp as u8,
@@ -96,17 +96,17 @@ impl Bus<'_, '_, '_> {
             0x6 => self.video.vcount(),
             0x7 => 0,
             // BG0CNT
-            0x8 => self.video.bgcnt[0].lo_bits(),
-            0x9 => self.video.bgcnt[0].hi_bits(),
+            0x8 => self.video.bgcnt()[0].lo_bits(),
+            0x9 => self.video.bgcnt()[0].hi_bits(),
             // BG1CNT
-            0xa => self.video.bgcnt[1].lo_bits(),
-            0xb => self.video.bgcnt[1].hi_bits(),
+            0xa => self.video.bgcnt()[1].lo_bits(),
+            0xb => self.video.bgcnt()[1].hi_bits(),
             // BG2CNT
-            0xc => self.video.bgcnt[2].lo_bits(),
-            0xd => self.video.bgcnt[2].hi_bits(),
+            0xc => self.video.bgcnt()[2].lo_bits(),
+            0xd => self.video.bgcnt()[2].hi_bits(),
             // BG3CNT
-            0xe => self.video.bgcnt[3].lo_bits(),
-            0xf => self.video.bgcnt[3].hi_bits(),
+            0xe => self.video.bgcnt()[3].lo_bits(),
+            0xf => self.video.bgcnt()[3].hi_bits(),
             // WININ
             0x48 => self.video.winin[0].bits(),
             0x49 => self.video.winin[1].bits(),
@@ -134,8 +134,8 @@ impl Bus<'_, '_, '_> {
     fn write_io(&mut self, addr: u32, value: u8) {
         match addr & 0x3ff {
             // DISPCNT
-            0x0 => self.video.dispcnt.set_lo_bits(value),
-            0x1 => self.video.dispcnt.set_hi_bits(value),
+            0x0 => self.video.set_dispcnt_lo_bits(value),
+            0x1 => self.video.set_dispcnt_hi_bits(value),
             // GREENSWP (undocumented)
             0x2 => self.video.greenswp.set_bits(..8, value.into()),
             0x3 => self.video.greenswp.set_bits(8.., value.into()),
@@ -143,17 +143,17 @@ impl Bus<'_, '_, '_> {
             0x4 => self.video.dispstat.set_lo_bits(value),
             0x5 => self.video.dispstat.vcount_target = value,
             // BG0CNT
-            0x8 => self.video.bgcnt[0].set_lo_bits(value),
-            0x9 => self.video.bgcnt[0].set_hi_bits(value),
+            0x8 => self.video.set_bgcnt_lo_bits(0, value),
+            0x9 => self.video.set_bgcnt_hi_bits(0, value),
             // BG1CNT
-            0xa => self.video.bgcnt[1].set_lo_bits(value),
-            0xb => self.video.bgcnt[1].set_hi_bits(value),
+            0xa => self.video.set_bgcnt_lo_bits(1, value),
+            0xb => self.video.set_bgcnt_hi_bits(1, value),
             // BG2CNT
-            0xc => self.video.bgcnt[2].set_lo_bits(value),
-            0xd => self.video.bgcnt[2].set_hi_bits(value),
+            0xc => self.video.set_bgcnt_lo_bits(2, value),
+            0xd => self.video.set_bgcnt_hi_bits(2, value),
             // BG3CNT
-            0xe => self.video.bgcnt[3].set_lo_bits(value),
-            0xf => self.video.bgcnt[3].set_hi_bits(value),
+            0xe => self.video.set_bgcnt_lo_bits(3, value),
+            0xf => self.video.set_bgcnt_hi_bits(3, value),
             // BG0HOFS
             0x10 => self.video.bgofs[0].set_x_lo_bits(value),
             0x11 => self.video.bgofs[0].set_x_hi_bits(value),

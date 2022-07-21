@@ -1,9 +1,11 @@
 use intbits::Bits;
-use tinyvec::{array_vec, ArrayVec};
 
 use crate::bus::Bus;
 
-use super::{Controller, DotPaletteInfo, Window, HBLANK_DOT, TILE_DOT_LEN, VBLANK_DOT};
+use super::{
+    reg::BackgroundControl, Controller, DotPaletteInfo, Window, HBLANK_DOT, TILE_DOT_LEN,
+    VBLANK_DOT,
+};
 
 #[derive(Debug, Copy, Clone)]
 pub(super) enum DotInfo {
@@ -27,25 +29,39 @@ impl DotInfo {
 }
 
 impl Controller {
-    pub(super) fn compute_bg_tile_mode_dot_iter(
-        &self,
-        win: Window,
-    ) -> impl Iterator<Item = DotInfo> + '_ {
+    pub(super) fn priority_sort_tile_mode_bgs(&mut self) {
         // If many BGs share the same priority, the one with the smallest index wins.
-        let mut bg_priorities: ArrayVec<[_; 4]> = match self.dispcnt.mode() {
-            0 => array_vec![0, 1, 2, 3],
-            1 => array_vec![0, 1, 2],
-            2 => array_vec![2, 3],
-            _ => unreachable!(),
-        };
-        bg_priorities.sort_unstable_by(|&a, &b| {
+        self.tile_mode_bg_order.sort_unstable_by(|&a, &b| {
             self.bgcnt[a]
                 .priority()
                 .cmp(&self.bgcnt[b].priority())
                 .then_with(|| a.cmp(&b))
         });
+    }
 
-        bg_priorities
+    pub fn set_bgcnt_lo_bits(&mut self, bg_idx: usize, bits: u8) {
+        let bgcnt = &mut self.bgcnt[bg_idx];
+        let old_priority = bgcnt.priority();
+        bgcnt.set_lo_bits(bits);
+        if old_priority != bgcnt.priority() {
+            self.priority_sort_tile_mode_bgs();
+        }
+    }
+
+    pub fn set_bgcnt_hi_bits(&mut self, bg_idx: usize, bits: u8) {
+        self.bgcnt[bg_idx].set_hi_bits(bits);
+    }
+
+    #[must_use]
+    pub fn bgcnt(&self) -> &[BackgroundControl; 4] {
+        &self.bgcnt
+    }
+
+    pub(super) fn compute_bg_tile_mode_dot_iter(
+        &self,
+        win: Window,
+    ) -> impl Iterator<Item = DotInfo> + '_ {
+        self.tile_mode_bg_order
             .into_iter()
             .filter(move |&i| {
                 self.dispcnt.display_bg[i]

@@ -4,6 +4,7 @@ mod reg;
 pub mod screen;
 
 use intbits::Bits;
+use tinyvec::{array_vec, ArrayVec};
 
 use crate::{
     arm7tdmi::{Cpu, Exception},
@@ -76,16 +77,17 @@ pub struct Controller {
     x: u16,
     y: u8,
     cycle_accum: u32,
+    tile_mode_bg_order: ArrayVec<[usize; 4]>,
     frame_buf: FrameBuffer,
 
     vram: Box<[u8]>,
     pub palette_ram: PaletteRam,
     pub oam: Oam,
 
-    pub dispcnt: DisplayControl,
+    dispcnt: DisplayControl,
     pub dispstat: DisplayStatus,
     pub greenswp: u16,
-    pub bgcnt: [BackgroundControl; 4],
+    bgcnt: [BackgroundControl; 4],
     pub bgofs: [BackgroundOffset; 4],
     pub bgref: [ReferencePoint; 2],
     pub bgp: [BackgroundAffine; 2],
@@ -113,6 +115,7 @@ impl Controller {
             x: 0,
             y: 0,
             cycle_accum: 0,
+            tile_mode_bg_order: array_vec![0, 1, 2, 3],
             frame_buf: FrameBuffer::new(),
             vram: vec![0; 0x1_8000].into_boxed_slice(),
             palette_ram: PaletteRam::default(),
@@ -184,6 +187,29 @@ impl Controller {
                 cpu.raise_exception(Exception::Interrupt);
             }
         }
+    }
+
+    pub fn set_dispcnt_lo_bits(&mut self, bits: u8) {
+        let old_mode = self.dispcnt.mode();
+        self.dispcnt.set_lo_bits(bits);
+        if old_mode != self.dispcnt.mode() && self.dispcnt.mode_type() == Mode::Tile {
+            self.tile_mode_bg_order = match self.dispcnt.mode() {
+                0 => array_vec![0, 1, 2, 3],
+                1 => array_vec![0, 1, 2],
+                2 => array_vec![2, 3],
+                _ => unreachable!(),
+            };
+            self.priority_sort_tile_mode_bgs();
+        }
+    }
+
+    pub fn set_dispcnt_hi_bits(&mut self, bits: u8) {
+        self.dispcnt.set_hi_bits(bits);
+    }
+
+    #[must_use]
+    pub fn dispcnt(&self) -> &DisplayControl {
+        &self.dispcnt
     }
 
     #[must_use]
