@@ -16,7 +16,7 @@ use libmemetendo::{
 };
 use sdl2::{
     event::Event,
-    keyboard::Scancode,
+    keyboard::{KeyboardState, Scancode},
     pixels::{Color, PixelFormatEnum},
     render::{Texture, TextureCreator, WindowCanvas},
     video::WindowContext,
@@ -115,6 +115,20 @@ impl Screen for SdlScreen<'_> {
     }
 }
 
+fn update_keypad(gba: &mut Gba, kb: &KeyboardState) {
+    gba.keypad.pressed[Key::A] = kb.is_scancode_pressed(Scancode::X);
+    gba.keypad.pressed[Key::B] = kb.is_scancode_pressed(Scancode::Z);
+    gba.keypad.pressed[Key::Select] =
+        kb.is_scancode_pressed(Scancode::LShift) || kb.is_scancode_pressed(Scancode::RShift);
+    gba.keypad.pressed[Key::Start] = kb.is_scancode_pressed(Scancode::Return);
+    gba.keypad.pressed[Key::Up] = kb.is_scancode_pressed(Scancode::Up);
+    gba.keypad.pressed[Key::Down] = kb.is_scancode_pressed(Scancode::Down);
+    gba.keypad.pressed[Key::Left] = kb.is_scancode_pressed(Scancode::Left);
+    gba.keypad.pressed[Key::Right] = kb.is_scancode_pressed(Scancode::Right);
+    gba.keypad.pressed[Key::L] = kb.is_scancode_pressed(Scancode::A);
+    gba.keypad.pressed[Key::R] = kb.is_scancode_pressed(Scancode::S);
+}
+
 fn main() -> Result<()> {
     const REDRAW_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
@@ -149,49 +163,45 @@ fn main() -> Result<()> {
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {
-        for _ in 0..90_000 {
-            gba.step(&mut screen);
-        }
+        const MAX_REDRAW_SKIP: u32 = 1;
+        const STEPS_PER_REDRAW: u32 = 120_000; // TODO: base this on cycles spent instead
 
-        let now = Instant::now();
-        if now >= next_redraw_time {
+        let mut skipped_redraws = 0;
+        loop {
+            for _ in 0..STEPS_PER_REDRAW {
+                gba.step(&mut screen);
+            }
+
+            let rem_time = next_redraw_time - Instant::now();
             next_redraw_time += REDRAW_DURATION;
-            if now - next_redraw_time >= 3 * REDRAW_DURATION {
-                // A simple reschedule if we're too far behind.
-                next_redraw_time = now + REDRAW_DURATION;
-            }
-            if now >= next_redraw_time {
-                continue;
+            if rem_time > Duration::ZERO {
+                sleep(rem_time);
+                break;
             }
 
-            for event in context.event_pump.poll_iter() {
-                if let Event::Quit { .. } = event {
-                    break 'main_loop;
-                }
+            if skipped_redraws >= MAX_REDRAW_SKIP {
+                break;
             }
-
-            let kb = context.event_pump.keyboard_state();
-            gba.keypad.pressed[Key::A] = kb.is_scancode_pressed(Scancode::X);
-            gba.keypad.pressed[Key::B] = kb.is_scancode_pressed(Scancode::Z);
-            gba.keypad.pressed[Key::Select] = kb.is_scancode_pressed(Scancode::LShift)
-                || kb.is_scancode_pressed(Scancode::RShift);
-            gba.keypad.pressed[Key::Start] = kb.is_scancode_pressed(Scancode::Return);
-            gba.keypad.pressed[Key::Up] = kb.is_scancode_pressed(Scancode::Up);
-            gba.keypad.pressed[Key::Down] = kb.is_scancode_pressed(Scancode::Down);
-            gba.keypad.pressed[Key::Left] = kb.is_scancode_pressed(Scancode::Left);
-            gba.keypad.pressed[Key::Right] = kb.is_scancode_pressed(Scancode::Right);
-            gba.keypad.pressed[Key::L] = kb.is_scancode_pressed(Scancode::A);
-            gba.keypad.pressed[Key::R] = kb.is_scancode_pressed(Scancode::S);
-
-            context.win_canvas.clear();
-            context
-                .win_canvas
-                .copy(screen.texture()?, None, None)
-                .map_err(|e| anyhow!("failed to draw screen texture: {e}"))?;
-            context.win_canvas.present();
+            skipped_redraws += 1;
         }
 
-        sleep(next_redraw_time - now);
+        for event in context.event_pump.poll_iter() {
+            if let Event::Quit { .. } = event {
+                break 'main_loop;
+            }
+        }
+        update_keypad(&mut gba, &context.event_pump.keyboard_state());
+
+        context.win_canvas.clear();
+        context
+            .win_canvas
+            .copy(screen.texture()?, None, None)
+            .map_err(|e| anyhow!("failed to draw screen texture: {e}"))?;
+        context.win_canvas.present();
+
+        if skipped_redraws >= MAX_REDRAW_SKIP {
+            next_redraw_time = Instant::now() + REDRAW_DURATION;
+        }
     }
 
     Ok(())
