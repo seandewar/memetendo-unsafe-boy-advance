@@ -52,7 +52,7 @@ impl Attributes {
     }
 
     fn is_enabled(&self) -> bool {
-        matches!(self.affine, AffineAttribute::Disabled { hidden: false, .. })
+        !matches!(self.affine, AffineAttribute::Disabled { hidden: true, .. })
             && self.mode.is_some()
             && self.tiles_size() != (0, 0)
     }
@@ -226,11 +226,14 @@ impl Oam {
         let color256 = attrs[0].bit(13);
         let palette_idx = (!color256).then_some(attrs[2].bits(12..));
 
+        #[allow(clippy::cast_possible_wrap)]
+        let mut y = attrs[0].bits(..8) as i16;
+        if y >= VBLANK_DOT.into() {
+            y = i16::from(y as i8);
+        }
+
         Attributes {
-            pos: (
-                arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9),
-                i16::from(attrs[0].bits(..8) as i8),
-            ),
+            pos: (arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9), y),
             affine,
             mode: Mode::from_repr(attrs[0].bits(10..12).into()),
             mosaic: attrs[0].bit(12),
