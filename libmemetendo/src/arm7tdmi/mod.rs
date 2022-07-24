@@ -76,16 +76,8 @@ impl Exception {
     }
 }
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
-pub enum RunState {
-    #[default]
-    NotRunning,
-    Running,
-}
-
 #[derive(Default, Copy, Clone, Debug)]
 pub struct Cpu {
-    state: RunState,
     pub reg: Registers,
     pipeline_instrs: [u32; 2],
     pending_exceptions: [bool; 7],
@@ -98,7 +90,6 @@ impl Cpu {
     }
 
     pub fn reset(&mut self, bus: &mut impl Bus, skip_bios: bool) {
-        self.state = RunState::Running;
         self.pending_exceptions.fill(false);
 
         self.enter_exception(bus, Exception::Reset);
@@ -131,10 +122,6 @@ impl Cpu {
     // which should be impossible.
     #[allow(clippy::missing_panics_doc)]
     pub fn step(&mut self, bus: &mut impl Bus) {
-        if self.state != RunState::Running {
-            return;
-        }
-
         for priority in 0..self.pending_exceptions.len() {
             let raised = replace(&mut self.pending_exceptions[priority], false);
             let exception = Exception::from_priority(priority).unwrap();
@@ -230,7 +217,6 @@ mod tests {
     use strum::IntoEnumIterator;
 
     fn assert_exception_result(cpu: &mut Cpu, exception: Exception, old_reg: Registers) {
-        assert_eq!(cpu.state, RunState::Running);
         assert_eq!(cpu.reg.cpsr.mode(), exception.entry_mode());
         assert_eq!(
             cpu.reg.cpsr.fiq_disabled,

@@ -5,8 +5,8 @@ Nothing to see here yet; I'll be working on this in my spare time :)
 ## Status
 
 ![3D Sage demo screenshot](media/3d-sage-demo.png)
-![krom cylinder screenshot](media/krom-cylinder.png)
-![key\_demo from tonc\_gba\_demos](media/tonc-key-demo.png)
+![tonc bigmap demo screenshot](media/tonc-bigmap.png)
+![tonc keypad demo screenshot](media/tonc-key-demo.png)
 
 Currently passes:
 - All of the pre-generated tests in

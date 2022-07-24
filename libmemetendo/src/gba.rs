@@ -3,20 +3,48 @@ use intbits::Bits;
 use crate::{
     arm7tdmi::Cpu,
     bus,
+    irq::Irq,
     keypad::Keypad,
     rom::{Bios, Cartridge},
     video::{self, screen::Screen},
 };
 
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+pub enum State {
+    #[default]
+    Running,
+    Halted,
+    Stopped,
+}
+
+#[derive(Debug, Default)]
+pub struct HaltControl(pub State);
+
+impl HaltControl {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_bits(&mut self, value: u8) {
+        self.0 = if value.bit(7) {
+            State::Stopped
+        } else {
+            State::Halted
+        };
+    }
+}
+
 pub struct Gba<'b, 'c> {
     pub cpu: Cpu,
+    pub irq: Irq,
+    pub haltcnt: HaltControl,
     pub iwram: Box<[u8]>,
     pub ewram: Box<[u8]>,
     pub video: video::Controller,
     pub keypad: Keypad,
     pub bios: Bios<'b>,
     pub cart: Cartridge<'c>,
-    io_todo: Box<[u8]>,
 }
 
 impl<'b, 'c> Gba<'b, 'c> {
@@ -24,13 +52,14 @@ impl<'b, 'c> Gba<'b, 'c> {
     pub fn new(bios: Bios<'b>, cart: Cartridge<'c>) -> Self {
         Self {
             cpu: Cpu::new(),
+            irq: Irq::new(),
+            haltcnt: HaltControl::new(),
             iwram: vec![0; 0x8000].into_boxed_slice(),
             ewram: vec![0; 0x40000].into_boxed_slice(),
             video: video::Controller::new(),
             keypad: Keypad::new(),
             bios,
             cart,
-            io_todo: vec![0; 0x801].into_boxed_slice(),
         }
     }
 
@@ -45,20 +74,28 @@ impl<'b, 'c> Gba<'b, 'c> {
     }
 
     pub fn step(&mut self, screen: &mut impl Screen) {
-        self.keypad.step(&mut self.cpu);
-        self.cpu.step(&mut bus!(self));
-        self.video.step(screen, &mut self.cpu, 2);
+        self.keypad.step(&mut self.irq);
+
+        if self.haltcnt.0 == State::Running {
+            self.cpu.step(&mut bus!(self));
+        }
+        if self.haltcnt.0 != State::Stopped {
+            self.video.step(screen, &mut self.irq, 2);
+        }
+
+        self.irq.step(&mut self.cpu, &mut self.haltcnt);
     }
 }
 
 pub struct Bus<'a, 'b, 'c> {
+    pub irq: &'a mut Irq,
+    pub haltcnt: &'a mut HaltControl,
     pub iwram: &'a mut [u8],
     pub ewram: &'a mut [u8],
     pub video: &'a mut video::Controller,
     pub keypad: &'a mut Keypad,
     pub bios: &'a mut Bios<'b>,
     pub cart: &'a mut Cartridge<'c>,
-    io_todo: &'a mut [u8],
 }
 
 // A member fn would be nicer, but using &mut self over $gba unnecessarily mutably borrows the
@@ -67,34 +104,33 @@ pub struct Bus<'a, 'b, 'c> {
 macro_rules! bus {
     ($gba:ident) => {{
         $crate::gba::Bus {
+            irq: &mut $gba.irq,
+            haltcnt: &mut $gba.haltcnt,
             iwram: &mut $gba.iwram,
             ewram: &mut $gba.ewram,
             video: &mut $gba.video,
             keypad: &mut $gba.keypad,
             cart: &mut $gba.cart,
             bios: &mut $gba.bios,
-            io_todo: &mut $gba.io_todo,
         }
     }};
 }
 
 impl Bus<'_, '_, '_> {
     fn read_io(&self, addr: u32) -> u8 {
+        #[allow(clippy::cast_possible_truncation)]
         match addr & 0x3ff {
             // DISPCNT
             0x0 => self.video.dispcnt().lo_bits(),
             0x1 => self.video.dispcnt().hi_bits(),
             // GREENSWP (undocumented)
-            #[allow(clippy::cast_possible_truncation)]
             0x2 => self.video.greenswp as u8,
-            #[allow(clippy::cast_possible_truncation)]
             0x3 => self.video.greenswp.bits(8..) as u8,
             // DISPSTAT
             0x4 => self.video.dispstat_lo_bits(),
             0x5 => self.video.dispstat.vcount_target,
             // VCOUNT
             0x6 => self.video.vcount(),
-            0x7 => 0,
             // BG0CNT
             0x8 => self.video.bgcnt()[0].lo_bits(),
             0x9 => self.video.bgcnt()[0].hi_bits(),
@@ -125,9 +161,18 @@ impl Bus<'_, '_, '_> {
             // KEYCNT
             0x132 => self.keypad.keycnt.lo_bits(),
             0x133 => self.keypad.keycnt.hi_bits(),
-            // TODO
-            addr @ 0..=0x800 => self.io_todo[addr as usize],
-            _ => 0xff,
+            // IE
+            0x200 => self.irq.inte as u8,
+            0x201 => self.irq.inte.bits(8..) as u8,
+            // IF
+            0x202 => self.irq.intf() as u8,
+            0x203 => self.irq.intf().bits(8..) as u8,
+            // IME
+            0x208 => self.irq.intme as u8,
+            0x209 => self.irq.intme.bits(8..16) as u8,
+            0x20a => self.irq.intme.bits(16..24) as u8,
+            0x20b => self.irq.intme.bits(24..) as u8,
+            _ => 0,
         }
     }
 
@@ -242,8 +287,19 @@ impl Bus<'_, '_, '_> {
             // KEYCNT
             0x132 => self.keypad.keycnt.set_lo_bits(value),
             0x133 => self.keypad.keycnt.set_hi_bits(value),
-            // TODO
-            addr @ 0..=0x800 => self.io_todo[addr as usize] = value,
+            // IE
+            0x200 => self.irq.inte.set_bits(..8, value.into()),
+            0x201 => self.irq.inte.set_bits(8.., value.into()),
+            // IF
+            0x202 => self.irq.set_intf_lo_bits(value),
+            0x203 => self.irq.set_intf_hi_bits(value),
+            // IME
+            0x208 => self.irq.intme.set_bits(..8, value.into()),
+            0x209 => self.irq.intme.set_bits(8..16, value.into()),
+            0x20a => self.irq.intme.set_bits(16..24, value.into()),
+            0x20b => self.irq.intme.set_bits(24.., value.into()),
+            // HALTCNT
+            0x301 => self.haltcnt.set_bits(value),
             _ => {}
         }
     }

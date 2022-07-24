@@ -2,7 +2,7 @@ use std::ops::{Index, IndexMut};
 
 use intbits::Bits;
 
-use crate::arm7tdmi::{Cpu, Exception};
+use crate::irq::{Interrupt, Irq};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Key {
@@ -53,7 +53,7 @@ impl Keypad {
         Self::default()
     }
 
-    pub fn step(&mut self, cpu: &mut Cpu) {
+    pub fn step(&mut self, irq: &mut Irq) {
         if !self.keycnt.irq_enabled {
             return;
         }
@@ -65,15 +65,14 @@ impl Keypad {
             .into_iter()
             .zip(self.pressed.0.into_iter());
 
-        let irq = if self.keycnt.irq_all_pressed {
+        let do_irq = if self.keycnt.irq_all_pressed {
             self.keycnt.irq_keys.0.into_iter().any(|irq| irq)
                 && iter.all(|(irq, pressed)| !irq || pressed)
         } else {
             iter.any(|(irq, pressed)| irq && pressed)
         };
-
-        if irq {
-            cpu.raise_exception(Exception::Interrupt);
+        if do_irq {
+            irq.request(Interrupt::Keypad);
         }
     }
 

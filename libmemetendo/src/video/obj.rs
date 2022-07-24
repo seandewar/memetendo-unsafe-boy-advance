@@ -203,7 +203,6 @@ impl Bus for Oam {
 }
 
 impl Oam {
-    #[allow(clippy::cast_possible_truncation)]
     fn read_attributes(&mut self, idx: u8) -> Attributes {
         let offset = u32::from(idx) * OAM_ENTRY_STRIDE;
         let attrs = [
@@ -213,6 +212,7 @@ impl Oam {
         ];
 
         let affine = if attrs[0].bit(8) {
+            #[allow(clippy::cast_possible_truncation)]
             AffineAttribute::Enabled {
                 double_size: attrs[0].bit(9),
                 params_idx: attrs[1].bits(9..14) as u8,
@@ -228,10 +228,12 @@ impl Oam {
 
         #[allow(clippy::cast_possible_wrap)]
         let mut y = attrs[0].bits(..8) as i16;
+        #[allow(clippy::cast_possible_truncation)]
         if y >= VBLANK_DOT.into() {
             y = i16::from(y as i8);
         }
 
+        #[allow(clippy::cast_possible_truncation)]
         Attributes {
             pos: (arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9), y),
             affine,

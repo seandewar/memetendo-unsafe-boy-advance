@@ -161,32 +161,27 @@ impl Controller {
             return None;
         }
 
-        let (x, y) = self.bg_affine_transform_pos(BITMAP_MODE_INDEX, i32::from(self.x));
+        let (x, y) = self.bg_affine_transform_pos(BITMAP_MODE_INDEX, self.x.into());
         if x < 0 || y < 0 {
             return None;
         }
-
         #[allow(clippy::cast_sign_loss)]
         let (x, y) = (x as u32, y as u32);
-        let info = match self.dispcnt.mode() {
-            3 | 4 if x >= u32::from(HBLANK_DOT) || y >= u32::from(VBLANK_DOT) => return None,
-            3 => DotInfo::Mode3 { pos: (x, y) },
+
+        match self.dispcnt.mode() {
+            _ if x >= HBLANK_DOT.into() || y >= VBLANK_DOT.into() => None,
+            3 => Some(DotInfo::Mode3 { pos: (x, y) }),
             4 => {
                 let (x, y) = (x as usize, y as usize);
                 let frame_offset = self.dispcnt.frame_vram_offset();
                 let color_idx = self.vram[frame_offset + y * usize::from(HBLANK_DOT) + x];
-                if color_idx == 0 {
-                    return None;
-                }
 
-                DotInfo::Mode4 { color_idx }
+                (color_idx > 0).then_some(DotInfo::Mode4 { color_idx })
             }
-            5 if x >= 160 || y >= 128 => return None,
-            5 => DotInfo::Mode5 { pos: (x, y) },
+            5 if x >= 160 || y >= 128 => None,
+            5 => Some(DotInfo::Mode5 { pos: (x, y) }),
             _ => unreachable!(),
-        };
-
-        Some(info)
+        }
     }
 
     fn bg_affine_transform_pos(&self, bg_idx: usize, x: i32) -> (i32, i32) {

@@ -7,8 +7,8 @@ use intbits::Bits;
 use tinyvec::{array_vec, ArrayVec};
 
 use crate::{
-    arm7tdmi::{Cpu, Exception},
     bus::Bus,
+    irq::{Interrupt, Irq},
     video::reg::Mode,
 };
 
@@ -140,7 +140,7 @@ impl Controller {
     }
 
     #[allow(clippy::similar_names)]
-    pub fn step(&mut self, screen: &mut impl Screen, cpu: &mut Cpu, cycles: u32) {
+    pub fn step(&mut self, screen: &mut impl Screen, irq: &mut Irq, cycles: u32) {
         self.cycle_accum += cycles;
         while self.cycle_accum >= 4 {
             self.cycle_accum -= 4;
@@ -156,9 +156,10 @@ impl Controller {
                 screen.present_frame(&self.frame_buf);
             }
 
-            let mut irq = false;
             if self.x == HBLANK_DOT.into() && self.y < VBLANK_DOT {
-                irq |= self.dispstat.hblank_irq_enabled;
+                if self.dispstat.hblank_irq_enabled {
+                    irq.request(Interrupt::HBlank);
+                }
 
                 for (i, bg_ref) in self.bgref.iter_mut().enumerate() {
                     let (dmx, dmy) = (i32::from(self.bgp[i].b), i32::from(self.bgp[i].d));
@@ -171,7 +172,9 @@ impl Controller {
                 self.x = 0;
                 self.y += 1;
                 if self.y == VBLANK_DOT {
-                    irq |= self.dispstat.vblank_irq_enabled;
+                    if self.dispstat.vblank_irq_enabled {
+                        irq.request(Interrupt::VBlank);
+                    }
 
                     for bg_ref in &mut self.bgref {
                         bg_ref.internal = bg_ref.external();
@@ -180,11 +183,9 @@ impl Controller {
                     self.y = 0;
                 }
 
-                irq |= self.dispstat.vcount_irq_enabled && self.y == self.dispstat.vcount_target;
-            }
-
-            if irq {
-                cpu.raise_exception(Exception::Interrupt);
+                if self.dispstat.vcount_irq_enabled && self.y == self.dispstat.vcount_target {
+                    irq.request(Interrupt::VCount);
+                }
             }
         }
     }

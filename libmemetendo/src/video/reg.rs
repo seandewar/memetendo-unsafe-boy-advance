@@ -99,7 +99,6 @@ impl DisplayControl {
     }
 }
 
-#[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, Debug)]
 pub struct DisplayStatus {
     pub vblank_irq_enabled: bool,
