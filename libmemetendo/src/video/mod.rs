@@ -45,7 +45,7 @@ impl Bus for PaletteRam {
     }
 }
 
-pub struct VramBus<'a>(&'a mut Controller);
+pub struct VramBus<'a>(&'a mut Video);
 
 impl Bus for VramBus<'_> {
     fn read_byte(&mut self, addr: u32) -> u8 {
@@ -73,7 +73,7 @@ const HBLANK_DOT: u8 = 240;
 const VBLANK_DOT: u8 = 160;
 
 #[derive(Clone)]
-pub struct Controller {
+pub struct Video {
     x: u16,
     y: u8,
     cycle_accum: u32,
@@ -102,13 +102,13 @@ pub struct Controller {
     pub bldy: BlendCoefficient,
 }
 
-impl Default for Controller {
+impl Default for Video {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Controller {
+impl Video {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -144,7 +144,6 @@ impl Controller {
         self.cycle_accum += cycles;
         while self.cycle_accum >= 4 {
             self.cycle_accum -= 4;
-
             if self.x < HBLANK_DOT.into() && self.y < VBLANK_DOT {
                 let rgb = self.compute_rgb();
                 self.frame_buf
@@ -152,26 +151,27 @@ impl Controller {
             }
 
             self.x += 1;
-            if self.x == HBLANK_DOT.into() && self.y == VBLANK_DOT - 1 {
-                screen.present_frame(&self.frame_buf);
-            }
-
-            if self.x == HBLANK_DOT.into() && self.y < VBLANK_DOT {
+            if self.x == HBLANK_DOT.into() {
                 if self.dispstat.hblank_irq_enabled {
                     irq.request(Interrupt::HBlank);
                 }
 
-                for (i, bg_ref) in self.bgref.iter_mut().enumerate() {
-                    let (dmx, dmy) = (i32::from(self.bgp[i].b), i32::from(self.bgp[i].d));
-                    bg_ref.internal.0 += dmx;
-                    bg_ref.internal.1 += dmy;
+                if self.y < VBLANK_DOT - 1 {
+                    for (i, bg_ref) in self.bgref.iter_mut().enumerate() {
+                        bg_ref.internal.0 += i32::from(self.bgp[i].b);
+                        bg_ref.internal.1 += i32::from(self.bgp[i].d);
+                    }
+                }
+                if self.y == VBLANK_DOT - 1 {
+                    screen.present_frame(&self.frame_buf);
                 }
             }
-
             if self.x >= HORIZ_DOTS {
                 self.x = 0;
                 self.y += 1;
-                if self.y == VBLANK_DOT {
+                if self.y >= VERT_DOTS {
+                    self.y = 0;
+                } else if self.y == VBLANK_DOT {
                     if self.dispstat.vblank_irq_enabled {
                         irq.request(Interrupt::VBlank);
                     }
@@ -179,8 +179,6 @@ impl Controller {
                     for bg_ref in &mut self.bgref {
                         bg_ref.internal = bg_ref.external();
                     }
-                } else if self.y >= VERT_DOTS {
-                    self.y = 0;
                 }
 
                 if self.dispstat.vcount_irq_enabled && self.y == self.dispstat.vcount_target {
@@ -276,7 +274,7 @@ enum DotInfo {
     Backdrop,
 }
 
-impl Controller {
+impl Video {
     fn compute_rgb(&mut self) -> Rgb {
         if self.dispcnt.forced_blank {
             return WHITE_DOT.to_rgb();
@@ -428,7 +426,7 @@ enum Window {
     Outside,
 }
 
-impl Controller {
+impl Video {
     fn window_control(&self, win: Window) -> Option<&WindowControl> {
         match win {
             Window::None => None,
@@ -494,7 +492,7 @@ impl DotPaletteInfo {
 
 const TILE_DOT_LEN: u8 = 8;
 
-impl Controller {
+impl Video {
     #[allow(clippy::similar_names)]
     fn affine_transform_pos(
         (ref_x, ref_y): (i32, i32),

@@ -6,7 +6,8 @@ use crate::{
     irq::Irq,
     keypad::Keypad,
     rom::{Bios, Cartridge},
-    video::{self, screen::Screen},
+    timer::Timers,
+    video::{screen::Screen, Video},
 };
 
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
@@ -39,12 +40,14 @@ pub struct Gba<'b, 'c> {
     pub cpu: Cpu,
     pub irq: Irq,
     pub haltcnt: HaltControl,
+    pub timers: Timers,
     pub iwram: Box<[u8]>,
     pub ewram: Box<[u8]>,
-    pub video: video::Controller,
+    pub video: Video,
     pub keypad: Keypad,
     pub bios: Bios<'b>,
     pub cart: Cartridge<'c>,
+    io_todo: Box<[u8]>,
 }
 
 impl<'b, 'c> Gba<'b, 'c> {
@@ -54,12 +57,14 @@ impl<'b, 'c> Gba<'b, 'c> {
             cpu: Cpu::new(),
             irq: Irq::new(),
             haltcnt: HaltControl::new(),
+            timers: Timers::new(),
             iwram: vec![0; 0x8000].into_boxed_slice(),
             ewram: vec![0; 0x40000].into_boxed_slice(),
-            video: video::Controller::new(),
+            video: Video::new(),
             keypad: Keypad::new(),
             bios,
             cart,
+            io_todo: vec![0; 0x801].into_boxed_slice(),
         }
     }
 
@@ -75,14 +80,13 @@ impl<'b, 'c> Gba<'b, 'c> {
 
     pub fn step(&mut self, screen: &mut impl Screen) {
         self.keypad.step(&mut self.irq);
-
         if self.haltcnt.0 == State::Running {
             self.cpu.step(&mut bus!(self));
         }
         if self.haltcnt.0 != State::Stopped {
             self.video.step(screen, &mut self.irq, 2);
+            self.timers.step(&mut self.irq, 2);
         }
-
         self.irq.step(&mut self.cpu, &mut self.haltcnt);
     }
 }
@@ -90,12 +94,14 @@ impl<'b, 'c> Gba<'b, 'c> {
 pub struct Bus<'a, 'b, 'c> {
     pub irq: &'a mut Irq,
     pub haltcnt: &'a mut HaltControl,
+    pub timers: &'a mut Timers,
     pub iwram: &'a mut [u8],
     pub ewram: &'a mut [u8],
-    pub video: &'a mut video::Controller,
+    pub video: &'a mut Video,
     pub keypad: &'a mut Keypad,
     pub bios: &'a mut Bios<'b>,
     pub cart: &'a mut Cartridge<'c>,
+    pub io_todo: &'a mut Box<[u8]>,
 }
 
 // A member fn would be nicer, but using &mut self over $gba unnecessarily mutably borrows the
@@ -106,12 +112,14 @@ macro_rules! bus {
         $crate::gba::Bus {
             irq: &mut $gba.irq,
             haltcnt: &mut $gba.haltcnt,
+            timers: &mut $gba.timers,
             iwram: &mut $gba.iwram,
             ewram: &mut $gba.ewram,
             video: &mut $gba.video,
             keypad: &mut $gba.keypad,
             cart: &mut $gba.cart,
             bios: &mut $gba.bios,
+            io_todo: &mut $gba.io_todo,
         }
     }};
 }
@@ -155,6 +163,14 @@ impl Bus<'_, '_, '_> {
             // BLDALPHA
             0x52 => self.video.bldalpha.0 .0,
             0x53 => self.video.bldalpha.1 .0,
+            // TM0CNT
+            0x100..=0x103 => self.timers.0[0].byte((addr & 3) as usize),
+            // TM1CNT
+            0x104..=0x107 => self.timers.0[1].byte((addr & 3) as usize),
+            // TM2CNT
+            0x108..=0x10b => self.timers.0[2].byte((addr & 3) as usize),
+            // TM3CNT
+            0x10c..=0x10f => self.timers.0[3].byte((addr & 3) as usize),
             // KEYINPUT
             0x130 => self.keypad.keyinput_lo_bits(),
             0x131 => self.keypad.keyinput_hi_bits(),
@@ -172,6 +188,8 @@ impl Bus<'_, '_, '_> {
             0x209 => self.irq.intme.bits(8..16) as u8,
             0x20a => self.irq.intme.bits(16..24) as u8,
             0x20b => self.irq.intme.bits(24..) as u8,
+            addr @ 0..=0x800 => self.io_todo[addr as usize],
+            // Unmapped.
             _ => 0,
         }
     }
@@ -284,6 +302,14 @@ impl Bus<'_, '_, '_> {
             0x53 => self.video.bldalpha.1 .0 = value,
             // BLDY
             0x54 => self.video.bldy.0 = value,
+            // TM0CNT
+            0x100..=0x103 => self.timers.0[0].set_byte((addr & 3) as usize, value),
+            // TM1CNT
+            0x104..=0x107 => self.timers.0[1].set_byte((addr & 3) as usize, value),
+            // TM2CNT
+            0x108..=0x10b => self.timers.0[2].set_byte((addr & 3) as usize, value),
+            // TM3CNT
+            0x10c..=0x10f => self.timers.0[3].set_byte((addr & 3) as usize, value),
             // KEYCNT
             0x132 => self.keypad.keycnt.set_lo_bits(value),
             0x133 => self.keypad.keycnt.set_hi_bits(value),
@@ -300,6 +326,7 @@ impl Bus<'_, '_, '_> {
             0x20b => self.irq.intme.set_bits(24.., value.into()),
             // HALTCNT
             0x301 => self.haltcnt.set_bits(value),
+            addr @ 0..=0x800 => self.io_todo[addr as usize] = value,
             _ => {}
         }
     }
@@ -321,9 +348,9 @@ impl bus::Bus for Bus<'_, '_, '_> {
             // BIOS
             0x0000_0000..=0x0000_3fff => self.bios.read_byte(addr),
             // External WRAM
-            0x0200_0000..=0x02ff_ffff => self.ewram.as_ref().read_byte(addr & 0x3_ffff),
+            0x0200_0000..=0x02ff_ffff => self.ewram.read_byte(addr & 0x3_ffff),
             // Internal WRAM
-            0x0300_0000..=0x03ff_ffff => self.iwram.as_ref().read_byte(addr & 0x7fff),
+            0x0300_0000..=0x03ff_ffff => self.iwram.read_byte(addr & 0x7fff),
             // I/O Registers
             0x0400_0000..=0x0400_03fe => self.read_io(addr),
             // Palette RAM
@@ -337,7 +364,7 @@ impl bus::Bus for Bus<'_, '_, '_> {
                 self.cart.read_byte(addr & 0x1ff_ffff)
             }
             // SRAM
-            0x0e00_0000..=0x0e00_ffff => self.cart.sram.as_ref().read_byte(addr & 0xffff),
+            0x0e00_0000..=0x0e00_ffff => self.cart.sram.read_byte(addr & 0xffff),
             // Unused
             _ => 0xff,
         }
@@ -346,9 +373,9 @@ impl bus::Bus for Bus<'_, '_, '_> {
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
             // External WRAM
-            0x0200_0000..=0x02ff_ffff => self.ewram.as_mut().write_byte(addr & 0x3_ffff, value),
+            0x0200_0000..=0x02ff_ffff => self.ewram.write_byte(addr & 0x3_ffff, value),
             // Internal WRAM
-            0x0300_0000..=0x03ff_ffff => self.iwram.as_mut().write_byte(addr & 0x7fff, value),
+            0x0300_0000..=0x03ff_ffff => self.iwram.write_byte(addr & 0x7fff, value),
             // I/O Registers
             0x0400_0000..=0x0400_03fe => self.write_io(addr, value),
             // Palette RAM
@@ -358,7 +385,7 @@ impl bus::Bus for Bus<'_, '_, '_> {
                 self.video.vram().write_byte(Self::vram_offset(addr), value);
             }
             // SRAM
-            0x0e00_0000..=0x0e00_ffff => self.cart.sram.as_mut().write_byte(addr & 0xffff, value),
+            0x0e00_0000..=0x0e00_ffff => self.cart.sram.write_byte(addr & 0xffff, value),
             // Read-only, Unused, Ignored 8-bit writes to OAM/VRAM
             _ => {}
         }

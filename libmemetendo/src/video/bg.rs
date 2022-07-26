@@ -3,8 +3,7 @@ use intbits::Bits;
 use crate::bus::Bus;
 
 use super::{
-    reg::BackgroundControl, Controller, DotPaletteInfo, Window, HBLANK_DOT, TILE_DOT_LEN,
-    VBLANK_DOT,
+    reg::BackgroundControl, DotPaletteInfo, Video, Window, HBLANK_DOT, TILE_DOT_LEN, VBLANK_DOT,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -28,7 +27,7 @@ impl DotInfo {
     }
 }
 
-impl Controller {
+impl Video {
     pub(super) fn priority_sort_tile_mode_bgs(&mut self) {
         // If many BGs share the same priority, the one with the smallest index wins.
         self.tile_mode_bg_order.sort_unstable_by(|&a, &b| {
@@ -106,7 +105,6 @@ impl Controller {
         if screen_tile_x >= screen_tile_len || screen_tile_y >= screen_tile_len {
             return None;
         }
-
         let screen_tile_idx = screen_tile_y * screen_tile_len + screen_tile_x;
 
         #[allow(clippy::cast_possible_truncation)]

@@ -8,7 +8,7 @@ use crate::{
     video::{HBLANK_DOT, VBLANK_DOT},
 };
 
-use super::{screen, Controller, DotPaletteInfo, Window, TILE_DOT_LEN};
+use super::{screen, DotPaletteInfo, Video, Window, TILE_DOT_LEN};
 
 #[derive(Debug, Copy, Clone)]
 enum AffineAttribute {
@@ -262,7 +262,7 @@ pub(super) struct DotInfo {
     pub palette: DotPaletteInfo,
 }
 
-impl Controller {
+impl Video {
     pub(super) fn compute_top_obj_dot(&mut self, win: Window) -> Option<DotInfo> {
         if !self.dispcnt.display_obj || self.window_control(win).map_or(false, |w| !w.display_obj) {
             return None;

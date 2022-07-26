@@ -6,6 +6,7 @@ pub mod gba;
 pub mod irq;
 pub mod keypad;
 pub mod rom;
+pub mod timer;
 pub mod video;
 
 #[macro_export]

@@ -1,7 +1,7 @@
 mod isa;
 pub mod reg;
 
-use std::mem::replace;
+use std::mem::take;
 
 use strum_macros::{EnumIter, FromRepr};
 
@@ -123,7 +123,7 @@ impl Cpu {
     #[allow(clippy::missing_panics_doc)]
     pub fn step(&mut self, bus: &mut impl Bus) {
         for priority in 0..self.pending_exceptions.len() {
-            let raised = replace(&mut self.pending_exceptions[priority], false);
+            let raised = take(&mut self.pending_exceptions[priority]);
             let exception = Exception::from_priority(priority).unwrap();
             if raised && self.enter_exception(bus, exception) {
                 // We serviced this exception.
