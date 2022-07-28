@@ -2,6 +2,7 @@
 
 pub mod arm7tdmi;
 pub mod bus;
+pub mod dma;
 pub mod gba;
 pub mod irq;
 pub mod keypad;

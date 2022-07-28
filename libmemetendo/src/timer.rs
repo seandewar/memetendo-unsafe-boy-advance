@@ -21,7 +21,6 @@ impl Register {
     ///
     /// Panics if the given byte index is out of bounds (> 3).
     pub fn set_byte(&mut self, idx: usize, value: u8) {
-        #[allow(clippy::cast_possible_truncation)]
         match idx {
             0 => self.initial.set_bits(..8, value.into()),
             1 => self.initial.set_bits(8.., value.into()),
@@ -87,21 +86,21 @@ impl Timers {
             }
 
             if !timer.cascade {
-                const CYCLES_PER_TICK: u32 = 1024;
+                const MAX_DIV: u32 = 1024;
 
                 let div = match timer.frequency {
                     0 => 1,
                     1 => 64,
                     2 => 256,
-                    3 => CYCLES_PER_TICK,
+                    3 => MAX_DIV,
                     _ => unreachable!(),
                 };
-                timer.accum += cycles * CYCLES_PER_TICK / div;
-                if timer.accum < CYCLES_PER_TICK {
+                timer.accum += cycles * MAX_DIV / div;
+                if timer.accum < MAX_DIV {
                     continue;
                 }
 
-                timer.accum %= CYCLES_PER_TICK;
+                timer.accum %= MAX_DIV;
             }
 
             let (new_counter, overflowed) = timer.counter.overflowing_add(1);

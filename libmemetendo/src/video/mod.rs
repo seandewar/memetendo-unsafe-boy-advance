@@ -66,11 +66,11 @@ impl Bus for VramBus<'_> {
     }
 }
 
-const HORIZ_DOTS: u16 = 308;
-const VERT_DOTS: u8 = 228;
+pub const HORIZ_DOTS: u16 = 308;
+pub const VERT_DOTS: u8 = 228;
 
-const HBLANK_DOT: u8 = 240;
-const VBLANK_DOT: u8 = 160;
+pub const HBLANK_DOT: u8 = 240;
+pub const VBLANK_DOT: u8 = 160;
 
 #[derive(Clone)]
 pub struct Video {
@@ -218,6 +218,11 @@ impl Video {
             self.x >= HBLANK_DOT.into(),
             self.y,
         )
+    }
+
+    #[must_use]
+    pub fn hcount(&self) -> u16 {
+        self.x
     }
 
     #[must_use]

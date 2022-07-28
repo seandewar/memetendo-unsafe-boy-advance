@@ -3,6 +3,7 @@ use intbits::Bits;
 use crate::{
     arm7tdmi::Cpu,
     bus,
+    dma::Dmas,
     irq::Irq,
     keypad::Keypad,
     rom::{Bios, Cartridge},
@@ -41,6 +42,7 @@ pub struct Gba<'b, 'c> {
     pub irq: Irq,
     pub haltcnt: HaltControl,
     pub timers: Timers,
+    pub dmas: Dmas,
     pub iwram: Box<[u8]>,
     pub ewram: Box<[u8]>,
     pub video: Video,
@@ -58,6 +60,7 @@ impl<'b, 'c> Gba<'b, 'c> {
             irq: Irq::new(),
             haltcnt: HaltControl::new(),
             timers: Timers::new(),
+            dmas: Dmas::new(),
             iwram: vec![0; 0x8000].into_boxed_slice(),
             ewram: vec![0; 0x40000].into_boxed_slice(),
             video: Video::new(),
@@ -80,12 +83,17 @@ impl<'b, 'c> Gba<'b, 'c> {
 
     pub fn step(&mut self, screen: &mut impl Screen) {
         self.keypad.step(&mut self.irq);
-        if self.haltcnt.0 == State::Running {
+        if self.haltcnt.0 == State::Running && !self.dmas.transfer_in_progress() {
             self.cpu.step(&mut bus!(self));
         }
         if self.haltcnt.0 != State::Stopped {
+            // TODO: actual cycle counting
             self.video.step(screen, &mut self.irq, 2);
             self.timers.step(&mut self.irq, 2);
+
+            if let Some(do_transfer) = self.dmas.step(&mut self.irq, &self.video, 2) {
+                do_transfer(&mut bus!(self));
+            }
         }
         self.irq.step(&mut self.cpu, &mut self.haltcnt);
     }
@@ -95,6 +103,7 @@ pub struct Bus<'a, 'b, 'c> {
     pub irq: &'a mut Irq,
     pub haltcnt: &'a mut HaltControl,
     pub timers: &'a mut Timers,
+    pub dmas: &'a mut Dmas,
     pub iwram: &'a mut [u8],
     pub ewram: &'a mut [u8],
     pub video: &'a mut Video,
@@ -113,6 +122,7 @@ macro_rules! bus {
             irq: &mut $gba.irq,
             haltcnt: &mut $gba.haltcnt,
             timers: &mut $gba.timers,
+            dmas: &mut $gba.dmas,
             iwram: &mut $gba.iwram,
             ewram: &mut $gba.ewram,
             video: &mut $gba.video,
@@ -163,6 +173,18 @@ impl Bus<'_, '_, '_> {
             // BLDALPHA
             0x52 => self.video.bldalpha.0 .0,
             0x53 => self.video.bldalpha.1 .0,
+            // DMA0CNT
+            0xba => self.dmas.0[0].control_lo_bits(),
+            0xbb => self.dmas.0[0].control_hi_bits(),
+            // DMA1CNT
+            0xc6 => self.dmas.0[1].control_lo_bits(),
+            0xc7 => self.dmas.0[1].control_hi_bits(),
+            // DMA2CNT
+            0xd2 => self.dmas.0[2].control_lo_bits(),
+            0xd3 => self.dmas.0[2].control_hi_bits(),
+            // DMA3CNT
+            0xde => self.dmas.0[3].control_lo_bits(),
+            0xdf => self.dmas.0[3].control_hi_bits(),
             // TM0CNT
             0x100..=0x103 => self.timers.0[0].byte((addr & 3) as usize),
             // TM1CNT
@@ -189,11 +211,12 @@ impl Bus<'_, '_, '_> {
             0x20a => self.irq.intme.bits(16..24) as u8,
             0x20b => self.irq.intme.bits(24..) as u8,
             addr @ 0..=0x800 => self.io_todo[addr as usize],
-            // Unmapped.
+            // Unmapped
             _ => 0,
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn write_io(&mut self, addr: u32, value: u8) {
         match addr & 0x3ff {
             // DISPCNT
@@ -302,6 +325,42 @@ impl Bus<'_, '_, '_> {
             0x53 => self.video.bldalpha.1 .0 = value,
             // BLDY
             0x54 => self.video.bldy.0 = value,
+            // DMA0SAD
+            0xb0..=0xb3 => self.dmas.0[0].set_src_addr_byte((addr & 3) as usize, value),
+            // DMA0DAD
+            0xb4..=0xb7 => self.dmas.0[0].set_dst_addr_byte((addr & 3) as usize, value),
+            // DMA0CNT
+            0xb8 => self.dmas.0[0].set_size_lo_bits(value),
+            0xb9 => self.dmas.0[0].set_size_hi_bits(value),
+            0xba => self.dmas.0[0].set_control_lo_bits(value),
+            0xbb => self.dmas.0[0].set_control_hi_bits(value),
+            // DMA1SAD
+            0xbc..=0xbf => self.dmas.0[1].set_src_addr_byte((addr & 3) as usize, value),
+            // DMA1DAD
+            0xc0..=0xc3 => self.dmas.0[1].set_dst_addr_byte((addr & 3) as usize, value),
+            // DMA1CNT
+            0xc4 => self.dmas.0[1].set_size_lo_bits(value),
+            0xc5 => self.dmas.0[1].set_size_hi_bits(value),
+            0xc6 => self.dmas.0[1].set_control_lo_bits(value),
+            0xc7 => self.dmas.0[1].set_control_hi_bits(value),
+            // DMA2SAD
+            0xc8..=0xcb => self.dmas.0[2].set_src_addr_byte((addr & 3) as usize, value),
+            // DMA2DAD
+            0xcc..=0xcf => self.dmas.0[2].set_dst_addr_byte((addr & 3) as usize, value),
+            // DMA2CNT
+            0xd0 => self.dmas.0[2].set_size_lo_bits(value),
+            0xd1 => self.dmas.0[2].set_size_hi_bits(value),
+            0xd2 => self.dmas.0[2].set_control_lo_bits(value),
+            0xd3 => self.dmas.0[2].set_control_hi_bits(value),
+            // DMA3SAD
+            0xd4..=0xd7 => self.dmas.0[3].set_src_addr_byte((addr & 3) as usize, value),
+            // DMA3DAD
+            0xd8..=0xdb => self.dmas.0[3].set_dst_addr_byte((addr & 3) as usize, value),
+            // DMA3CNT
+            0xdc => self.dmas.0[3].set_size_lo_bits(value),
+            0xdd => self.dmas.0[3].set_size_hi_bits(value),
+            0xde => self.dmas.0[3].set_control_lo_bits(value),
+            0xdf => self.dmas.0[3].set_control_hi_bits(value),
             // TM0CNT
             0x100..=0x103 => self.timers.0[0].set_byte((addr & 3) as usize, value),
             // TM1CNT
