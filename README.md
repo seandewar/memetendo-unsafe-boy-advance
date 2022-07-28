@@ -1,25 +1,23 @@
 # Memetendo Unsafe Boy Advance
 
-Nothing to see here yet; I'll be working on this in my spare time :)
+Unfinished; I'll be working on this in my spare time :)
 
 ## Status
 
-![3D Sage demo screenshot](media/3d-sage-demo.png)
-![tonc bigmap demo screenshot](media/tonc-bigmap.png)
-![tonc keypad demo screenshot](media/tonc-key-demo.png)
+![Doom 2 screenshot](media/doom2.png)
+![Pokemon FireRed screenshot](media/pokemon-firered.png)
+![OpenLara screenshot](media/openlara.png)
 
-Currently passes:
-- All of the pre-generated tests in
-  [FuzzARM](https://github.com/DenSinH/FuzzARM).
-- ARM, THUMB, PPU, memory and BIOS tests in
-  [gba-tests](https://github.com/jsmolka/gba-tests).
+It's able to play some games!
+
+As for tests, it currently passes:
+- [FuzzARM](https://github.com/DenSinH/FuzzARM).
+- Most [gba-tests](https://github.com/jsmolka/gba-tests).
+- Most [gba\_tests](https://github.com/destoer/gba_tests).
 - [ARMWrestler GBA](https://github.com/destoer/armwrestler-gba-fixed).
-- Hello world and invalid condition tests in
-  [gba\_tests](https://github.com/destoer/gba_tests).
-- Most tests from
-  [shonumi/Emu-Docs](https://github.com/shonumi/Emu-Docs/tree/master/GameBoy%20Advance/test_roms).
-- Some things from
-  [PeterLemon/GBA](https://github.com/PeterLemon/GBA).
+- Most tests in [shonumi/Emu-Docs](https://github.com/shonumi/Emu-Docs/tree/master/GameBoy%20Advance/test_roms).
+- Most things in [PeterLemon/GBA](https://github.com/PeterLemon/GBA).
+- ...and others!
 
 ## Tests
 
