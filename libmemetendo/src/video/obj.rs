@@ -321,14 +321,21 @@ impl Video {
                 }
             };
 
+            let color256 = attrs.palette_idx.is_none();
             let (tile_x, tile_y) = (obj_dot_x / TILE_DOT_LEN, obj_dot_y / TILE_DOT_LEN);
-            let dots_row_stride = usize::from(if self.dispcnt.obj_1d { tile_width } else { 32 });
-            let dots_idx = usize::from(attrs.dots_base_idx)
-                + usize::from(tile_y) * dots_row_stride
-                + usize::from(tile_x);
+            let dots_row_stride = if self.dispcnt.obj_1d {
+                usize::from(tile_width) * if color256 { 2 } else { 1 }
+            } else {
+                32 // 2D mapping always uses 32x32 tile maps
+            };
+            let dots_offset: usize = 0x1_0000
+                + 32 * (usize::from(attrs.dots_base_idx)
+                    + usize::from(tile_y) * dots_row_stride
+                    + usize::from(tile_x) * if color256 { 2 } else { 1 });
 
             let (dot_x, dot_y) = (obj_dot_x % TILE_DOT_LEN, obj_dot_y % TILE_DOT_LEN);
-            let dot_offset = 0x1_0000 + Self::dot_vram_offset(false, dots_idx, (dot_x, dot_y));
+            let dot_offset = dots_offset
+                + (8 * usize::from(dot_y) + usize::from(dot_x)) / if color256 { 1 } else { 2 };
             if dot_offset < self.dispcnt.obj_vram_offset() || dot_offset >= self.vram.len() {
                 continue; // Outside of obj VRAM
             }

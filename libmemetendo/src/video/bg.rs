@@ -140,8 +140,12 @@ impl Video {
 
             (usize::from(self.vram[dots_idx_offset]), None)
         };
+
+        let color256 = palette_idx.is_none();
+        let size_div = if color256 { 1 } else { 2 };
         let dot_offset = self.bgcnt[bg_idx].dots_vram_offset()
-            + Self::dot_vram_offset(palette_idx.is_none(), dots_idx, (dot_x, dot_y));
+            + (64 / size_div) * dots_idx
+            + (8 * usize::from(dot_y) + usize::from(dot_x)) / size_div;
 
         self.read_tile_dot_palette(palette_idx, dot_offset, dot_x)
             .map(|palette| DotInfo::TileMode {

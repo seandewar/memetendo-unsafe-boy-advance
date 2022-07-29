@@ -526,14 +526,6 @@ impl Video {
         (dot_x, dot_y)
     }
 
-    fn dot_vram_offset(color256: bool, dots_idx: usize, (dot_x, dot_y): (u8, u8)) -> usize {
-        let size_div = if color256 { 1 } else { 2 };
-        let tile_stride = 64 / size_div;
-        let base_offset = tile_stride * dots_idx;
-
-        base_offset + (8 * usize::from(dot_y) + usize::from(dot_x)) / size_div
-    }
-
     fn read_tile_dot_palette(
         &self,
         palette_idx: Option<u16>,
