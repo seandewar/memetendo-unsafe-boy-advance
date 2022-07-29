@@ -88,10 +88,10 @@ impl<'b, 'c> Gba<'b, 'c> {
         }
         if self.haltcnt.0 != State::Stopped {
             // TODO: actual cycle counting
-            self.video.step(screen, &mut self.irq, 2);
-            self.timers.step(&mut self.irq, 2);
+            self.video.step(screen, &mut self.irq, &mut self.dmas, 2);
+            self.timers.step(&mut self.irq, 3);
 
-            if let Some(do_transfer) = self.dmas.step(&mut self.irq, &self.video, 2) {
+            if let Some(do_transfer) = self.dmas.step(&mut self.irq, 2) {
                 do_transfer(&mut bus!(self));
             }
         }
@@ -174,17 +174,17 @@ impl Bus<'_, '_, '_> {
             0x52 => self.video.bldalpha.0 .0,
             0x53 => self.video.bldalpha.1 .0,
             // DMA0CNT
-            0xba => self.dmas.0[0].control_lo_bits(),
-            0xbb => self.dmas.0[0].control_hi_bits(),
+            0xba => self.dmas.reg[0].control_lo_bits(),
+            0xbb => self.dmas.reg[0].control_hi_bits(),
             // DMA1CNT
-            0xc6 => self.dmas.0[1].control_lo_bits(),
-            0xc7 => self.dmas.0[1].control_hi_bits(),
+            0xc6 => self.dmas.reg[1].control_lo_bits(),
+            0xc7 => self.dmas.reg[1].control_hi_bits(),
             // DMA2CNT
-            0xd2 => self.dmas.0[2].control_lo_bits(),
-            0xd3 => self.dmas.0[2].control_hi_bits(),
+            0xd2 => self.dmas.reg[2].control_lo_bits(),
+            0xd3 => self.dmas.reg[2].control_hi_bits(),
             // DMA3CNT
-            0xde => self.dmas.0[3].control_lo_bits(),
-            0xdf => self.dmas.0[3].control_hi_bits(),
+            0xde => self.dmas.reg[3].control_lo_bits(),
+            0xdf => self.dmas.reg[3].control_hi_bits(),
             // TM0CNT
             0x100..=0x103 => self.timers.0[0].byte((addr & 3) as usize),
             // TM1CNT
@@ -326,41 +326,41 @@ impl Bus<'_, '_, '_> {
             // BLDY
             0x54 => self.video.bldy.0 = value,
             // DMA0SAD
-            0xb0..=0xb3 => self.dmas.0[0].set_src_addr_byte((addr & 3) as usize, value),
+            0xb0..=0xb3 => self.dmas.reg[0].set_src_addr_byte((addr & 3) as usize, value),
             // DMA0DAD
-            0xb4..=0xb7 => self.dmas.0[0].set_dst_addr_byte((addr & 3) as usize, value),
+            0xb4..=0xb7 => self.dmas.reg[0].set_dst_addr_byte((addr & 3) as usize, value),
             // DMA0CNT
-            0xb8 => self.dmas.0[0].set_size_lo_bits(value),
-            0xb9 => self.dmas.0[0].set_size_hi_bits(value),
-            0xba => self.dmas.0[0].set_control_lo_bits(value),
-            0xbb => self.dmas.0[0].set_control_hi_bits(value),
+            0xb8 => self.dmas.reg[0].set_size_lo_bits(value),
+            0xb9 => self.dmas.reg[0].set_size_hi_bits(value),
+            0xba => self.dmas.reg[0].set_control_lo_bits(value),
+            0xbb => self.dmas.reg[0].set_control_hi_bits(value),
             // DMA1SAD
-            0xbc..=0xbf => self.dmas.0[1].set_src_addr_byte((addr & 3) as usize, value),
+            0xbc..=0xbf => self.dmas.reg[1].set_src_addr_byte((addr & 3) as usize, value),
             // DMA1DAD
-            0xc0..=0xc3 => self.dmas.0[1].set_dst_addr_byte((addr & 3) as usize, value),
+            0xc0..=0xc3 => self.dmas.reg[1].set_dst_addr_byte((addr & 3) as usize, value),
             // DMA1CNT
-            0xc4 => self.dmas.0[1].set_size_lo_bits(value),
-            0xc5 => self.dmas.0[1].set_size_hi_bits(value),
-            0xc6 => self.dmas.0[1].set_control_lo_bits(value),
-            0xc7 => self.dmas.0[1].set_control_hi_bits(value),
+            0xc4 => self.dmas.reg[1].set_size_lo_bits(value),
+            0xc5 => self.dmas.reg[1].set_size_hi_bits(value),
+            0xc6 => self.dmas.reg[1].set_control_lo_bits(value),
+            0xc7 => self.dmas.reg[1].set_control_hi_bits(value),
             // DMA2SAD
-            0xc8..=0xcb => self.dmas.0[2].set_src_addr_byte((addr & 3) as usize, value),
+            0xc8..=0xcb => self.dmas.reg[2].set_src_addr_byte((addr & 3) as usize, value),
             // DMA2DAD
-            0xcc..=0xcf => self.dmas.0[2].set_dst_addr_byte((addr & 3) as usize, value),
+            0xcc..=0xcf => self.dmas.reg[2].set_dst_addr_byte((addr & 3) as usize, value),
             // DMA2CNT
-            0xd0 => self.dmas.0[2].set_size_lo_bits(value),
-            0xd1 => self.dmas.0[2].set_size_hi_bits(value),
-            0xd2 => self.dmas.0[2].set_control_lo_bits(value),
-            0xd3 => self.dmas.0[2].set_control_hi_bits(value),
+            0xd0 => self.dmas.reg[2].set_size_lo_bits(value),
+            0xd1 => self.dmas.reg[2].set_size_hi_bits(value),
+            0xd2 => self.dmas.reg[2].set_control_lo_bits(value),
+            0xd3 => self.dmas.reg[2].set_control_hi_bits(value),
             // DMA3SAD
-            0xd4..=0xd7 => self.dmas.0[3].set_src_addr_byte((addr & 3) as usize, value),
+            0xd4..=0xd7 => self.dmas.reg[3].set_src_addr_byte((addr & 3) as usize, value),
             // DMA3DAD
-            0xd8..=0xdb => self.dmas.0[3].set_dst_addr_byte((addr & 3) as usize, value),
+            0xd8..=0xdb => self.dmas.reg[3].set_dst_addr_byte((addr & 3) as usize, value),
             // DMA3CNT
-            0xdc => self.dmas.0[3].set_size_lo_bits(value),
-            0xdd => self.dmas.0[3].set_size_hi_bits(value),
-            0xde => self.dmas.0[3].set_control_lo_bits(value),
-            0xdf => self.dmas.0[3].set_control_hi_bits(value),
+            0xdc => self.dmas.reg[3].set_size_lo_bits(value),
+            0xdd => self.dmas.reg[3].set_size_hi_bits(value),
+            0xde => self.dmas.reg[3].set_control_lo_bits(value),
+            0xdf => self.dmas.reg[3].set_control_hi_bits(value),
             // TM0CNT
             0x100..=0x103 => self.timers.0[0].set_byte((addr & 3) as usize, value),
             // TM1CNT

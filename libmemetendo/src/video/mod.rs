@@ -8,6 +8,7 @@ use tinyvec::{array_vec, ArrayVec};
 
 use crate::{
     bus::Bus,
+    dma::{self, Dmas},
     irq::{Interrupt, Irq},
     video::reg::Mode,
 };
@@ -140,7 +141,7 @@ impl Video {
     }
 
     #[allow(clippy::similar_names)]
-    pub fn step(&mut self, screen: &mut impl Screen, irq: &mut Irq, cycles: u32) {
+    pub fn step(&mut self, screen: &mut impl Screen, irq: &mut Irq, dmas: &mut Dmas, cycles: u32) {
         self.cycle_accum += cycles;
         while self.cycle_accum >= 4 {
             self.cycle_accum -= 4;
@@ -154,6 +155,9 @@ impl Video {
             if self.x == HBLANK_DOT.into() {
                 if self.dispstat.hblank_irq_enabled {
                     irq.request(Interrupt::HBlank);
+                }
+                if self.y < VBLANK_DOT {
+                    dmas.notify(dma::Event::HBlank);
                 }
 
                 if self.y < VBLANK_DOT - 1 {
@@ -175,6 +179,7 @@ impl Video {
                     if self.dispstat.vblank_irq_enabled {
                         irq.request(Interrupt::VBlank);
                     }
+                    dmas.notify(dma::Event::VBlank);
 
                     for bg_ref in &mut self.bgref {
                         bg_ref.internal = bg_ref.external();
@@ -218,11 +223,6 @@ impl Video {
             self.x >= HBLANK_DOT.into(),
             self.y,
         )
-    }
-
-    #[must_use]
-    pub fn hcount(&self) -> u16 {
-        self.x
     }
 
     #[must_use]
@@ -538,7 +538,7 @@ impl Video {
             u32::from(self.vram[dot_offset])
         };
 
-        (palette_color_idx != 0).then(|| DotPaletteInfo {
+        (palette_color_idx != 0).then_some(DotPaletteInfo {
             idx: palette_idx,
             color_idx: palette_color_idx,
         })

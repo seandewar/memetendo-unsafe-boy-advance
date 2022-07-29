@@ -3,13 +3,14 @@ pub mod reg;
 
 use std::mem::take;
 
-use strum_macros::{EnumIter, FromRepr};
+use strum::EnumCount;
+use strum_macros::{EnumCount, EnumIter, FromRepr};
 
 use crate::bus::Bus;
 
 use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX, SP_INDEX};
 
-#[derive(Copy, Clone, PartialEq, Eq, FromRepr, EnumIter, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, FromRepr, EnumIter, EnumCount, Debug)]
 pub enum Exception {
     Reset,
     DataAbort,
@@ -80,7 +81,7 @@ impl Exception {
 pub struct Cpu {
     pub reg: Registers,
     pipeline_instrs: [u32; 2],
-    pending_exceptions: [bool; 7],
+    pending_exceptions: [bool; Exception::COUNT],
 }
 
 impl Cpu {
