@@ -474,7 +474,7 @@ impl Video {
             }
         }
 
-        if self.dispcnt.display_obj_window && self.check_dot_inside_obj_window() {
+        if self.dispcnt.display_obj_window && self.check_inside_obj_window() {
             Window::Object
         } else {
             Window::Outside

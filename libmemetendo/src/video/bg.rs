@@ -142,10 +142,12 @@ impl Video {
         };
 
         let color256 = palette_idx.is_none();
-        let size_div = if color256 { 1 } else { 2 };
         let dot_offset = self.bgcnt[bg_idx].dots_vram_offset()
-            + (64 / size_div) * dots_idx
-            + (8 * usize::from(dot_y) + usize::from(dot_x)) / size_div;
+            + if color256 { 64 } else { 32 } * dots_idx
+            + (8 * usize::from(dot_y) + usize::from(dot_x)) / if color256 { 1 } else { 2 };
+        if dot_offset >= self.vram.len() {
+            return None;
+        }
 
         self.read_tile_dot_palette(palette_idx, dot_offset, dot_x)
             .map(|palette| DotInfo::TileMode {

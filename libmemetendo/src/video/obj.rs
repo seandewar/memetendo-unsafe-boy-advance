@@ -203,12 +203,12 @@ impl Bus for Oam {
 }
 
 impl Oam {
-    fn read_attributes(&mut self, idx: u8) -> Attributes {
+    fn read_attributes(&self, idx: u8) -> Attributes {
         let offset = u32::from(idx) * OAM_ENTRY_STRIDE;
         let attrs = [
-            self.buf.read_hword(offset),
-            self.buf.read_hword(offset + 2),
-            self.buf.read_hword(offset + 4),
+            self.buf.as_ref().read_hword(offset),
+            self.buf.as_ref().read_hword(offset + 2),
+            self.buf.as_ref().read_hword(offset + 4),
         ];
 
         let affine = if attrs[0].bit(8) {
@@ -263,7 +263,7 @@ pub(super) struct DotInfo {
 }
 
 impl Video {
-    fn dot_region_attrs_iter(&self) -> impl Iterator<Item = &Attributes> + '_ {
+    fn region_attrs_iter(&self) -> impl Iterator<Item = &Attributes> + '_ {
         let region_idx = Oam::region_index(Oam::region_pos((self.x, self.y.into())));
 
         self.oam.regions[region_idx]
@@ -271,10 +271,10 @@ impl Video {
             .map(|i| &self.oam.attrs[usize::from(i)])
     }
 
-    pub(super) fn check_dot_inside_obj_window(&self) -> bool {
+    pub(super) fn check_inside_obj_window(&self) -> bool {
         self.dispcnt.display_obj
             && self
-                .dot_region_attrs_iter()
+                .region_attrs_iter()
                 .filter(|&attrs| attrs.mode == Some(Mode::WindowMask))
                 .find_map(|attrs| self.compute_obj_dot(attrs))
                 .is_some()
@@ -285,7 +285,7 @@ impl Video {
             return None;
         }
 
-        self.dot_region_attrs_iter()
+        self.region_attrs_iter()
             .filter(|&attrs| attrs.mode.map_or(false, |mode| mode != Mode::WindowMask))
             .find_map(|attrs| self.compute_obj_dot(attrs))
     }
@@ -340,8 +340,8 @@ impl Video {
             }
         };
 
-        let color256 = attrs.palette_idx.is_none();
         let (tile_x, tile_y) = (obj_dot_x / TILE_DOT_LEN, obj_dot_y / TILE_DOT_LEN);
+        let color256 = attrs.palette_idx.is_none();
         let dots_row_stride = if self.dispcnt.obj_1d {
             usize::from(tile_width) * if color256 { 2 } else { 1 }
         } else {
