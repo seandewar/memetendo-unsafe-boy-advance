@@ -1,8 +1,4 @@
-use std::mem::take;
-
 use intbits::Bits;
-use strum::EnumCount;
-use strum_macros::EnumCount;
 
 use crate::{
     bus::Bus,
@@ -104,7 +100,6 @@ impl Registers {
 #[derive(Debug, Default)]
 pub struct Dmas {
     pub reg: [Registers; 4],
-    pending_events: [bool; Event::COUNT],
 }
 
 impl Dmas {
@@ -113,33 +108,36 @@ impl Dmas {
         Self::default()
     }
 
+    fn start_transfer(&mut self, dma_idx: usize) {
+        let dma = &mut self.reg[dma_idx];
+        if !dma.enabled || dma.transferring {
+            return;
+        }
+
+        dma.transferring = true;
+        if dma.rem_blocks == 0 {
+            dma.rem_blocks = if dma_idx == 3 { 0x1_0000 } else { 0x4000 };
+        }
+    }
+
     #[must_use]
     pub fn step<B: Bus>(&mut self, irq: &mut Irq, cycles: u32) -> Option<impl Fn(&mut B)> {
-        // TODO: use cycles and transfer more than 1 block, cart DRQ, special timing modes
-        let mut transfer_fn = None;
-        for (i, dma) in self.reg.iter_mut().enumerate() {
-            if !dma.enabled {
+        // TODO: max limit normal values of init_blocks, use cycles and transfer more than 1 block,
+        //       cart DRQ, special timing modes
+        for i in 0..self.reg.len() {
+            if !self.reg[i].enabled {
                 continue;
             }
-            if !dma.transferring {
-                let start_transfer = match dma.timing_mode {
-                    0 => true,
-                    1 => self.pending_events[Event::VBlank as usize],
-                    2 => self.pending_events[Event::HBlank as usize],
-                    // Special: DMA0: Prohibited, DMA1/2: Sound FIFO, DMA3: Video Capture
-                    3 => false, // TODO
-                    _ => unreachable!(),
-                };
-                if !start_transfer {
-                    continue;
-                }
 
-                dma.transferring = true;
-                if dma.rem_blocks == 0 {
-                    dma.rem_blocks = if i == 3 { 0x1_0000 } else { 0x4000 };
+            if !self.reg[i].transferring {
+                if self.reg[i].timing_mode == 0 {
+                    self.start_transfer(i);
+                } else {
+                    continue;
                 }
             }
 
+            let dma = &mut self.reg[i];
             let addr_bits = if i == 0 { 27 } else { 28 };
             let transfer_src_addr = dma.curr_src_addr.bits(..addr_bits);
             let transfer_dst_addr = dma.curr_dst_addr.bits(..addr_bits);
@@ -179,7 +177,7 @@ impl Dmas {
                 }
             }
 
-            transfer_fn = Some(move |bus: &mut B| {
+            return Some(move |bus: &mut B| {
                 if transfer_word {
                     let value = bus.read_word(transfer_src_addr);
                     bus.write_word(transfer_dst_addr, value);
@@ -188,12 +186,9 @@ impl Dmas {
                     bus.write_hword(transfer_dst_addr, value);
                 }
             });
-            break;
         }
 
-        take(&mut self.pending_events);
-
-        transfer_fn
+        None
     }
 
     #[must_use]
@@ -202,7 +197,7 @@ impl Dmas {
     }
 }
 
-#[derive(Debug, EnumCount)]
+#[derive(Debug, Copy, Clone)]
 pub enum Event {
     VBlank,
     HBlank,
@@ -210,6 +205,15 @@ pub enum Event {
 
 impl Dmas {
     pub fn notify(&mut self, event: Event) {
-        self.pending_events[event as usize] = true;
+        let event_timing_mode = match event {
+            Event::VBlank => 1,
+            Event::HBlank => 2,
+        };
+
+        for i in 0..self.reg.len() {
+            if self.reg[i].timing_mode == event_timing_mode {
+                self.start_transfer(i);
+            }
+        }
     }
 }
