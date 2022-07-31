@@ -113,6 +113,7 @@ impl Dmas {
         Self::default()
     }
 
+    #[must_use]
     pub fn step<B: Bus>(&mut self, irq: &mut Irq, cycles: u32) -> Option<impl Fn(&mut B)> {
         // TODO: use cycles and transfer more than 1 block, cart DRQ, special timing modes
         let mut transfer_fn = None;

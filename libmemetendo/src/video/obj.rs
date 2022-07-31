@@ -263,99 +263,113 @@ pub(super) struct DotInfo {
 }
 
 impl Video {
-    pub(super) fn compute_top_obj_dot(&mut self, win: Window) -> Option<DotInfo> {
+    fn dot_region_attrs_iter(&self) -> impl Iterator<Item = &Attributes> + '_ {
+        let region_idx = Oam::region_index(Oam::region_pos((self.x, self.y.into())));
+
+        self.oam.regions[region_idx]
+            .into_iter()
+            .map(|i| &self.oam.attrs[usize::from(i)])
+    }
+
+    pub(super) fn check_dot_inside_obj_window(&self) -> bool {
+        self.dispcnt.display_obj
+            && self
+                .dot_region_attrs_iter()
+                .filter(|&attrs| attrs.mode == Some(Mode::WindowMask))
+                .find_map(|attrs| self.compute_obj_dot(attrs))
+                .is_some()
+    }
+
+    pub(super) fn compute_top_obj_dot(&self, win: Window) -> Option<DotInfo> {
         if !self.dispcnt.display_obj || self.window_control(win).map_or(false, |w| !w.display_obj) {
             return None;
         }
 
-        let region_idx = Oam::region_index(Oam::region_pos((self.x, self.y.into())));
-        for i in self.oam.regions[region_idx] {
-            let attrs = self.oam.attrs[usize::from(i)];
-            let (tile_width, tile_height) = attrs.tiles_size();
-            let (obj_width, obj_height) = (tile_width * TILE_DOT_LEN, tile_height * TILE_DOT_LEN);
+        self.dot_region_attrs_iter()
+            .filter(|&attrs| attrs.mode.map_or(false, |mode| mode != Mode::WindowMask))
+            .find_map(|attrs| self.compute_obj_dot(attrs))
+    }
 
-            #[allow(clippy::cast_possible_wrap)]
-            let (x, y) = (self.x as i16, i16::from(self.y));
-            let (obj_x, obj_y) = attrs.pos;
-            let (clip_width, clip_height) = attrs.clip_dots_size();
-            if x < obj_x
-                || x >= obj_x + i16::from(clip_width)
-                || y < obj_y
-                || y >= obj_y + i16::from(clip_height)
-            {
-                continue; // Clipped
-            }
+    fn compute_obj_dot(&self, attrs: &Attributes) -> Option<DotInfo> {
+        let (tile_width, tile_height) = attrs.tiles_size();
+        let (obj_width, obj_height) = (tile_width * TILE_DOT_LEN, tile_height * TILE_DOT_LEN);
 
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let (mut obj_dot_x, mut obj_dot_y) = ((x - obj_x) as u8, (y - obj_y) as u8);
-            (obj_dot_x, obj_dot_y) = match attrs.affine {
-                AffineAttribute::Enabled {
-                    double_size,
-                    params_idx,
-                } => {
-                    let (mut obj_dot_x, mut obj_dot_y) =
-                        (i32::from(obj_dot_x), i32::from(obj_dot_y));
-                    if double_size {
-                        obj_dot_x -= i32::from(obj_width / 2);
-                        obj_dot_y -= i32::from(obj_height / 2);
-                    }
-
-                    (obj_dot_x, obj_dot_y) = self.obj_affine_transform_pos(
-                        params_idx.into(),
-                        (tile_width, tile_height),
-                        (obj_dot_x, obj_dot_y),
-                    );
-                    if obj_dot_x < 0
-                        || obj_dot_x >= i32::from(obj_width)
-                        || obj_dot_y < 0
-                        || obj_dot_y >= i32::from(obj_height)
-                    {
-                        continue; // Out of sprite bounds
-                    }
-
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    (obj_dot_x as u8, obj_dot_y as u8)
-                }
-                AffineAttribute::Disabled { flip, .. } => {
-                    Self::flip_tile_dot_pos(flip, (tile_width, tile_height), (obj_dot_x, obj_dot_y))
-                }
-            };
-
-            let color256 = attrs.palette_idx.is_none();
-            let (tile_x, tile_y) = (obj_dot_x / TILE_DOT_LEN, obj_dot_y / TILE_DOT_LEN);
-            let dots_row_stride = if self.dispcnt.obj_1d {
-                usize::from(tile_width) * if color256 { 2 } else { 1 }
-            } else {
-                32 // 2D mapping always uses 32x32 tile maps
-            };
-            let dots_offset: usize = 0x1_0000
-                + 32 * (usize::from(attrs.dots_base_idx)
-                    + usize::from(tile_y) * dots_row_stride
-                    + usize::from(tile_x) * if color256 { 2 } else { 1 });
-
-            let (dot_x, dot_y) = (obj_dot_x % TILE_DOT_LEN, obj_dot_y % TILE_DOT_LEN);
-            let dot_offset = dots_offset
-                + (8 * usize::from(dot_y) + usize::from(dot_x)) / if color256 { 1 } else { 2 };
-            if dot_offset < self.dispcnt.obj_vram_offset() || dot_offset >= self.vram.len() {
-                continue; // Outside of obj VRAM
-            }
-
-            if let Some(palette) = self.read_tile_dot_palette(attrs.palette_idx, dot_offset, dot_x)
-            {
-                return Some(DotInfo {
-                    mode: attrs.mode.unwrap(),
-                    priority_over_bg: attrs.priority_over_bg,
-                    palette,
-                });
-            }
+        #[allow(clippy::cast_possible_wrap)]
+        let (x, y) = (self.x as i16, i16::from(self.y));
+        let (obj_x, obj_y) = attrs.pos;
+        let (clip_width, clip_height) = attrs.clip_dots_size();
+        if x < obj_x
+            || x >= obj_x + i16::from(clip_width)
+            || y < obj_y
+            || y >= obj_y + i16::from(clip_height)
+        {
+            return None; // Clipped
         }
 
-        None
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let (mut obj_dot_x, mut obj_dot_y) = ((x - obj_x) as u8, (y - obj_y) as u8);
+        (obj_dot_x, obj_dot_y) = match attrs.affine {
+            AffineAttribute::Enabled {
+                double_size,
+                params_idx,
+            } => {
+                let (mut obj_dot_x, mut obj_dot_y) = (i32::from(obj_dot_x), i32::from(obj_dot_y));
+                if double_size {
+                    obj_dot_x -= i32::from(obj_width / 2);
+                    obj_dot_y -= i32::from(obj_height / 2);
+                }
+
+                (obj_dot_x, obj_dot_y) = self.obj_affine_transform_pos(
+                    params_idx.into(),
+                    (tile_width, tile_height),
+                    (obj_dot_x, obj_dot_y),
+                );
+                if obj_dot_x < 0
+                    || obj_dot_x >= i32::from(obj_width)
+                    || obj_dot_y < 0
+                    || obj_dot_y >= i32::from(obj_height)
+                {
+                    return None; // Out of sprite bounds
+                }
+
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                (obj_dot_x as u8, obj_dot_y as u8)
+            }
+            AffineAttribute::Disabled { flip, .. } => {
+                Self::flip_tile_dot_pos(flip, (tile_width, tile_height), (obj_dot_x, obj_dot_y))
+            }
+        };
+
+        let color256 = attrs.palette_idx.is_none();
+        let (tile_x, tile_y) = (obj_dot_x / TILE_DOT_LEN, obj_dot_y / TILE_DOT_LEN);
+        let dots_row_stride = if self.dispcnt.obj_1d {
+            usize::from(tile_width) * if color256 { 2 } else { 1 }
+        } else {
+            32 // 2D mapping always uses 32x32 tile maps
+        };
+        let dots_offset = 0x1_0000
+            + 32 * (usize::from(attrs.dots_base_idx)
+                + usize::from(tile_y) * dots_row_stride
+                + usize::from(tile_x) * if color256 { 2 } else { 1 });
+
+        let (dot_x, dot_y) = (obj_dot_x % TILE_DOT_LEN, obj_dot_y % TILE_DOT_LEN);
+        let dot_offset = dots_offset
+            + (8 * usize::from(dot_y) + usize::from(dot_x)) / if color256 { 1 } else { 2 };
+        if dot_offset < self.dispcnt.obj_vram_offset() || dot_offset >= self.vram.len() {
+            return None; // Outside of obj VRAM
+        }
+
+        self.read_tile_dot_palette(attrs.palette_idx, dot_offset, dot_x)
+            .map(|palette| DotInfo {
+                mode: attrs.mode.unwrap(),
+                priority_over_bg: attrs.priority_over_bg,
+                palette,
+            })
     }
 
     #[allow(clippy::similar_names)]
     fn obj_affine_transform_pos(
-        &mut self,
+        &self,
         params_idx: u32,
         (tile_width, tile_height): (u8, u8),
         (dot_x, dot_y): (i32, i32),
@@ -363,10 +377,10 @@ impl Video {
         let params_offset = 6 + 32 * params_idx;
         #[allow(clippy::cast_possible_wrap)]
         let (dx, dmx, dy, dmy) = (
-            i32::from(self.oam.read_hword(params_offset) as i16),
-            i32::from(self.oam.read_hword(params_offset + 8) as i16),
-            i32::from(self.oam.read_hword(params_offset + 16) as i16),
-            i32::from(self.oam.read_hword(params_offset + 24) as i16),
+            i32::from(self.oam.buf.as_ref().read_hword(params_offset) as i16),
+            i32::from(self.oam.buf.as_ref().read_hword(params_offset + 8) as i16),
+            i32::from(self.oam.buf.as_ref().read_hword(params_offset + 16) as i16),
+            i32::from(self.oam.buf.as_ref().read_hword(params_offset + 24) as i16),
         );
         let (half_dot_width, half_dot_height) = (
             i32::from(tile_width * TILE_DOT_LEN / 2),

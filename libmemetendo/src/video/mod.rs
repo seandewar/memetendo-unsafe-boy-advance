@@ -428,6 +428,7 @@ enum Window {
     None,
     Inside0,
     Inside1,
+    Object,
     Outside,
 }
 
@@ -437,6 +438,7 @@ impl Video {
             Window::None => None,
             Window::Inside0 => Some(&self.winin[0]),
             Window::Inside1 => Some(&self.winin[1]),
+            Window::Object => Some(&self.winobj),
             Window::Outside => Some(&self.winout),
         }
     }
@@ -446,7 +448,6 @@ impl Video {
             return Window::None;
         }
 
-        // TODO: obj window
         for win_idx in 0..2 {
             if !self.dispcnt.display_bg_window[win_idx] {
                 continue;
@@ -473,7 +474,11 @@ impl Video {
             }
         }
 
-        Window::Outside
+        if self.dispcnt.display_obj_window && self.check_dot_inside_obj_window() {
+            Window::Object
+        } else {
+            Window::Outside
+        }
     }
 }
 
