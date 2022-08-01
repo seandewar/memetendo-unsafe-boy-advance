@@ -3,7 +3,7 @@ use intbits::Bits;
 use crate::{
     arm7tdmi::Cpu,
     bus,
-    dma::Dmas,
+    dma::Dma,
     irq::Irq,
     keypad::Keypad,
     rom::{Bios, Cartridge},
@@ -52,7 +52,7 @@ pub struct Gba<'b, 'c> {
     pub irq: Irq,
     pub haltcnt: HaltControl,
     pub timers: Timers,
-    pub dmas: Dmas,
+    pub dma: Dma,
     pub iwram: Box<[u8]>,
     pub ewram: Box<[u8]>,
     pub video: Video,
@@ -70,7 +70,7 @@ impl<'b, 'c> Gba<'b, 'c> {
             irq: Irq::new(),
             haltcnt: HaltControl::new(),
             timers: Timers::new(),
-            dmas: Dmas::new(),
+            dma: Dma::new(),
             iwram: vec![0; 0x8000].into_boxed_slice(),
             ewram: vec![0; 0x40000].into_boxed_slice(),
             video: Video::new(),
@@ -94,15 +94,15 @@ impl<'b, 'c> Gba<'b, 'c> {
     pub fn step(&mut self, screen: &mut impl Screen) {
         self.keypad.step(&mut self.irq);
 
-        if self.haltcnt.0 == State::Running && !self.dmas.transfer_in_progress() {
+        if self.haltcnt.0 == State::Running && !self.dma.transfer_in_progress() {
             self.cpu.step(&mut bus!(self));
         }
         if self.haltcnt.0 != State::Stopped {
             // TODO: actual cycle counting
-            self.video.step(screen, &mut self.irq, &mut self.dmas, 2);
-            self.timers.step(&mut self.irq, 3);
+            self.video.step(screen, &mut self.irq, &mut self.dma, 2);
+            self.timers.step(&mut self.irq, 2);
 
-            if let Some(do_transfer) = self.dmas.step(&mut self.irq, 2) {
+            if let Some(do_transfer) = self.dma.step(&mut self.irq, 2) {
                 do_transfer(&mut bus!(self));
             }
         }
@@ -115,7 +115,7 @@ pub struct Bus<'a, 'b, 'c> {
     pub irq: &'a mut Irq,
     pub haltcnt: &'a mut HaltControl,
     pub timers: &'a mut Timers,
-    pub dmas: &'a mut Dmas,
+    pub dma: &'a mut Dma,
     pub iwram: &'a mut [u8],
     pub ewram: &'a mut [u8],
     pub video: &'a mut Video,
@@ -134,7 +134,7 @@ macro_rules! bus {
             irq: &mut $gba.irq,
             haltcnt: &mut $gba.haltcnt,
             timers: &mut $gba.timers,
-            dmas: &mut $gba.dmas,
+            dma: &mut $gba.dma,
             iwram: &mut $gba.iwram,
             ewram: &mut $gba.ewram,
             video: &mut $gba.video,
@@ -160,7 +160,7 @@ impl bus::Bus for Bus<'_, '_, '_> {
                 let addr = addr & 0x3ff;
                 match addr {
                     0x000..=0x056 => self.video.read_byte(addr),
-                    0x0b0..=0x0df => self.dmas.read_byte(addr),
+                    0x0b0..=0x0df => self.dma.read_byte(addr),
                     0x100..=0x10f => self.timers.read_byte(addr),
                     0x130..=0x133 => self.keypad.read_byte(addr),
                     0x200..=0x203 | 0x208..=0x20b => self.irq.read_byte(addr),
@@ -197,7 +197,7 @@ impl bus::Bus for Bus<'_, '_, '_> {
                 let addr = addr & 0x3ff;
                 match addr {
                     0x000..=0x056 => self.video.write_byte(addr, value),
-                    0x0b0..=0x0df => self.dmas.write_byte(addr, value),
+                    0x0b0..=0x0df => self.dma.write_byte(addr, value),
                     0x100..=0x10f => self.timers.write_byte(addr, value),
                     0x130..=0x133 => self.keypad.write_byte(addr, value),
                     0x200..=0x203 | 0x208..=0x20b => self.irq.write_byte(addr, value),

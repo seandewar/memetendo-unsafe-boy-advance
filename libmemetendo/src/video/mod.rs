@@ -8,7 +8,7 @@ use tinyvec::{array_vec, ArrayVec};
 
 use crate::{
     bus::Bus,
-    dma::{self, Dmas},
+    dma::{self, Dma},
     irq::{Interrupt, Irq},
     video::reg::Mode,
 };
@@ -82,7 +82,7 @@ impl Bus for Vram<'_> {
 pub struct Video {
     x: u16,
     y: u8,
-    cycle_accum: u32,
+    cycle_accum: u16,
     tile_mode_bg_order: ArrayVec<[usize; 4]>,
     frame_buf: FrameBuffer,
 
@@ -152,8 +152,8 @@ impl Video {
     }
 
     #[allow(clippy::similar_names)]
-    pub fn step(&mut self, screen: &mut impl Screen, irq: &mut Irq, dmas: &mut Dmas, cycles: u32) {
-        self.cycle_accum += cycles;
+    pub fn step(&mut self, screen: &mut impl Screen, irq: &mut Irq, dma: &mut Dma, cycles: u8) {
+        self.cycle_accum += u16::from(cycles);
         while self.cycle_accum >= 4 {
             self.cycle_accum -= 4;
             if self.x < HBLANK_DOT.into() && self.y < VBLANK_DOT {
@@ -168,7 +168,7 @@ impl Video {
                     irq.request(Interrupt::HBlank);
                 }
                 if self.y < VBLANK_DOT {
-                    dmas.notify(dma::Event::HBlank);
+                    dma.notify(dma::Event::HBlank);
                 }
 
                 if self.y < VBLANK_DOT - 1 {
@@ -190,7 +190,7 @@ impl Video {
                     if self.dispstat.vblank_irq_enabled {
                         irq.request(Interrupt::VBlank);
                     }
-                    dmas.notify(dma::Event::VBlank);
+                    dma.notify(dma::Event::VBlank);
 
                     for bg_ref in &mut self.bgref {
                         bg_ref.internal = bg_ref.external();
@@ -291,7 +291,7 @@ impl Video {
         );
         let is_target = |top_dot_idx: usize| {
             let targeted = match top_infos[top_dot_idx] {
-                DotInfo::Object(_) => self.bldcnt.obj_target[top_dot_idx],
+                DotInfo::Object(_) => self.bldcnt.obj_target[top_dot_idx] || obj_alpha_mode,
                 DotInfo::Background(bg) => self.bldcnt.bg_target[top_dot_idx][bg.index()],
                 DotInfo::Backdrop => self.bldcnt.backdrop_target[top_dot_idx],
             };

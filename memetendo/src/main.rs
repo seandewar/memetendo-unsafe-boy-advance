@@ -116,17 +116,31 @@ impl Screen for SdlScreen<'_> {
 }
 
 fn update_keypad(gba: &mut Gba, kb: &KeyboardState) {
-    gba.keypad.pressed[Key::A] = kb.is_scancode_pressed(Scancode::X);
-    gba.keypad.pressed[Key::B] = kb.is_scancode_pressed(Scancode::Z);
-    gba.keypad.pressed[Key::Select] =
-        kb.is_scancode_pressed(Scancode::LShift) || kb.is_scancode_pressed(Scancode::RShift);
-    gba.keypad.pressed[Key::Start] = kb.is_scancode_pressed(Scancode::Return);
-    gba.keypad.pressed[Key::Up] = kb.is_scancode_pressed(Scancode::Up);
-    gba.keypad.pressed[Key::Down] = kb.is_scancode_pressed(Scancode::Down);
-    gba.keypad.pressed[Key::Left] = kb.is_scancode_pressed(Scancode::Left);
-    gba.keypad.pressed[Key::Right] = kb.is_scancode_pressed(Scancode::Right);
-    gba.keypad.pressed[Key::L] = kb.is_scancode_pressed(Scancode::A);
-    gba.keypad.pressed[Key::R] = kb.is_scancode_pressed(Scancode::S);
+    gba.keypad
+        .set_pressed(Key::A, kb.is_scancode_pressed(Scancode::X));
+    gba.keypad
+        .set_pressed(Key::B, kb.is_scancode_pressed(Scancode::Z));
+
+    gba.keypad.set_pressed(
+        Key::Select,
+        kb.is_scancode_pressed(Scancode::LShift) || kb.is_scancode_pressed(Scancode::RShift),
+    );
+    gba.keypad
+        .set_pressed(Key::Start, kb.is_scancode_pressed(Scancode::Return));
+
+    gba.keypad
+        .set_pressed(Key::Up, kb.is_scancode_pressed(Scancode::Up));
+    gba.keypad
+        .set_pressed(Key::Down, kb.is_scancode_pressed(Scancode::Down));
+    gba.keypad
+        .set_pressed(Key::Left, kb.is_scancode_pressed(Scancode::Left));
+    gba.keypad
+        .set_pressed(Key::Right, kb.is_scancode_pressed(Scancode::Right));
+
+    gba.keypad
+        .set_pressed(Key::L, kb.is_scancode_pressed(Scancode::A));
+    gba.keypad
+        .set_pressed(Key::R, kb.is_scancode_pressed(Scancode::S));
 }
 
 fn main() -> Result<()> {

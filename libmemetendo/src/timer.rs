@@ -1,4 +1,4 @@
-use std::mem::take;
+use std::mem::{replace, take};
 
 use intbits::Bits;
 
@@ -8,69 +8,58 @@ use crate::{
 };
 
 #[derive(Debug, Default)]
-pub(super) struct Register {
+struct Control {
     accum: u32,
-    pub initial: u16,
+    initial: u16,
     counter: u16,
     frequency: u8,
-    pub cascade: bool,
-    pub irq_enabled: bool,
-    pub start: bool,
-    bits: u16,
+    cascade: bool,
+    irq_enabled: bool,
+    start: bool,
+    cached_bits: u16,
 }
 
-impl Register {
-    /// # Panics
-    ///
-    /// Panics if the given byte index is out of bounds (> 3).
-    pub fn set_byte(&mut self, idx: usize, value: u8) {
-        match idx {
-            0 => self.initial.set_bits(..8, value.into()),
-            1 => self.initial.set_bits(8.., value.into()),
-            2 => {
-                self.frequency = value.bits(..2);
-                self.cascade = value.bit(2);
-                self.irq_enabled = value.bit(6);
+impl Bus for Timers {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        assert!((0x100..0x110).contains(&addr), "IO register address OOB");
 
-                let old_start = self.start;
-                self.start = value.bit(7);
-                if !old_start && self.start {
-                    self.counter = self.initial;
-                }
-
-                self.bits.set_bits(..8, value.into());
-            }
-            3 => self.bits.set_bits(8.., value.into()),
-            _ => panic!("byte index out of bounds"),
+        let tmcnt = &mut self.0[(addr as usize & 0xf) / 4];
+        #[allow(clippy::cast_possible_truncation)]
+        match addr as usize & 3 {
+            0 => tmcnt.counter as u8,
+            1 => tmcnt.counter.bits(8..) as u8,
+            2 => tmcnt.cached_bits as u8,
+            3 => tmcnt.cached_bits.bits(8..) as u8,
+            _ => unreachable!(),
         }
     }
 
-    /// # Panics
-    ///
-    /// Panics if the given byte index is out of bounds (> 3).
-    #[must_use]
-    pub fn byte(&self, idx: usize) -> u8 {
-        #[allow(clippy::cast_possible_truncation)]
-        match idx {
-            0 => self.counter as u8,
-            1 => self.counter.bits(8..) as u8,
-            2 => {
-                let mut bits = self.bits as u8;
-                bits.set_bits(..2, self.frequency);
-                bits.set_bit(2, self.cascade);
-                bits.set_bit(6, self.irq_enabled);
-                bits.set_bit(7, self.start);
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        assert!((0x100..0x110).contains(&addr), "IO register address OOB");
 
-                bits
+        let tmcnt = &mut self.0[(addr as usize & 0xf) / 4];
+        match addr as usize & 3 {
+            0 => tmcnt.initial.set_bits(..8, value.into()),
+            1 => tmcnt.initial.set_bits(8.., value.into()),
+            2 => {
+                tmcnt.cached_bits.set_bits(..8, value.into());
+                tmcnt.frequency = value.bits(..2);
+                tmcnt.cascade = value.bit(2);
+                tmcnt.irq_enabled = value.bit(6);
+
+                let old_start = replace(&mut tmcnt.start, value.bit(7));
+                if !old_start && tmcnt.start {
+                    tmcnt.counter = tmcnt.initial;
+                }
             }
-            3 => self.bits.bits(8..) as u8,
-            _ => panic!("byte index out of bounds"),
-        }
+            3 => tmcnt.cached_bits.set_bits(8.., value.into()),
+            _ => unreachable!(),
+        };
     }
 }
 
 #[derive(Debug, Default)]
-pub struct Timers([Register; 4]);
+pub struct Timers([Control; 4]);
 
 impl Timers {
     #[must_use]
@@ -78,7 +67,7 @@ impl Timers {
         Self::default()
     }
 
-    pub fn step(&mut self, irq: &mut Irq, cycles: u32) {
+    pub fn step(&mut self, irq: &mut Irq, cycles: u8) {
         let mut prev_counter_overflowed = false;
         for (i, timer) in self.0.iter_mut().enumerate() {
             {
@@ -98,19 +87,16 @@ impl Timers {
                     3 => MAX_DIV,
                     _ => unreachable!(),
                 };
-                timer.accum += cycles * MAX_DIV / div;
+                timer.accum += u32::from(cycles) * MAX_DIV / div;
                 if timer.accum < MAX_DIV {
                     continue;
                 }
-
                 timer.accum %= MAX_DIV;
             }
 
             let (new_counter, overflowed) = timer.counter.overflowing_add(1);
-            if overflowed {
+            timer.counter = if overflowed {
                 prev_counter_overflowed = true;
-                timer.counter = timer.initial;
-
                 if timer.irq_enabled {
                     irq.request(match i {
                         0 => Interrupt::Timer0,
@@ -120,39 +106,11 @@ impl Timers {
                         _ => unreachable!(),
                     });
                 }
+
+                timer.initial
             } else {
-                timer.counter = new_counter;
-            }
-        }
-    }
-}
-
-impl Bus for Timers {
-    fn read_byte(&mut self, addr: u32) -> u8 {
-        match addr {
-            // TM0CNT
-            0x100..=0x103 => self.0[0].byte((addr & 3) as usize),
-            // TM1CNT
-            0x104..=0x107 => self.0[1].byte((addr & 3) as usize),
-            // TM2CNT
-            0x108..=0x10b => self.0[2].byte((addr & 3) as usize),
-            // TM3CNT
-            0x10c..=0x10f => self.0[3].byte((addr & 3) as usize),
-            _ => panic!("IO register address OOB"),
-        }
-    }
-
-    fn write_byte(&mut self, addr: u32, value: u8) {
-        match addr {
-            // TM0CNT
-            0x100..=0x103 => self.0[0].set_byte((addr & 3) as usize, value),
-            // TM1CNT
-            0x104..=0x107 => self.0[1].set_byte((addr & 3) as usize, value),
-            // TM2CNT
-            0x108..=0x10b => self.0[2].set_byte((addr & 3) as usize, value),
-            // TM3CNT
-            0x10c..=0x10f => self.0[3].set_byte((addr & 3) as usize, value),
-            _ => panic!("IO register address OOB"),
+                new_counter
+            };
         }
     }
 }

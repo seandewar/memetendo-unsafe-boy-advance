@@ -1,3 +1,5 @@
+use std::mem::replace;
+
 use intbits::Bits;
 
 use crate::{
@@ -7,19 +9,19 @@ use crate::{
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
-struct Registers {
+struct Channel {
     init_src_addr: u32,
     init_dst_addr: u32,
     init_blocks: u32,
-    src_addr_control: u8,
-    dst_addr_control: u8,
-    pub repeat: bool,
-    pub transfer_word: bool,
-    pub cart_drq: bool,
+    src_addr_ctrl: u8,
+    dst_addr_ctrl: u8,
+    repeat: bool,
+    transfer_word: bool,
+    cart_drq: bool,
     timing_mode: u8,
-    pub irq_enabled: bool,
+    irq_enabled: bool,
     enabled: bool,
-    control_lo_bits: u8,
+    cached_dmacnt_hi_bits: u16,
 
     curr_src_addr: u32,
     curr_dst_addr: u32,
@@ -27,147 +29,73 @@ struct Registers {
     transferring: bool,
 }
 
-impl Registers {
-    fn set_addr_byte(addr: &mut u32, idx: usize, value: u8) {
-        match idx {
-            0 => addr.set_bits(..8, value.into()),
-            1 => addr.set_bits(8..16, value.into()),
-            2 => addr.set_bits(16..24, value.into()),
-            3 => addr.set_bits(24..28, value.bits(..4).into()),
-            _ => panic!("byte index out of bounds"),
-        }
-    }
-
-    pub fn set_src_addr_byte(&mut self, idx: usize, value: u8) {
-        Self::set_addr_byte(&mut self.init_src_addr, idx, value);
-    }
-
-    pub fn set_dst_addr_byte(&mut self, idx: usize, value: u8) {
-        Self::set_addr_byte(&mut self.init_dst_addr, idx, value);
-    }
-
-    pub fn set_size_lo_bits(&mut self, bits: u8) {
-        self.init_blocks.set_bits(..8, bits.into());
-    }
-
-    pub fn set_size_hi_bits(&mut self, bits: u8) {
-        self.init_blocks.set_bits(8.., bits.into());
-    }
-
-    pub fn set_control_lo_bits(&mut self, bits: u8) {
-        self.dst_addr_control = bits.bits(5..7);
-        self.src_addr_control.set_bit(0, bits.bit(7));
-        self.control_lo_bits = bits;
-    }
-
-    pub fn set_control_hi_bits(&mut self, bits: u8) {
-        self.src_addr_control.set_bit(1, bits.bit(0));
-        self.repeat = bits.bit(1);
-        self.transfer_word = bits.bit(2);
-        self.cart_drq = bits.bit(3);
-        self.timing_mode = bits.bits(4..6);
-        self.irq_enabled = bits.bit(6);
-
-        let old_enabled = self.enabled;
-        self.enabled = bits.bit(7);
-        if !old_enabled && self.enabled {
-            self.curr_src_addr = self.init_src_addr;
-            self.curr_dst_addr = self.init_dst_addr;
-            self.rem_blocks = self.init_blocks;
-        }
-    }
-
-    #[must_use]
-    pub fn control_lo_bits(&self) -> u8 {
-        self.control_lo_bits
-    }
-
-    #[must_use]
-    pub fn control_hi_bits(&self) -> u8 {
-        let mut bits = 0;
-        bits.set_bit(0, self.src_addr_control.bit(1));
-        bits.set_bit(1, self.repeat);
-        bits.set_bit(2, self.transfer_word);
-        bits.set_bit(3, self.cart_drq);
-        bits.set_bits(4..6, self.timing_mode);
-        bits.set_bit(6, self.irq_enabled);
-        bits.set_bit(7, self.enabled);
-
-        bits
-    }
-}
-
 #[derive(Debug, Default)]
-pub struct Dmas {
-    reg: [Registers; 4],
-}
+pub struct Dma([Channel; 4]);
 
-impl Dmas {
+impl Dma {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn start_transfer(&mut self, dma_idx: usize) {
-        let dma = &mut self.reg[dma_idx];
-        if !dma.enabled || dma.transferring {
+    fn start_transfer(&mut self, chan_idx: usize) {
+        let chan = &mut self.0[chan_idx];
+        if !chan.enabled || chan.transferring {
             return;
         }
 
-        dma.transferring = true;
-        if dma.rem_blocks == 0 {
-            dma.rem_blocks = if dma_idx == 3 { 0x1_0000 } else { 0x4000 };
+        let max_blocks = if chan_idx == 3 { 0x1_0000 } else { 0x4000 };
+        if chan.rem_blocks == 0 || chan.rem_blocks > max_blocks {
+            chan.rem_blocks = max_blocks;
         }
+        chan.transferring = true;
     }
 
     #[must_use]
-    pub fn step<B: Bus>(&mut self, irq: &mut Irq, cycles: u32) -> Option<impl Fn(&mut B)> {
-        // TODO: max limit normal values of init_blocks, use cycles and transfer more than 1 block,
+    pub fn step<B: Bus>(&mut self, irq: &mut Irq, cycles: u8) -> Option<impl Fn(&mut B)> {
+        // TODO: use cycles and transfer more than 1 block at a time if applicable,
         //       cart DRQ, special timing modes
-        for i in 0..self.reg.len() {
-            if !self.reg[i].enabled {
+        for chan_idx in 0..self.0.len() {
+            if !self.0[chan_idx].enabled {
                 continue;
             }
-
-            if !self.reg[i].transferring {
-                if self.reg[i].timing_mode == 0 {
-                    self.start_transfer(i);
-                } else {
+            if !self.0[chan_idx].transferring {
+                if self.0[chan_idx].timing_mode != 0 {
                     continue;
                 }
+                self.start_transfer(chan_idx);
             }
 
-            let dma = &mut self.reg[i];
-            let addr_bits = if i == 0 { 27 } else { 28 };
-            let transfer_src_addr = dma.curr_src_addr.bits(..addr_bits);
-            let transfer_dst_addr = dma.curr_dst_addr.bits(..addr_bits);
-            let transfer_word = dma.transfer_word;
+            let chan = &mut self.0[chan_idx];
+            let transfer_src_addr = chan.curr_src_addr;
+            let transfer_dst_addr = chan.curr_dst_addr;
+            let transfer_word = chan.transfer_word;
 
-            let update_addr = |addr: &mut u32, control| {
-                let stride = if dma.transfer_word { 4 } else { 2 };
-                match control {
+            let update_addr = |addr: &mut u32, ctrl| {
+                let stride = if chan.transfer_word { 4 } else { 2 };
+                match ctrl {
                     0 | 3 => *addr = addr.wrapping_add(stride),
                     1 => *addr = addr.wrapping_sub(stride),
                     2 => {}
                     _ => unreachable!(),
                 };
             };
-            update_addr(&mut dma.curr_src_addr, dma.src_addr_control);
-            update_addr(&mut dma.curr_dst_addr, dma.dst_addr_control);
+            update_addr(&mut chan.curr_src_addr, chan.src_addr_ctrl);
+            update_addr(&mut chan.curr_dst_addr, chan.dst_addr_ctrl);
 
-            dma.rem_blocks -= 1;
-            if dma.rem_blocks == 0 {
-                dma.transferring = false;
-                dma.enabled = dma.repeat;
-                if dma.repeat {
-                    if dma.dst_addr_control == 3 {
-                        dma.curr_dst_addr = dma.init_dst_addr;
+            chan.rem_blocks -= 1;
+            if chan.rem_blocks == 0 {
+                chan.transferring = false;
+                chan.enabled = chan.repeat;
+                if chan.repeat {
+                    if chan.dst_addr_ctrl == 3 {
+                        chan.curr_dst_addr = chan.init_dst_addr;
                     }
-                    dma.rem_blocks = dma.init_blocks;
+                    chan.rem_blocks = chan.init_blocks;
                 }
 
-                if dma.irq_enabled {
-                    irq.request(match i {
+                if chan.irq_enabled {
+                    irq.request(match chan_idx {
                         0 => Interrupt::Dma0,
                         1 => Interrupt::Dma1,
                         2 => Interrupt::Dma2,
@@ -193,7 +121,7 @@ impl Dmas {
 
     #[must_use]
     pub fn transfer_in_progress(&self) -> bool {
-        self.reg.iter().any(|dma| dma.transferring)
+        self.0.iter().any(|chan| chan.transferring)
     }
 }
 
@@ -203,80 +131,81 @@ pub enum Event {
     HBlank,
 }
 
-impl Dmas {
+impl Dma {
     pub fn notify(&mut self, event: Event) {
         let event_timing_mode = match event {
             Event::VBlank => 1,
             Event::HBlank => 2,
         };
-
-        for i in 0..self.reg.len() {
-            if self.reg[i].timing_mode == event_timing_mode {
-                self.start_transfer(i);
+        for chan_idx in 0..self.0.len() {
+            if self.0[chan_idx].timing_mode == event_timing_mode {
+                self.start_transfer(chan_idx);
             }
         }
     }
 }
 
-impl Bus for Dmas {
+impl Bus for Dma {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        match addr {
-            // DMA0CNT
-            0xba => self.reg[0].control_lo_bits(),
-            0xbb => self.reg[0].control_hi_bits(),
-            // DMA1CNT
-            0xc6 => self.reg[1].control_lo_bits(),
-            0xc7 => self.reg[1].control_hi_bits(),
-            // DMA2CNT
-            0xd2 => self.reg[2].control_lo_bits(),
-            0xd3 => self.reg[2].control_hi_bits(),
-            // DMA3CNT
-            0xde => self.reg[3].control_lo_bits(),
-            0xdf => self.reg[3].control_hi_bits(),
-            0x0..=0xaf | 0xe0.. => panic!("IO register address OOB"),
+        assert!((0xb0..0xe0).contains(&addr), "IO register address OOB");
+
+        let chan = &mut self.0[(addr as usize - 0xb0) / 12];
+        #[allow(clippy::cast_possible_truncation)]
+        match (addr as usize - 0xb0) % 12 {
+            // DMAXCNT
+            10 => chan.cached_dmacnt_hi_bits as u8,
+            11 => chan
+                .cached_dmacnt_hi_bits
+                .with_bit(15, chan.enabled)
+                .bits(8..) as u8,
             _ => 0,
         }
     }
 
     fn write_byte(&mut self, addr: u32, value: u8) {
-        match addr {
-            // DMA0SAD
-            0xb0..=0xb3 => self.reg[0].set_src_addr_byte((addr & 3) as usize, value),
-            // DMA0DAD
-            0xb4..=0xb7 => self.reg[0].set_dst_addr_byte((addr & 3) as usize, value),
-            // DMA0CNT
-            0xb8 => self.reg[0].set_size_lo_bits(value),
-            0xb9 => self.reg[0].set_size_hi_bits(value),
-            0xba => self.reg[0].set_control_lo_bits(value),
-            0xbb => self.reg[0].set_control_hi_bits(value),
-            // DMA1SAD
-            0xbc..=0xbf => self.reg[1].set_src_addr_byte((addr & 3) as usize, value),
-            // DMA1DAD
-            0xc0..=0xc3 => self.reg[1].set_dst_addr_byte((addr & 3) as usize, value),
-            // DMA1CNT
-            0xc4 => self.reg[1].set_size_lo_bits(value),
-            0xc5 => self.reg[1].set_size_hi_bits(value),
-            0xc6 => self.reg[1].set_control_lo_bits(value),
-            0xc7 => self.reg[1].set_control_hi_bits(value),
-            // DMA2SAD
-            0xc8..=0xcb => self.reg[2].set_src_addr_byte((addr & 3) as usize, value),
-            // DMA2DAD
-            0xcc..=0xcf => self.reg[2].set_dst_addr_byte((addr & 3) as usize, value),
-            // DMA2CNT
-            0xd0 => self.reg[2].set_size_lo_bits(value),
-            0xd1 => self.reg[2].set_size_hi_bits(value),
-            0xd2 => self.reg[2].set_control_lo_bits(value),
-            0xd3 => self.reg[2].set_control_hi_bits(value),
-            // DMA3SAD
-            0xd4..=0xd7 => self.reg[3].set_src_addr_byte((addr & 3) as usize, value),
-            // DMA3DAD
-            0xd8..=0xdb => self.reg[3].set_dst_addr_byte((addr & 3) as usize, value),
-            // DMA3CNT
-            0xdc => self.reg[3].set_size_lo_bits(value),
-            0xdd => self.reg[3].set_size_hi_bits(value),
-            0xde => self.reg[3].set_control_lo_bits(value),
-            0xdf => self.reg[3].set_control_hi_bits(value),
-            _ => panic!("IO register address OOB"),
+        assert!((0xb0..0xe0).contains(&addr), "IO register address OOB");
+
+        let chan_idx = (addr as usize - 0xb0) / 12;
+        let chan = &mut self.0[chan_idx];
+        let offset = (addr as usize - 0xb0) % 12;
+
+        let set_addr_byte = |addr: &mut u32, i, value: u8| match i {
+            0..=2 => addr.set_bits((i * 8)..(i * 8) + 8, value.into()),
+            3 if chan_idx == 0 => addr.set_bits(24.., value.bits(..3).into()),
+            3 => addr.set_bits(24.., value.bits(..4).into()),
+            _ => unreachable!(),
+        };
+
+        match offset {
+            // DMAXSAD
+            0..=3 => set_addr_byte(&mut chan.init_src_addr, offset & 3, value),
+            // DMAXDAD
+            4..=7 => set_addr_byte(&mut chan.init_dst_addr, offset & 3, value),
+            // DMAXCNT
+            8 => chan.init_blocks.set_bits(..8, value.into()),
+            9 => chan.init_blocks.set_bits(8.., value.into()),
+            10 => {
+                chan.cached_dmacnt_hi_bits.set_bits(..8, value.into());
+                chan.dst_addr_ctrl = value.bits(5..7);
+                chan.src_addr_ctrl.set_bit(0, value.bit(7));
+            }
+            11 => {
+                chan.cached_dmacnt_hi_bits.set_bits(8.., value.into());
+                chan.src_addr_ctrl.set_bit(1, value.bit(0));
+                chan.repeat = value.bit(1);
+                chan.transfer_word = value.bit(2);
+                chan.cart_drq = value.bit(3);
+                chan.timing_mode = value.bits(4..6);
+                chan.irq_enabled = value.bit(6);
+
+                let old_enabled = replace(&mut chan.enabled, value.bit(7));
+                if !old_enabled && chan.enabled {
+                    chan.curr_src_addr = chan.init_src_addr;
+                    chan.curr_dst_addr = chan.init_dst_addr;
+                    chan.rem_blocks = chan.init_blocks;
+                }
+            }
+            _ => unreachable!(),
         }
     }
 }

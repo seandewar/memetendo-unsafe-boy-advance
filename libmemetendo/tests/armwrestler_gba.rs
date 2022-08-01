@@ -18,9 +18,9 @@ fn run_test(menu_entry_idx: u32, pass_screens_dir: impl AsRef<Path>) {
     let mut runner = Runner::new(&TEST_ROM);
     runner.step_frames(5); // Wait for startup
     for _ in 0..menu_entry_idx {
-        runner.gba.keypad.pressed[Key::Down] = true;
+        runner.gba.keypad.set_pressed(Key::Down, true);
         runner.step_frames(5);
-        runner.gba.keypad.pressed[Key::Down] = false;
+        runner.gba.keypad.set_pressed(Key::Down, false);
         runner.step_frames(5);
     }
 
@@ -38,9 +38,9 @@ fn run_test(menu_entry_idx: u32, pass_screens_dir: impl AsRef<Path>) {
     pass_screens.sort_unstable_by_key(|&(i, _)| i);
 
     for (i, screen) in pass_screens {
-        runner.gba.keypad.pressed[Key::Start] = true;
+        runner.gba.keypad.set_pressed(Key::Start, true);
         runner.step_frames(5);
-        runner.gba.keypad.pressed[Key::Start] = false;
+        runner.gba.keypad.set_pressed(Key::Start, false);
         runner.step_frames(10);
 
         // Don't use assert_eq! here; it'll pretty-print all of the bytes, which isn't useful.
