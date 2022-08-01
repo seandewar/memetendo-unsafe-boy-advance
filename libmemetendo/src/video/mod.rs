@@ -46,15 +46,26 @@ impl Bus for PaletteRam {
     }
 }
 
-pub struct VramBus<'a>(&'a mut Video);
+pub struct Vram<'a>(&'a mut Video);
 
-impl Bus for VramBus<'_> {
+impl Vram<'_> {
+    fn offset(addr: u32) -> u32 {
+        if addr < 0x1_8000 {
+            addr
+        } else {
+            addr & !0xf000
+        }
+    }
+}
+
+impl Bus for Vram<'_> {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        self.0.vram.read_byte(addr)
+        self.0.vram.read_byte(Self::offset(addr))
     }
 
     fn write_byte(&mut self, addr: u32, value: u8) {
         // Like palette RAM, but only write a hword for BG data.
+        let addr = Self::offset(addr);
         if (addr as usize) < self.0.dispcnt.obj_vram_offset() {
             self.0
                 .vram
@@ -63,15 +74,9 @@ impl Bus for VramBus<'_> {
     }
 
     fn write_hword(&mut self, addr: u32, value: u16) {
-        self.0.vram.write_hword(addr, value);
+        self.0.vram.write_hword(Self::offset(addr), value);
     }
 }
-
-pub const HORIZ_DOTS: u16 = 308;
-pub const VERT_DOTS: u8 = 228;
-
-pub const HBLANK_DOT: u8 = 240;
-pub const VBLANK_DOT: u8 = 160;
 
 #[derive(Clone)]
 pub struct Video {
@@ -86,21 +91,21 @@ pub struct Video {
     pub oam: Oam,
 
     dispcnt: DisplayControl,
-    pub dispstat: DisplayStatus,
-    pub greenswp: u16,
+    dispstat: DisplayStatus,
+    greenswp: u16,
     bgcnt: [BackgroundControl; 4],
-    pub bgofs: [BackgroundOffset; 4],
-    pub bgref: [ReferencePoint; 2],
-    pub bgp: [BackgroundAffine; 2],
-    pub win: [WindowDimensions; 2],
-    pub winin: [WindowControl; 2],
-    pub winout: WindowControl,
-    pub winobj: WindowControl,
-    pub mosaic_bg: Mosaic,
-    pub mosaic_obj: Mosaic,
-    pub bldcnt: BlendControl,
-    pub bldalpha: (BlendCoefficient, BlendCoefficient),
-    pub bldy: BlendCoefficient,
+    bgofs: [BackgroundOffset; 4],
+    bgref: [ReferencePoint; 2],
+    bgp: [BackgroundAffine; 2],
+    win: [WindowDimensions; 2],
+    winin: [WindowControl; 2],
+    winout: WindowControl,
+    winobj: WindowControl,
+    mosaic_bg: Mosaic,
+    mosaic_obj: Mosaic,
+    bldcnt: BlendControl,
+    bldalpha: (BlendCoefficient, BlendCoefficient),
+    bldy: BlendCoefficient,
 }
 
 impl Default for Video {
@@ -108,6 +113,12 @@ impl Default for Video {
         Self::new()
     }
 }
+
+pub const HORIZ_DOTS: u16 = 308;
+pub const VERT_DOTS: u8 = 228;
+
+pub const HBLANK_DOT: u8 = 240;
+pub const VBLANK_DOT: u8 = 160;
 
 impl Video {
     #[must_use]
@@ -212,27 +223,8 @@ impl Video {
     }
 
     #[must_use]
-    pub fn dispcnt(&self) -> &DisplayControl {
-        &self.dispcnt
-    }
-
-    #[must_use]
-    pub fn dispstat_lo_bits(&self) -> u8 {
-        self.dispstat.lo_bits(
-            self.y >= VBLANK_DOT && self.y != 227,
-            self.x >= HBLANK_DOT.into(),
-            self.y,
-        )
-    }
-
-    #[must_use]
-    pub fn vcount(&self) -> u8 {
-        self.y
-    }
-
-    #[must_use]
-    pub fn vram(&mut self) -> VramBus {
-        VramBus(self)
+    pub fn vram(&mut self) -> Vram {
+        Vram(self)
     }
 }
 

@@ -7,7 +7,7 @@ use crate::{
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
-pub struct Registers {
+struct Registers {
     init_src_addr: u32,
     init_dst_addr: u32,
     init_blocks: u32,
@@ -99,7 +99,7 @@ impl Registers {
 
 #[derive(Debug, Default)]
 pub struct Dmas {
-    pub reg: [Registers; 4],
+    reg: [Registers; 4],
 }
 
 impl Dmas {
@@ -214,6 +214,69 @@ impl Dmas {
             if self.reg[i].timing_mode == event_timing_mode {
                 self.start_transfer(i);
             }
+        }
+    }
+}
+
+impl Bus for Dmas {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        match addr {
+            // DMA0CNT
+            0xba => self.reg[0].control_lo_bits(),
+            0xbb => self.reg[0].control_hi_bits(),
+            // DMA1CNT
+            0xc6 => self.reg[1].control_lo_bits(),
+            0xc7 => self.reg[1].control_hi_bits(),
+            // DMA2CNT
+            0xd2 => self.reg[2].control_lo_bits(),
+            0xd3 => self.reg[2].control_hi_bits(),
+            // DMA3CNT
+            0xde => self.reg[3].control_lo_bits(),
+            0xdf => self.reg[3].control_hi_bits(),
+            0x0..=0xaf | 0xe0.. => panic!("IO register address OOB"),
+            _ => 0,
+        }
+    }
+
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        match addr {
+            // DMA0SAD
+            0xb0..=0xb3 => self.reg[0].set_src_addr_byte((addr & 3) as usize, value),
+            // DMA0DAD
+            0xb4..=0xb7 => self.reg[0].set_dst_addr_byte((addr & 3) as usize, value),
+            // DMA0CNT
+            0xb8 => self.reg[0].set_size_lo_bits(value),
+            0xb9 => self.reg[0].set_size_hi_bits(value),
+            0xba => self.reg[0].set_control_lo_bits(value),
+            0xbb => self.reg[0].set_control_hi_bits(value),
+            // DMA1SAD
+            0xbc..=0xbf => self.reg[1].set_src_addr_byte((addr & 3) as usize, value),
+            // DMA1DAD
+            0xc0..=0xc3 => self.reg[1].set_dst_addr_byte((addr & 3) as usize, value),
+            // DMA1CNT
+            0xc4 => self.reg[1].set_size_lo_bits(value),
+            0xc5 => self.reg[1].set_size_hi_bits(value),
+            0xc6 => self.reg[1].set_control_lo_bits(value),
+            0xc7 => self.reg[1].set_control_hi_bits(value),
+            // DMA2SAD
+            0xc8..=0xcb => self.reg[2].set_src_addr_byte((addr & 3) as usize, value),
+            // DMA2DAD
+            0xcc..=0xcf => self.reg[2].set_dst_addr_byte((addr & 3) as usize, value),
+            // DMA2CNT
+            0xd0 => self.reg[2].set_size_lo_bits(value),
+            0xd1 => self.reg[2].set_size_hi_bits(value),
+            0xd2 => self.reg[2].set_control_lo_bits(value),
+            0xd3 => self.reg[2].set_control_hi_bits(value),
+            // DMA3SAD
+            0xd4..=0xd7 => self.reg[3].set_src_addr_byte((addr & 3) as usize, value),
+            // DMA3DAD
+            0xd8..=0xdb => self.reg[3].set_dst_addr_byte((addr & 3) as usize, value),
+            // DMA3CNT
+            0xdc => self.reg[3].set_size_lo_bits(value),
+            0xdd => self.reg[3].set_size_hi_bits(value),
+            0xde => self.reg[3].set_control_lo_bits(value),
+            0xdf => self.reg[3].set_control_hi_bits(value),
+            _ => panic!("IO register address OOB"),
         }
     }
 }

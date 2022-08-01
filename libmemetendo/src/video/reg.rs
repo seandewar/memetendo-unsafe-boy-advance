@@ -1,6 +1,8 @@
 use intbits::Bits;
 
-use crate::arbitrary_sign_extend;
+use crate::{arbitrary_sign_extend, bus::Bus};
+
+use super::{Video, HBLANK_DOT, VBLANK_DOT};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Mode {
@@ -11,10 +13,10 @@ pub enum Mode {
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, Debug)]
-pub struct DisplayControl {
+pub(super) struct DisplayControl {
     mode: u8,
     frame_select: u8,
-    pub hblank_oam_access: bool,
+    hblank_oam_access: bool,
     pub obj_1d: bool,
     pub forced_blank: bool,
 
@@ -100,7 +102,7 @@ impl DisplayControl {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-pub struct DisplayStatus {
+pub(super) struct DisplayStatus {
     pub vblank_irq_enabled: bool,
     pub hblank_irq_enabled: bool,
     pub vcount_irq_enabled: bool,
@@ -130,7 +132,7 @@ impl DisplayStatus {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct BackgroundControl {
+pub(super) struct BackgroundControl {
     priority: u8,
     dots_base_block: u8,
     pub mosaic: bool,
@@ -210,7 +212,7 @@ impl BackgroundControl {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct BackgroundOffset(u16, u16);
+pub(super) struct BackgroundOffset(u16, u16);
 
 impl BackgroundOffset {
     pub fn get(self) -> (u16, u16) {
@@ -235,7 +237,7 @@ impl BackgroundOffset {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct ReferencePoint {
+pub(super) struct ReferencePoint {
     external: (i32, i32),
     pub(super) internal: (i32, i32),
 }
@@ -269,7 +271,7 @@ impl ReferencePoint {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct BackgroundAffine {
+pub(super) struct BackgroundAffine {
     pub a: i16,
     pub b: i16,
     pub c: i16,
@@ -288,7 +290,7 @@ impl Default for BackgroundAffine {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-pub struct WindowDimensions {
+pub(super) struct WindowDimensions {
     horiz: (u8, u8),
     vert: (u8, u8),
 }
@@ -320,7 +322,7 @@ impl WindowDimensions {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct WindowControl {
+pub(super) struct WindowControl {
     pub display_bg: [bool; 4],
     pub display_obj: bool,
     pub blendfx_enabled: bool,
@@ -352,13 +354,9 @@ impl WindowControl {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct Mosaic(u8, u8);
+pub(super) struct Mosaic(u8, u8);
 
 impl Mosaic {
-    pub fn get(self) -> (u8, u8) {
-        (self.0, self.1)
-    }
-
     pub fn set_bits(&mut self, bits: u8) {
         self.0 = bits.bits(..4);
         self.1 = bits.bits(4..);
@@ -366,7 +364,7 @@ impl Mosaic {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct BlendControl {
+pub(super) struct BlendControl {
     pub bg_target: [[bool; 4]; 2],
     pub obj_target: [bool; 2],
     pub backdrop_target: [bool; 2],
@@ -426,10 +424,172 @@ impl BlendControl {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct BlendCoefficient(pub u8);
+pub(super) struct BlendCoefficient(pub u8);
 
 impl BlendCoefficient {
     pub fn factor(self) -> f32 {
         1.0f32.min(f32::from(self.0.bits(..5)) / 16.0)
+    }
+}
+
+impl Bus for Video {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        #[allow(clippy::cast_possible_truncation)]
+        match addr {
+            // DISPCNT
+            0x0 => self.dispcnt.lo_bits(),
+            0x1 => self.dispcnt.hi_bits(),
+            // GREENSWP (undocumented)
+            0x2 => self.greenswp as u8,
+            0x3 => self.greenswp.bits(8..) as u8,
+            // DISPSTAT
+            0x4 => self.dispstat.lo_bits(
+                self.y >= VBLANK_DOT && self.y != 227,
+                self.x >= HBLANK_DOT.into(),
+                self.y,
+            ),
+            0x5 => self.dispstat.vcount_target,
+            // VCOUNT
+            0x6 => self.y,
+            // BG0CNT
+            0x8 => self.bgcnt[0].lo_bits(),
+            0x9 => self.bgcnt[0].hi_bits(),
+            // BG1CNT
+            0xa => self.bgcnt[1].lo_bits(),
+            0xb => self.bgcnt[1].hi_bits(),
+            // BG2CNT
+            0xc => self.bgcnt[2].lo_bits(),
+            0xd => self.bgcnt[2].hi_bits(),
+            // BG3CNT
+            0xe => self.bgcnt[3].lo_bits(),
+            0xf => self.bgcnt[3].hi_bits(),
+            // WININ
+            0x48 => self.winin[0].bits(),
+            0x49 => self.winin[1].bits(),
+            // WINOUT
+            0x4a => self.winout.bits(),
+            0x4b => self.winobj.bits(),
+            // BLDCNT
+            0x50 => self.bldcnt.lo_bits(),
+            0x51 => self.bldcnt.hi_bits(),
+            // BLDALPHA
+            0x52 => self.bldalpha.0 .0,
+            0x53 => self.bldalpha.1 .0,
+            0x57.. => panic!("IO register address OOB"),
+            _ => 0,
+        }
+    }
+
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        match addr {
+            // DISPCNT
+            0x0 => self.set_dispcnt_lo_bits(value),
+            0x1 => self.set_dispcnt_hi_bits(value),
+            // GREENSWP (undocumented)
+            0x2 => self.greenswp.set_bits(..8, value.into()),
+            0x3 => self.greenswp.set_bits(8.., value.into()),
+            // DISPSTAT
+            0x4 => self.dispstat.set_lo_bits(value),
+            0x5 => self.dispstat.vcount_target = value,
+            // BG0CNT
+            0x8 => self.set_bgcnt_lo_bits(0, value),
+            0x9 => self.set_bgcnt_hi_bits(0, value),
+            // BG1CNT
+            0xa => self.set_bgcnt_lo_bits(1, value),
+            0xb => self.set_bgcnt_hi_bits(1, value),
+            // BG2CNT
+            0xc => self.set_bgcnt_lo_bits(2, value),
+            0xd => self.set_bgcnt_hi_bits(2, value),
+            // BG3CNT
+            0xe => self.set_bgcnt_lo_bits(3, value),
+            0xf => self.set_bgcnt_hi_bits(3, value),
+            // BG0HOFS
+            0x10 => self.bgofs[0].set_x_lo_bits(value),
+            0x11 => self.bgofs[0].set_x_hi_bits(value),
+            // BG0VOFS
+            0x12 => self.bgofs[0].set_y_lo_bits(value),
+            0x13 => self.bgofs[0].set_y_hi_bits(value),
+            // BG1HOFS
+            0x14 => self.bgofs[1].set_x_lo_bits(value),
+            0x15 => self.bgofs[1].set_x_hi_bits(value),
+            // BG1VOFS
+            0x16 => self.bgofs[1].set_y_lo_bits(value),
+            0x17 => self.bgofs[1].set_y_hi_bits(value),
+            // BG2HOFS
+            0x18 => self.bgofs[2].set_x_lo_bits(value),
+            0x19 => self.bgofs[2].set_x_hi_bits(value),
+            // BG2VOFS
+            0x1a => self.bgofs[2].set_y_lo_bits(value),
+            0x1b => self.bgofs[2].set_y_hi_bits(value),
+            // BG3HOFS
+            0x1c => self.bgofs[3].set_x_lo_bits(value),
+            0x1d => self.bgofs[3].set_x_hi_bits(value),
+            // BG3VOFS
+            0x1e => self.bgofs[3].set_y_lo_bits(value),
+            0x1f => self.bgofs[3].set_y_hi_bits(value),
+            // BG2PA
+            0x20 => self.bgp[0].a.set_bits(..8, value.into()),
+            0x21 => self.bgp[0].a.set_bits(8.., value.into()),
+            // BG2PB
+            0x22 => self.bgp[0].b.set_bits(..8, value.into()),
+            0x23 => self.bgp[0].b.set_bits(8.., value.into()),
+            // BG2PC
+            0x24 => self.bgp[0].c.set_bits(..8, value.into()),
+            0x25 => self.bgp[0].c.set_bits(8.., value.into()),
+            // BG2PD
+            0x26 => self.bgp[0].d.set_bits(..8, value.into()),
+            0x27 => self.bgp[0].d.set_bits(8.., value.into()),
+            // BG2X
+            offset @ 0x28..=0x2b => self.bgref[0].set_x_byte((offset & 3) as usize, value),
+            // BG2Y
+            offset @ 0x2c..=0x2f => self.bgref[0].set_y_byte((offset & 3) as usize, value),
+            // BG3PA
+            0x30 => self.bgp[1].a.set_bits(..8, value.into()),
+            0x31 => self.bgp[1].a.set_bits(8.., value.into()),
+            // BG3PB
+            0x32 => self.bgp[1].b.set_bits(..8, value.into()),
+            0x33 => self.bgp[1].b.set_bits(8.., value.into()),
+            // BG3PC
+            0x34 => self.bgp[1].c.set_bits(..8, value.into()),
+            0x35 => self.bgp[1].c.set_bits(8.., value.into()),
+            // BG3PD
+            0x36 => self.bgp[1].d.set_bits(..8, value.into()),
+            0x37 => self.bgp[1].d.set_bits(8.., value.into()),
+            // BG3X
+            offset @ 0x38..=0x3b => self.bgref[1].set_x_byte((offset & 3) as usize, value),
+            // BG3Y
+            offset @ 0x3c..=0x3f => self.bgref[1].set_y_byte((offset & 3) as usize, value),
+            // WIN0H
+            0x40 => self.win[0].set_horiz_lo_bits(value),
+            0x41 => self.win[0].set_horiz_hi_bits(value),
+            // WIN1H
+            0x42 => self.win[1].set_horiz_lo_bits(value),
+            0x43 => self.win[1].set_horiz_hi_bits(value),
+            // WIN0V
+            0x44 => self.win[0].set_vert_lo_bits(value),
+            0x45 => self.win[0].set_vert_hi_bits(value),
+            // WIN1V
+            0x46 => self.win[1].set_vert_lo_bits(value),
+            0x47 => self.win[1].set_vert_hi_bits(value),
+            // WININ
+            0x48 => self.winin[0].set_bits(value),
+            0x49 => self.winin[1].set_bits(value),
+            // WINOUT
+            0x4a => self.winout.set_bits(value),
+            0x4b => self.winobj.set_bits(value),
+            // MOSAIC
+            0x4c => self.mosaic_bg.set_bits(value),
+            0x4d => self.mosaic_obj.set_bits(value),
+            // BLDCNT
+            0x50 => self.bldcnt.set_lo_bits(value),
+            0x51 => self.bldcnt.set_hi_bits(value),
+            // BLDALPHA
+            0x52 => self.bldalpha.0 .0 = value,
+            0x53 => self.bldalpha.1 .0 = value,
+            // BLDY
+            0x54 => self.bldy.0 = value,
+            0x57.. => panic!("IO register address OOB"),
+            _ => {}
+        }
     }
 }

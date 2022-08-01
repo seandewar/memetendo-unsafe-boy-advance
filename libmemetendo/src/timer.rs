@@ -2,10 +2,13 @@ use std::mem::take;
 
 use intbits::Bits;
 
-use crate::irq::{Interrupt, Irq};
+use crate::{
+    bus::Bus,
+    irq::{Interrupt, Irq},
+};
 
 #[derive(Debug, Default)]
-pub struct Register {
+pub(super) struct Register {
     accum: u32,
     pub initial: u16,
     counter: u16,
@@ -67,7 +70,7 @@ impl Register {
 }
 
 #[derive(Debug, Default)]
-pub struct Timers(pub [Register; 4]);
+pub struct Timers([Register; 4]);
 
 impl Timers {
     #[must_use]
@@ -120,6 +123,36 @@ impl Timers {
             } else {
                 timer.counter = new_counter;
             }
+        }
+    }
+}
+
+impl Bus for Timers {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        match addr {
+            // TM0CNT
+            0x100..=0x103 => self.0[0].byte((addr & 3) as usize),
+            // TM1CNT
+            0x104..=0x107 => self.0[1].byte((addr & 3) as usize),
+            // TM2CNT
+            0x108..=0x10b => self.0[2].byte((addr & 3) as usize),
+            // TM3CNT
+            0x10c..=0x10f => self.0[3].byte((addr & 3) as usize),
+            _ => panic!("IO register address OOB"),
+        }
+    }
+
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        match addr {
+            // TM0CNT
+            0x100..=0x103 => self.0[0].set_byte((addr & 3) as usize, value),
+            // TM1CNT
+            0x104..=0x107 => self.0[1].set_byte((addr & 3) as usize, value),
+            // TM2CNT
+            0x108..=0x10b => self.0[2].set_byte((addr & 3) as usize, value),
+            // TM3CNT
+            0x10c..=0x10f => self.0[3].set_byte((addr & 3) as usize, value),
+            _ => panic!("IO register address OOB"),
         }
     }
 }

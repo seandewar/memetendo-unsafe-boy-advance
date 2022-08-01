@@ -2,7 +2,10 @@ use std::ops::{Index, IndexMut};
 
 use intbits::Bits;
 
-use crate::irq::{Interrupt, Irq};
+use crate::{
+    bus::Bus,
+    irq::{Interrupt, Irq},
+};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Key {
@@ -44,7 +47,7 @@ impl IndexMut<Key> for KeyStates {
 #[derive(Default, Copy, Clone, Debug)]
 pub struct Keypad {
     pub pressed: KeyStates,
-    pub keycnt: InterruptControl,
+    keycnt: InterruptControl,
 }
 
 impl Keypad {
@@ -75,34 +78,52 @@ impl Keypad {
             irq.request(Interrupt::Keypad);
         }
     }
+}
 
-    #[must_use]
-    pub fn keyinput_lo_bits(&self) -> u8 {
-        let mut bits = 0;
-        bits.set_bit(0, !self.pressed[Key::A]);
-        bits.set_bit(1, !self.pressed[Key::B]);
-        bits.set_bit(2, !self.pressed[Key::Select]);
-        bits.set_bit(3, !self.pressed[Key::Start]);
-        bits.set_bit(4, !self.pressed[Key::Right]);
-        bits.set_bit(5, !self.pressed[Key::Left]);
-        bits.set_bit(6, !self.pressed[Key::Up]);
-        bits.set_bit(7, !self.pressed[Key::Down]);
+impl Bus for Keypad {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        match addr {
+            // KEYINPUT
+            0x130 => {
+                let mut bits = 0;
+                bits.set_bit(0, !self.pressed[Key::A]);
+                bits.set_bit(1, !self.pressed[Key::B]);
+                bits.set_bit(2, !self.pressed[Key::Select]);
+                bits.set_bit(3, !self.pressed[Key::Start]);
+                bits.set_bit(4, !self.pressed[Key::Right]);
+                bits.set_bit(5, !self.pressed[Key::Left]);
+                bits.set_bit(6, !self.pressed[Key::Up]);
+                bits.set_bit(7, !self.pressed[Key::Down]);
 
-        bits
+                bits
+            }
+            0x131 => {
+                let mut bits = 0xff;
+                bits.set_bit(0, !self.pressed[Key::R]);
+                bits.set_bit(1, !self.pressed[Key::L]);
+
+                bits
+            }
+            // KEYCNT
+            0x132 => self.keycnt.lo_bits(),
+            0x133 => self.keycnt.hi_bits(),
+            _ => panic!("IO register address OOB"),
+        }
     }
 
-    #[must_use]
-    pub fn keyinput_hi_bits(&self) -> u8 {
-        let mut bits = 0xff;
-        bits.set_bit(0, !self.pressed[Key::R]);
-        bits.set_bit(1, !self.pressed[Key::L]);
-
-        bits
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        match addr {
+            // KEYCNT
+            0x132 => self.keycnt.set_lo_bits(value),
+            0x133 => self.keycnt.set_hi_bits(value),
+            0x130 | 0x131 => {}
+            _ => panic!("IO register address OOB"),
+        }
     }
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-pub struct InterruptControl {
+struct InterruptControl {
     pub irq_keys: KeyStates,
     pub irq_enabled: bool,
     pub irq_all_pressed: bool,

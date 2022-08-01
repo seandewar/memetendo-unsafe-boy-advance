@@ -2,9 +2,7 @@ use intbits::Bits;
 
 use crate::bus::Bus;
 
-use super::{
-    reg::BackgroundControl, DotPaletteInfo, Video, Window, HBLANK_DOT, TILE_DOT_LEN, VBLANK_DOT,
-};
+use super::{DotPaletteInfo, Video, Window, HBLANK_DOT, TILE_DOT_LEN, VBLANK_DOT};
 
 #[derive(Debug, Copy, Clone)]
 pub(super) enum DotInfo {
@@ -38,7 +36,7 @@ impl Video {
         });
     }
 
-    pub fn set_bgcnt_lo_bits(&mut self, bg_idx: usize, bits: u8) {
+    pub(super) fn set_bgcnt_lo_bits(&mut self, bg_idx: usize, bits: u8) {
         let bgcnt = &mut self.bgcnt[bg_idx];
         let old_priority = bgcnt.priority();
         bgcnt.set_lo_bits(bits);
@@ -47,13 +45,8 @@ impl Video {
         }
     }
 
-    pub fn set_bgcnt_hi_bits(&mut self, bg_idx: usize, bits: u8) {
+    pub(super) fn set_bgcnt_hi_bits(&mut self, bg_idx: usize, bits: u8) {
         self.bgcnt[bg_idx].set_hi_bits(bits);
-    }
-
-    #[must_use]
-    pub fn bgcnt(&self) -> &[BackgroundControl; 4] {
-        &self.bgcnt
     }
 
     pub(super) fn compute_bg_tile_mode_dot_iter(
