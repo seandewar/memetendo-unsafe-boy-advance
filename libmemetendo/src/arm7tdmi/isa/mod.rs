@@ -31,7 +31,7 @@ fn op_add_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, carry: bool) ->
 
     if update_cond {
         let actual_result = u64::from(a) + u64::from(b) + u64::from(carry);
-        cpu.reg.cpsr.overflow = a_b_overflow || a_b_c_overflow;
+        cpu.reg.cpsr.overflow = a_b_overflow ^ a_b_c_overflow;
         cpu.reg.cpsr.carry = actual_result > u32::MAX.into();
         cpu.reg.cpsr.set_nz_from_word(result);
     }

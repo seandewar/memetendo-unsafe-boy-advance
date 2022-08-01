@@ -575,7 +575,6 @@ mod tests {
             .assert_r(1, i32::MIN as u32 + 1)
             .assert_r(2, i32::MIN as _)
             .assert_signed()
-            .assert_overflow()
             .assert_carry()
             .run();
 
