@@ -34,7 +34,7 @@ struct Attributes {
     shape: u8,
     size: u8,
     dots_base_idx: u16,
-    priority_over_bg: u8,
+    priority: u8,
     palette_idx: Option<u16>,
 }
 
@@ -147,16 +147,23 @@ impl Oam {
                 end_y.min(i16::from(VBLANK_DOT) - 1) as u16,
             ));
 
+            let cmp = |&i: &u8| {
+                self.attrs[usize::from(i)]
+                    .priority
+                    .cmp(&attrs.priority)
+                    .then_with(|| i.cmp(&idx))
+            };
+
             let mut region_y = start_region_y;
             while region_y <= end_region_y {
                 let mut region_x = start_region_x;
                 while region_x <= end_region_x {
                     let region_idxs = &mut regions[Self::region_index((region_x, region_y))];
                     if remove {
-                        if let Ok(i) = region_idxs.binary_search(&idx) {
+                        if let Ok(i) = region_idxs.binary_search_by(cmp) {
                             region_idxs.remove(i);
                         }
-                    } else if let Err(i) = region_idxs.binary_search(&idx) {
+                    } else if let Err(i) = region_idxs.binary_search_by(cmp) {
                         region_idxs.insert(i, idx);
                     }
 
@@ -173,7 +180,8 @@ impl Oam {
             || old_attrs.is_double_size() != new_attrs.is_double_size()
             || old_attrs.pos != new_attrs.pos
             || old_attrs.shape != new_attrs.shape
-            || old_attrs.size != new_attrs.size;
+            || old_attrs.size != new_attrs.size
+            || old_attrs.priority != new_attrs.priority;
         if force_region_update || regions_maybe_stale {
             update_regions(&mut self.regions, old_attrs, true);
             update_regions(&mut self.regions, &new_attrs, false);
@@ -242,7 +250,7 @@ impl Oam {
             shape: attrs[0].bits(14..) as u8,
             size: attrs[1].bits(14..) as u8,
             dots_base_idx: attrs[2].bits(..10),
-            priority_over_bg: attrs[2].bits(10..12) as u8,
+            priority: attrs[2].bits(10..12) as u8,
             palette_idx,
         }
     }
@@ -258,7 +266,7 @@ pub(super) enum Mode {
 #[derive(Debug, Copy, Clone)]
 pub(super) struct DotInfo {
     pub mode: Mode,
-    pub priority_over_bg: u8,
+    pub priority: u8,
     pub palette: DotPaletteInfo,
 }
 
@@ -362,7 +370,7 @@ impl Video {
         self.read_tile_dot_palette(attrs.palette_idx, dot_offset, dot_x)
             .map(|palette| DotInfo {
                 mode: attrs.mode.unwrap(),
-                priority_over_bg: attrs.priority_over_bg,
+                priority: attrs.priority,
                 palette,
             })
     }

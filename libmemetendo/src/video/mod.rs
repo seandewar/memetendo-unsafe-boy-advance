@@ -347,11 +347,11 @@ impl Video {
                 while let DotInfo::Backdrop = infos[1] {
                     let top = match (obj_info, bg_iter.peek()) {
                         (Some(obj), Some(bg))
-                            if obj.priority_over_bg <= self.bgcnt[bg.index()].priority() =>
+                            if obj.priority <= self.bgcnt[bg.index()].priority() =>
                         {
                             DotInfo::Object(obj_info.take().unwrap())
                         }
-                        (Some(_) | None, Some(_)) => DotInfo::Background(bg_iter.next().unwrap()),
+                        (_, Some(_)) => DotInfo::Background(bg_iter.next().unwrap()),
                         (Some(_), None) => DotInfo::Object(obj_info.take().unwrap()),
                         (None, None) => break,
                     };
@@ -369,9 +369,7 @@ impl Video {
                 let bg_info = self.compute_bg_bitmap_mode_dot(top_win);
 
                 match (obj_info, bg_info) {
-                    (Some(obj), Some(bg))
-                        if obj.priority_over_bg <= self.bgcnt[bg.index()].priority() =>
-                    {
+                    (Some(obj), Some(bg)) if obj.priority <= self.bgcnt[bg.index()].priority() => {
                         [DotInfo::Object(obj), DotInfo::Background(bg)]
                     }
                     (Some(obj), Some(bg)) => [DotInfo::Background(bg), DotInfo::Object(obj)],
