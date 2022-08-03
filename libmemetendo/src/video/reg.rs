@@ -110,6 +110,17 @@ pub(super) struct BackgroundControl {
     cached_bits: u16,
 }
 
+impl Video {
+    fn set_bgcnt_lo_bits(&mut self, bg_idx: usize, bits: u8) {
+        let old_priority = self.bgcnt[bg_idx].priority;
+        self.bgcnt[bg_idx].set_lo_bits(bits);
+
+        if old_priority != self.bgcnt[bg_idx].priority {
+            self.priority_sort_tile_mode_bgs();
+        }
+    }
+}
+
 impl BackgroundControl {
     pub fn set_lo_bits(&mut self, bits: u8) {
         self.cached_bits.set_bits(..8, bits.into());
@@ -364,16 +375,16 @@ impl Bus for Video {
             0x05 => self.dispstat.vcount_target = value,
             // BG0CNT
             0x08 => self.set_bgcnt_lo_bits(0, value),
-            0x09 => self.set_bgcnt_hi_bits(0, value),
+            0x09 => self.bgcnt[0].set_hi_bits(value),
             // BG1CNT
             0x0a => self.set_bgcnt_lo_bits(1, value),
-            0x0b => self.set_bgcnt_hi_bits(1, value),
+            0x0b => self.bgcnt[1].set_hi_bits(value),
             // BG2CNT
             0x0c => self.set_bgcnt_lo_bits(2, value),
-            0x0d => self.set_bgcnt_hi_bits(2, value),
+            0x0d => self.bgcnt[2].set_hi_bits(value),
             // BG3CNT
             0x0e => self.set_bgcnt_lo_bits(3, value),
-            0x0f => self.set_bgcnt_hi_bits(3, value),
+            0x0f => self.bgcnt[3].set_hi_bits(value),
             // BG0HOFS
             0x10 => self.bgofs[0].0.set_bits(..8, value.into()),
             0x11 => self.bgofs[0].0.set_bit(8, value.bit(0)),

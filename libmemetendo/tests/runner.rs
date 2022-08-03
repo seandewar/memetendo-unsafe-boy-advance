@@ -32,7 +32,7 @@ impl<'c> Runner<'c> {
     }
 
     pub fn step(&mut self) {
-        self.gba.step(&mut self.screen);
+        self.gba.step(&mut self.screen, false);
     }
 
     pub fn step_frame(&mut self) {

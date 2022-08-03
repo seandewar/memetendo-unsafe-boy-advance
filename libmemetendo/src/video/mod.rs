@@ -152,11 +152,19 @@ impl Video {
     }
 
     #[allow(clippy::similar_names)]
-    pub fn step(&mut self, screen: &mut impl Screen, irq: &mut Irq, dma: &mut Dma, cycles: u8) {
+    pub fn step(
+        &mut self,
+        screen: &mut impl Screen,
+        irq: &mut Irq,
+        dma: &mut Dma,
+        skip_drawing: bool,
+        cycles: u8,
+    ) {
         self.cycle_accum += u16::from(cycles);
         while self.cycle_accum >= 4 {
             self.cycle_accum -= 4;
-            if self.x < HBLANK_DOT.into() && self.y < VBLANK_DOT {
+
+            if self.x < HBLANK_DOT.into() && self.y < VBLANK_DOT && !skip_drawing {
                 let rgb = self.compute_rgb();
                 self.frame_buf
                     .set_pixel(self.x.into(), self.y.into(), rgb, self.greenswp.bit(0));
@@ -181,6 +189,7 @@ impl Video {
                     screen.present_frame(&self.frame_buf);
                 }
             }
+
             if self.x >= HORIZ_DOTS {
                 self.x = 0;
                 self.y += 1;
@@ -201,20 +210,6 @@ impl Video {
                     irq.request(Interrupt::VCount);
                 }
             }
-        }
-    }
-
-    pub fn set_dispcnt_lo_bits(&mut self, bits: u8) {
-        let old_mode = self.dispcnt.mode;
-        self.dispcnt.set_lo_bits(bits);
-        if old_mode != self.dispcnt.mode && self.dispcnt.mode() == BackgroundMode::Tile {
-            self.tile_mode_bg_order = match self.dispcnt.mode {
-                0 => array_vec![0, 1, 2, 3],
-                1 => array_vec![0, 1, 2],
-                2 => array_vec![2, 3],
-                _ => unreachable!(),
-            };
-            self.priority_sort_tile_mode_bgs();
         }
     }
 

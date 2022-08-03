@@ -10,7 +10,7 @@ use anyhow::{anyhow, Context, Result};
 use clap::{arg, command, Arg};
 use libmemetendo::{
     gba::Gba,
-    keypad::Key,
+    keypad::{Key, Keypad},
     rom::{Bios, Cartridge, Rom},
     video::screen::{self, FrameBuffer, Screen},
 };
@@ -115,32 +115,25 @@ impl Screen for SdlScreen<'_> {
     }
 }
 
-fn update_keypad(gba: &mut Gba, kb: &KeyboardState) {
-    gba.keypad
-        .set_pressed(Key::A, kb.is_scancode_pressed(Scancode::X));
-    gba.keypad
-        .set_pressed(Key::B, kb.is_scancode_pressed(Scancode::Z));
+fn update_keypad(kp: &mut Keypad, kb: &KeyboardState) {
+    let pressed = |scancode| kb.is_scancode_pressed(scancode);
 
-    gba.keypad.set_pressed(
+    kp.set_pressed(Key::A, pressed(Scancode::X));
+    kp.set_pressed(Key::B, pressed(Scancode::Z));
+
+    kp.set_pressed(
         Key::Select,
-        kb.is_scancode_pressed(Scancode::LShift) || kb.is_scancode_pressed(Scancode::RShift),
+        pressed(Scancode::LShift) || pressed(Scancode::RShift),
     );
-    gba.keypad
-        .set_pressed(Key::Start, kb.is_scancode_pressed(Scancode::Return));
+    kp.set_pressed(Key::Start, pressed(Scancode::Return));
 
-    gba.keypad
-        .set_pressed(Key::Up, kb.is_scancode_pressed(Scancode::Up));
-    gba.keypad
-        .set_pressed(Key::Down, kb.is_scancode_pressed(Scancode::Down));
-    gba.keypad
-        .set_pressed(Key::Left, kb.is_scancode_pressed(Scancode::Left));
-    gba.keypad
-        .set_pressed(Key::Right, kb.is_scancode_pressed(Scancode::Right));
+    kp.set_pressed(Key::Up, pressed(Scancode::Up));
+    kp.set_pressed(Key::Down, pressed(Scancode::Down));
+    kp.set_pressed(Key::Left, pressed(Scancode::Left));
+    kp.set_pressed(Key::Right, pressed(Scancode::Right));
 
-    gba.keypad
-        .set_pressed(Key::L, kb.is_scancode_pressed(Scancode::A));
-    gba.keypad
-        .set_pressed(Key::R, kb.is_scancode_pressed(Scancode::S));
+    kp.set_pressed(Key::L, pressed(Scancode::A));
+    kp.set_pressed(Key::R, pressed(Scancode::S));
 }
 
 fn main() -> Result<()> {
@@ -177,13 +170,13 @@ fn main() -> Result<()> {
 
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {
-        const MAX_REDRAW_SKIP: u32 = 1;
+        const MAX_REDRAW_SKIP: u32 = 2;
         const STEPS_PER_REDRAW: u32 = 120_000; // TODO: base this on cycles spent instead
 
         let mut skipped_redraws = 0;
         loop {
             for _ in 0..STEPS_PER_REDRAW {
-                gba.step(&mut screen);
+                gba.step(&mut screen, skipped_redraws > 0);
             }
 
             let rem_time = next_redraw_time - Instant::now();
@@ -204,7 +197,7 @@ fn main() -> Result<()> {
                 break 'main_loop;
             }
         }
-        update_keypad(&mut gba, &context.event_pump.keyboard_state());
+        update_keypad(&mut gba.keypad, &context.event_pump.keyboard_state());
 
         context.win_canvas.clear();
         context

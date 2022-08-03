@@ -32,19 +32,6 @@ impl Video {
         });
     }
 
-    pub(super) fn set_bgcnt_lo_bits(&mut self, bg_idx: usize, bits: u8) {
-        let bgcnt = &mut self.bgcnt[bg_idx];
-        let old_priority = bgcnt.priority;
-        bgcnt.set_lo_bits(bits);
-        if old_priority != bgcnt.priority {
-            self.priority_sort_tile_mode_bgs();
-        }
-    }
-
-    pub(super) fn set_bgcnt_hi_bits(&mut self, bg_idx: usize, bits: u8) {
-        self.bgcnt[bg_idx].set_hi_bits(bits);
-    }
-
     pub(super) fn compute_bg_tile_mode_dot_iter(
         &self,
         win: Window,

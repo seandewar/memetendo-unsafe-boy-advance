@@ -91,7 +91,7 @@ impl<'b, 'c> Gba<'b, 'c> {
         }
     }
 
-    pub fn step(&mut self, screen: &mut impl Screen) {
+    pub fn step(&mut self, screen: &mut impl Screen, skip_drawing: bool) {
         self.keypad.step(&mut self.irq);
 
         if self.haltcnt.0 == State::Running && !self.dma.transfer_in_progress() {
@@ -99,7 +99,8 @@ impl<'b, 'c> Gba<'b, 'c> {
         }
         if self.haltcnt.0 != State::Stopped {
             // TODO: actual cycle counting
-            self.video.step(screen, &mut self.irq, &mut self.dma, 2);
+            self.video
+                .step(screen, &mut self.irq, &mut self.dma, skip_drawing, 2);
             self.timers.step(&mut self.irq, 2);
 
             if let Some(do_transfer) = self.dma.step(&mut self.irq, 2) {
