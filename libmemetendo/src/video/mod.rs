@@ -10,7 +10,7 @@ use crate::{
     bus::Bus,
     dma::{self, Dma},
     irq::{Interrupt, Irq},
-    video::reg::Mode,
+    video::reg::BackgroundMode,
 };
 
 use self::{
@@ -193,7 +193,7 @@ impl Video {
                     dma.notify(dma::Event::VBlank);
 
                     for bg_ref in &mut self.bgref {
-                        bg_ref.internal = bg_ref.external();
+                        bg_ref.internal = bg_ref.external;
                     }
                 }
 
@@ -205,10 +205,10 @@ impl Video {
     }
 
     pub fn set_dispcnt_lo_bits(&mut self, bits: u8) {
-        let old_mode = self.dispcnt.mode();
+        let old_mode = self.dispcnt.mode;
         self.dispcnt.set_lo_bits(bits);
-        if old_mode != self.dispcnt.mode() && self.dispcnt.mode_type() == Mode::Tile {
-            self.tile_mode_bg_order = match self.dispcnt.mode() {
+        if old_mode != self.dispcnt.mode && self.dispcnt.mode() == BackgroundMode::Tile {
+            self.tile_mode_bg_order = match self.dispcnt.mode {
                 0 => array_vec![0, 1, 2, 3],
                 1 => array_vec![0, 1, 2],
                 2 => array_vec![2, 3],
@@ -216,10 +216,6 @@ impl Video {
             };
             self.priority_sort_tile_mode_bgs();
         }
-    }
-
-    pub fn set_dispcnt_hi_bits(&mut self, bits: u8) {
-        self.dispcnt.set_hi_bits(bits);
     }
 
     #[must_use]
@@ -302,7 +298,7 @@ impl Video {
             targeted && win_blendfx
         };
 
-        let dot = match self.bldcnt.mode() {
+        let dot = match self.bldcnt.mode {
             _ if !is_target(0) => top_dot,
             mode if is_target(1) && (mode == 1 || obj_alpha_mode) => {
                 let bot_dot = self.read_dot(top_infos[1]);
@@ -339,15 +335,15 @@ impl Video {
     fn compute_top_dots(&mut self, top_win: Window) -> [DotInfo; 2] {
         let mut obj_info = self.compute_top_obj_dot(top_win);
 
-        match self.dispcnt.mode_type() {
-            Mode::Tile => {
+        match self.dispcnt.mode() {
+            BackgroundMode::Tile => {
                 let mut infos = [DotInfo::Backdrop; 2];
                 let mut bg_iter = self.compute_bg_tile_mode_dot_iter(top_win).peekable();
 
                 while let DotInfo::Backdrop = infos[1] {
                     let top = match (obj_info, bg_iter.peek()) {
                         (Some(obj), Some(bg))
-                            if obj.priority <= self.bgcnt[bg.index()].priority() =>
+                            if obj.priority <= self.bgcnt[bg.index()].priority =>
                         {
                             DotInfo::Object(obj_info.take().unwrap())
                         }
@@ -365,11 +361,11 @@ impl Video {
 
                 infos
             }
-            Mode::Bitmap => {
+            BackgroundMode::Bitmap => {
                 let bg_info = self.compute_bg_bitmap_mode_dot(top_win);
 
                 match (obj_info, bg_info) {
-                    (Some(obj), Some(bg)) if obj.priority <= self.bgcnt[bg.index()].priority() => {
+                    (Some(obj), Some(bg)) if obj.priority <= self.bgcnt[bg.index()].priority => {
                         [DotInfo::Object(obj), DotInfo::Background(bg)]
                     }
                     (Some(obj), Some(bg)) => [DotInfo::Background(bg), DotInfo::Object(obj)],
@@ -378,7 +374,7 @@ impl Video {
                     (None, None) => [DotInfo::Backdrop; 2],
                 }
             }
-            Mode::Invalid => [DotInfo::Backdrop; 2],
+            BackgroundMode::Invalid => [DotInfo::Backdrop; 2],
         }
     }
 
@@ -443,7 +439,7 @@ impl Video {
                 continue;
             }
 
-            let (win_x, win_y) = (self.win[win_idx].horiz(), self.win[win_idx].vert());
+            let (win_x, win_y) = (self.win[win_idx].horiz, self.win[win_idx].vert);
             let inside_horiz = if win_x.0 <= win_x.1 {
                 self.x >= win_x.0.into() && self.x < win_x.1.into()
             } else {

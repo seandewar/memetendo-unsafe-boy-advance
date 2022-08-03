@@ -12,15 +12,11 @@ pub(super) enum DotInfo {
     Mode5 { pos: (u32, u32) },
 }
 
-const BITMAP_MODE_INDEX: usize = 2;
-
 impl DotInfo {
     pub fn index(self) -> usize {
         match self {
             DotInfo::TileMode { idx, .. } => idx,
-            DotInfo::Mode3 { .. } | DotInfo::Mode4 { .. } | DotInfo::Mode5 { .. } => {
-                BITMAP_MODE_INDEX
-            }
+            DotInfo::Mode3 { .. } | DotInfo::Mode4 { .. } | DotInfo::Mode5 { .. } => 2,
         }
     }
 }
@@ -30,17 +26,17 @@ impl Video {
         // If many BGs share the same priority, the one with the smallest index wins.
         self.tile_mode_bg_order.sort_unstable_by(|&a, &b| {
             self.bgcnt[a]
-                .priority()
-                .cmp(&self.bgcnt[b].priority())
+                .priority
+                .cmp(&self.bgcnt[b].priority)
                 .then_with(|| a.cmp(&b))
         });
     }
 
     pub(super) fn set_bgcnt_lo_bits(&mut self, bg_idx: usize, bits: u8) {
         let bgcnt = &mut self.bgcnt[bg_idx];
-        let old_priority = bgcnt.priority();
+        let old_priority = bgcnt.priority;
         bgcnt.set_lo_bits(bits);
-        if old_priority != bgcnt.priority() {
+        if old_priority != bgcnt.priority {
             self.priority_sort_tile_mode_bgs();
         }
     }
@@ -63,7 +59,8 @@ impl Video {
     }
 
     fn compute_bg_tile_mode_dot(&self, bg_idx: usize) -> Option<DotInfo> {
-        let (x, y) = if self.dispcnt.bg_uses_text_mode(bg_idx) {
+        let text_mode = self.dispcnt.mode == 0 || bg_idx < 2;
+        let (x, y) = if text_mode {
             let (x, y) = (u32::from(self.x), u32::from(self.y));
             let (scroll_x, scroll_y) = self.bgofs[bg_idx].get();
 
@@ -77,9 +74,8 @@ impl Video {
             #[allow(clippy::cast_sign_loss)]
             (x as u32, y as u32)
         };
-        let (tile_x, tile_y) = (x / u32::from(TILE_DOT_LEN), y / u32::from(TILE_DOT_LEN));
 
-        let text_mode = self.dispcnt.bg_uses_text_mode(bg_idx);
+        let (tile_x, tile_y) = (x / u32::from(TILE_DOT_LEN), y / u32::from(TILE_DOT_LEN));
         let screen_tile_len = u32::from(self.bgcnt[bg_idx].screen_tile_len(text_mode));
         let screen_idx = if text_mode {
             let screen_pos = (tile_x / screen_tile_len, tile_y / screen_tile_len);
@@ -111,20 +107,18 @@ impl Video {
             let tile_info = self.vram.as_ref().read_hword(tile_info_offset);
             let dots_idx = usize::from(tile_info.bits(..10));
 
-            if self.dispcnt.mode() == 0 || (self.dispcnt.mode() == 1 && bg_idx < 2) {
+            if self.dispcnt.mode == 0 || (self.dispcnt.mode == 1 && bg_idx < 2) {
                 (dot_x, dot_y) = Self::flip_tile_dot_pos(
                     (tile_info.bit(10), tile_info.bit(11)),
                     (1, 1),
                     (dot_x, dot_y),
                 );
             }
-
             let color256 = self.bgcnt[bg_idx].color256
-                || (self.dispcnt.mode() == 1 && bg_idx == 2)
-                || self.dispcnt.mode() == 2;
-            let palette_idx = (!color256).then(|| tile_info.bits(12..));
+                || (self.dispcnt.mode == 1 && bg_idx == 2)
+                || self.dispcnt.mode == 2;
 
-            (dots_idx, palette_idx)
+            (dots_idx, (!color256).then_some(tile_info.bits(12..)))
         } else {
             let dots_idx_offset = screen_base_offset + screen_tile_idx as usize;
             if dots_idx_offset >= self.vram.len() {
@@ -150,22 +144,20 @@ impl Video {
     }
 
     pub(super) fn compute_bg_bitmap_mode_dot(&self, win: Window) -> Option<DotInfo> {
-        if !self.dispcnt.display_bg[BITMAP_MODE_INDEX]
-            || self
-                .window_control(win)
-                .map_or(false, |w| !w.display_bg[BITMAP_MODE_INDEX])
+        if !self.dispcnt.display_bg[2]
+            || self.window_control(win).map_or(false, |w| !w.display_bg[2])
         {
             return None;
         }
 
-        let (x, y) = self.bg_affine_transform_pos(BITMAP_MODE_INDEX, self.x.into());
+        let (x, y) = self.bg_affine_transform_pos(2, self.x.into());
         if x < 0 || y < 0 {
             return None;
         }
         #[allow(clippy::cast_sign_loss)]
         let (x, y) = (x as u32, y as u32);
 
-        match self.dispcnt.mode() {
+        match self.dispcnt.mode {
             _ if x >= HBLANK_DOT.into() || y >= VBLANK_DOT.into() => None,
             3 => Some(DotInfo::Mode3 { pos: (x, y) }),
             4 => {

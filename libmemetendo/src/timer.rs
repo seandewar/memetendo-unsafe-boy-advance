@@ -19,45 +19,6 @@ struct Control {
     cached_bits: u16,
 }
 
-impl Bus for Timers {
-    fn read_byte(&mut self, addr: u32) -> u8 {
-        assert!((0x100..0x110).contains(&addr), "IO register address OOB");
-
-        let tmcnt = &mut self.0[(addr as usize & 0xf) / 4];
-        #[allow(clippy::cast_possible_truncation)]
-        match addr as usize & 3 {
-            0 => tmcnt.counter as u8,
-            1 => tmcnt.counter.bits(8..) as u8,
-            2 => tmcnt.cached_bits as u8,
-            3 => tmcnt.cached_bits.bits(8..) as u8,
-            _ => unreachable!(),
-        }
-    }
-
-    fn write_byte(&mut self, addr: u32, value: u8) {
-        assert!((0x100..0x110).contains(&addr), "IO register address OOB");
-
-        let tmcnt = &mut self.0[(addr as usize & 0xf) / 4];
-        match addr as usize & 3 {
-            0 => tmcnt.initial.set_bits(..8, value.into()),
-            1 => tmcnt.initial.set_bits(8.., value.into()),
-            2 => {
-                tmcnt.cached_bits.set_bits(..8, value.into());
-                tmcnt.frequency = value.bits(..2);
-                tmcnt.cascade = value.bit(2);
-                tmcnt.irq_enabled = value.bit(6);
-
-                let old_start = replace(&mut tmcnt.start, value.bit(7));
-                if !old_start && tmcnt.start {
-                    tmcnt.counter = tmcnt.initial;
-                }
-            }
-            3 => tmcnt.cached_bits.set_bits(8.., value.into()),
-            _ => unreachable!(),
-        };
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct Timers([Control; 4]);
 
@@ -112,5 +73,44 @@ impl Timers {
                 new_counter
             };
         }
+    }
+}
+
+impl Bus for Timers {
+    fn read_byte(&mut self, addr: u32) -> u8 {
+        assert!((0x100..0x110).contains(&addr), "IO register address OOB");
+
+        let tmcnt = &mut self.0[(addr as usize & 0xf) / 4];
+        #[allow(clippy::cast_possible_truncation)]
+        match addr as usize & 3 {
+            0 => tmcnt.counter as u8,
+            1 => tmcnt.counter.bits(8..) as u8,
+            2 => tmcnt.cached_bits as u8,
+            3 => tmcnt.cached_bits.bits(8..) as u8,
+            _ => unreachable!(),
+        }
+    }
+
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        assert!((0x100..0x110).contains(&addr), "IO register address OOB");
+
+        let tmcnt = &mut self.0[(addr as usize & 0xf) / 4];
+        match addr as usize & 3 {
+            0 => tmcnt.initial.set_bits(..8, value.into()),
+            1 => tmcnt.initial.set_bits(8.., value.into()),
+            2 => {
+                tmcnt.cached_bits.set_bits(..8, value.into());
+                tmcnt.frequency = value.bits(..2);
+                tmcnt.cascade = value.bit(2);
+                tmcnt.irq_enabled = value.bit(6);
+
+                let old_start = replace(&mut tmcnt.start, value.bit(7));
+                if !old_start && tmcnt.start {
+                    tmcnt.counter = tmcnt.initial;
+                }
+            }
+            3 => tmcnt.cached_bits.set_bits(8.., value.into()),
+            _ => unreachable!(),
+        };
     }
 }

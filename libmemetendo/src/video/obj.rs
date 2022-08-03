@@ -175,13 +175,13 @@ impl Oam {
 
         let new_attrs = self.read_attributes(idx);
         let old_attrs = &self.attrs[usize::from(idx)];
-
         let regions_maybe_stale = old_attrs.is_enabled() != new_attrs.is_enabled()
             || old_attrs.is_double_size() != new_attrs.is_double_size()
             || old_attrs.pos != new_attrs.pos
             || old_attrs.shape != new_attrs.shape
             || old_attrs.size != new_attrs.size
             || old_attrs.priority != new_attrs.priority;
+
         if force_region_update || regions_maybe_stale {
             update_regions(&mut self.regions, old_attrs, true);
             update_regions(&mut self.regions, &new_attrs, false);
