@@ -173,18 +173,14 @@ impl StatusRegister {
 
     #[must_use]
     pub fn bits(self) -> u32 {
-        let mut bits = 0;
-        bits.set_bit(31, self.signed);
-        bits.set_bit(30, self.zero);
-        bits.set_bit(29, self.carry);
-        bits.set_bit(28, self.overflow);
-
-        bits.set_bit(7, self.irq_disabled);
-        bits.set_bit(6, self.fiq_disabled);
-        bits |= self.state.bits();
-        bits |= self.mode.bits();
-
-        bits
+        0.with_bit(31, self.signed)
+            .with_bit(30, self.zero)
+            .with_bit(29, self.carry)
+            .with_bit(28, self.overflow)
+            .with_bit(7, self.irq_disabled)
+            .with_bit(6, self.fiq_disabled)
+            | self.state.bits()
+            | self.mode.bits()
     }
 
     pub(super) fn from_bits(bits: u32) -> Self {

@@ -3,6 +3,7 @@ use std::mem::{replace, take};
 use intbits::Bits;
 
 use crate::{
+    audio::Audio,
     bus::Bus,
     irq::{Interrupt, Irq},
 };
@@ -28,36 +29,44 @@ impl Timers {
         Self::default()
     }
 
-    pub fn step(&mut self, irq: &mut Irq, cycles: u8) {
-        let mut prev_counter_overflowed = false;
+    pub fn step(&mut self, irq: &mut Irq, audio: &mut Audio, cycles: u8) {
+        let mut prev_overflow_count = 0;
         for (i, timer) in self.0.iter_mut().enumerate() {
-            {
-                let prev_counter_overflowed = take(&mut prev_counter_overflowed);
-                if !timer.start || (timer.cascade && !prev_counter_overflowed) {
+            let ticks = {
+                let prev_overflow_count = take(&mut prev_overflow_count);
+                if !timer.start || (timer.cascade && prev_overflow_count == 0) {
                     continue;
                 }
-            }
 
-            if !timer.cascade {
-                const MAX_DIV: u32 = 1024;
+                if timer.cascade {
+                    prev_overflow_count
+                } else {
+                    const MAX_DIV: u32 = 1024;
 
-                let div = match timer.frequency {
-                    0 => 1,
-                    1 => 64,
-                    2 => 256,
-                    3 => MAX_DIV,
-                    _ => unreachable!(),
-                };
-                timer.accum += u32::from(cycles) * MAX_DIV / div;
-                if timer.accum < MAX_DIV {
-                    continue;
+                    let div = match timer.frequency {
+                        0 => 1,
+                        1 => 64,
+                        2 => 256,
+                        3 => MAX_DIV,
+                        _ => unreachable!(),
+                    };
+                    timer.accum += u32::from(cycles) * MAX_DIV / div;
+                    if timer.accum < MAX_DIV {
+                        continue;
+                    }
+
+                    #[allow(clippy::cast_possible_truncation)]
+                    let ticks = (timer.accum / MAX_DIV) as u16;
+                    timer.accum %= MAX_DIV;
+
+                    ticks
                 }
-                timer.accum %= MAX_DIV;
-            }
+            };
 
-            let (new_counter, overflowed) = timer.counter.overflowing_add(1);
+            let (new_counter, overflowed) = timer.counter.overflowing_add(ticks);
             timer.counter = if overflowed {
-                prev_counter_overflowed = true;
+                let extra_ticks = ticks - (u16::MAX - timer.counter);
+                let overflow_count = 1 + (extra_ticks / (u16::MAX - timer.initial));
                 if timer.irq_enabled {
                     irq.request(match i {
                         0 => Interrupt::Timer0,
@@ -67,8 +76,11 @@ impl Timers {
                         _ => unreachable!(),
                     });
                 }
+                #[allow(clippy::cast_possible_truncation)]
+                audio.notify_timer_overflow(i, overflow_count as _);
+                prev_overflow_count = overflow_count;
 
-                timer.initial
+                timer.initial + (extra_ticks % (u16::MAX - timer.initial))
             } else {
                 new_counter
             };
@@ -104,8 +116,7 @@ impl Bus for Timers {
                 tmcnt.cascade = value.bit(2);
                 tmcnt.irq_enabled = value.bit(6);
 
-                let old_start = replace(&mut tmcnt.start, value.bit(7));
-                if !old_start && tmcnt.start {
+                if !replace(&mut tmcnt.start, value.bit(7)) && tmcnt.start {
                     tmcnt.counter = tmcnt.initial;
                 }
             }

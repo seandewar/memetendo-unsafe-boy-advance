@@ -13,7 +13,7 @@ use crate::{
 use super::BlockTransferFlags;
 
 fn r_index(instr: u32, pos: u8) -> usize {
-    instr.bits(pos..(pos + 4)) as _
+    instr.bits(pos..pos + 4) as _
 }
 
 impl Cpu {

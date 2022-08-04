@@ -30,7 +30,7 @@ struct Attributes {
     pos: (i16, i16),
     affine: AffineAttribute,
     mode: Option<Mode>,
-    mosaic: bool,
+    _mosaic: bool, // TODO
     shape: u8,
     size: u8,
     dots_base_idx: u16,
@@ -246,7 +246,7 @@ impl Oam {
             pos: (arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9), y),
             affine,
             mode: Mode::from_repr(attrs[0].bits(10..12).into()),
-            mosaic: attrs[0].bit(12),
+            _mosaic: attrs[0].bit(12),
             shape: attrs[0].bits(14..) as u8,
             size: attrs[1].bits(14..) as u8,
             dots_base_idx: attrs[2].bits(..10),

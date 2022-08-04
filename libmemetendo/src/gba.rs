@@ -2,6 +2,7 @@ use intbits::Bits;
 
 use crate::{
     arm7tdmi::Cpu,
+    audio::{self, Audio},
     bus,
     dma::Dma,
     irq::Irq,
@@ -56,6 +57,7 @@ pub struct Gba<'b, 'c> {
     pub iwram: Box<[u8]>,
     pub ewram: Box<[u8]>,
     pub video: Video,
+    pub audio: Audio,
     pub keypad: Keypad,
     pub bios: Bios<'b>,
     pub cart: Cartridge<'c>,
@@ -74,6 +76,7 @@ impl<'b, 'c> Gba<'b, 'c> {
             iwram: vec![0; 0x8000].into_boxed_slice(),
             ewram: vec![0; 0x40000].into_boxed_slice(),
             video: Video::new(),
+            audio: Audio::new(),
             keypad: Keypad::new(),
             bios,
             cart,
@@ -82,8 +85,10 @@ impl<'b, 'c> Gba<'b, 'c> {
     }
 
     pub fn reset(&mut self, skip_bios: bool) {
+        // TODO: reset other hardware components
         self.bios.reset();
         self.cpu.reset(&mut bus!(self), skip_bios);
+        self.audio.reset(skip_bios);
 
         if skip_bios {
             self.iwram[0x7e00..].fill(0);
@@ -91,7 +96,12 @@ impl<'b, 'c> Gba<'b, 'c> {
         }
     }
 
-    pub fn step(&mut self, screen: &mut impl Screen, skip_drawing: bool) {
+    pub fn step(
+        &mut self,
+        screen: &mut impl Screen,
+        audio_device: &mut impl audio::Device,
+        skip_drawing: bool,
+    ) {
         self.keypad.step(&mut self.irq);
 
         if self.haltcnt.0 == State::Running && !self.dma.transfer_in_progress() {
@@ -101,11 +111,11 @@ impl<'b, 'c> Gba<'b, 'c> {
             // TODO: actual cycle counting
             self.video
                 .step(screen, &mut self.irq, &mut self.dma, skip_drawing, 3);
-
-            self.timers.step(&mut self.irq, 3);
+            self.timers.step(&mut self.irq, &mut self.audio, 3);
             if let Some(do_transfer) = self.dma.step(&mut self.irq, 3) {
                 do_transfer(&mut bus!(self));
             }
+            self.audio.step(audio_device, &mut self.dma, 3);
         }
 
         self.irq.step(&mut self.cpu, &mut self.haltcnt);
@@ -120,6 +130,7 @@ pub struct Bus<'a, 'b, 'c> {
     pub iwram: &'a mut [u8],
     pub ewram: &'a mut [u8],
     pub video: &'a mut Video,
+    pub audio: &'a mut Audio,
     pub keypad: &'a mut Keypad,
     pub bios: &'a mut Bios<'b>,
     pub cart: &'a mut Cartridge<'c>,
@@ -139,6 +150,7 @@ macro_rules! bus {
             iwram: &mut $gba.iwram,
             ewram: &mut $gba.ewram,
             video: &mut $gba.video,
+            audio: &mut $gba.audio,
             keypad: &mut $gba.keypad,
             cart: &mut $gba.cart,
             bios: &mut $gba.bios,
@@ -161,6 +173,7 @@ impl bus::Bus for Bus<'_, '_, '_> {
                 let addr = addr & 0x3ff;
                 match addr {
                     0x000..=0x056 => self.video.read_byte(addr),
+                    0x060..=0x0a7 => self.audio.read_byte(addr),
                     0x0b0..=0x0df => self.dma.read_byte(addr),
                     0x100..=0x10f => self.timers.read_byte(addr),
                     0x130..=0x133 => self.keypad.read_byte(addr),
@@ -198,6 +211,7 @@ impl bus::Bus for Bus<'_, '_, '_> {
                 let addr = addr & 0x3ff;
                 match addr {
                     0x000..=0x056 => self.video.write_byte(addr, value),
+                    0x060..=0x0a7 => self.audio.write_byte(addr, value),
                     0x0b0..=0x0df => self.dma.write_byte(addr, value),
                     0x100..=0x10f => self.timers.write_byte(addr, value),
                     0x130..=0x133 => self.keypad.write_byte(addr, value),

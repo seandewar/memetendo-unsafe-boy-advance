@@ -68,13 +68,9 @@ impl Bus for Keypad {
             0x131 => !self.pressed.bits(8..) as u8,
             // KEYCNT
             0x132 => self.keycnt.irq_keys as u8,
-            0x133 => {
-                let mut bits = self.keycnt.irq_keys.bits(8..) as u8;
-                bits.set_bit(6, self.keycnt.irq_enabled);
-                bits.set_bit(7, self.keycnt.irq_all_pressed);
-
-                bits
-            }
+            0x133 => (self.keycnt.irq_keys.bits(8..) as u8)
+                .with_bit(6, self.keycnt.irq_enabled)
+                .with_bit(7, self.keycnt.irq_all_pressed),
             _ => panic!("IO register address OOB"),
         }
     }

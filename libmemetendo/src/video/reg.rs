@@ -82,12 +82,10 @@ pub(super) struct DisplayStatus {
 impl DisplayStatus {
     #[allow(clippy::similar_names)]
     fn lo_bits(self, vblanking: bool, hblanking: bool, vcount: u8) -> u8 {
-        let mut bits = self.cached_bits;
-        bits.set_bit(0, vblanking);
-        bits.set_bit(1, hblanking);
-        bits.set_bit(2, vcount == self.vcount_target);
-
-        bits
+        self.cached_bits
+            .with_bit(0, vblanking)
+            .with_bit(1, hblanking)
+            .with_bit(2, vcount == self.vcount_target)
     }
 
     fn set_lo_bits(&mut self, bits: u8) {

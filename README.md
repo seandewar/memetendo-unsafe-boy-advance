@@ -1,6 +1,6 @@
 # Memetendo Unsafe Boy Advance
 
-Unfinished; I'll be working on this in my spare time :)
+Unfinished; I'll be working on this in my spare time (for fun!) :)
 
 ## Status
 
@@ -8,7 +8,7 @@ Unfinished; I'll be working on this in my spare time :)
 ![Pokemon FireRed screenshot](media/pokemon-firered.png)
 ![OpenLara screenshot](media/openlara.png)
 
-It's able to play some games!
+It's able to play some games, and has audio support!
 
 As for tests, it currently passes:
 - [FuzzARM](https://github.com/DenSinH/FuzzARM).
@@ -32,9 +32,25 @@ To set them up, download the submodules in this repository by using
 `git submodule update --init` and copy a GBA BIOS ROM to
 `/libmemetendo/tests/bios.bin`.
 
+## Performance
+
+Memetendo Unsafe Boy Advance uses a per-pixel based software renderer, which
+allows for graphical effects that modify video state mid-scanline to work, but
+performs badly in general.
+
+There's room for optimization, but in the future, I'd like to add a per-scanline
+based renderer instead, falling back to the per-pixel based renderer only if
+mid-scanline video state changes are detected.
+
+Maybe I'll also consider adding a hardware-accelerated renderer too at some
+point? Who knows!
+
 ## What's with the name?
 
 ![Origin of the name](media/name-origin.png)
+
+And as of writing, Memetendo Unsafe Boy Advance does not actually use any
+`unsafe` (application) code.
 
 ## Why Rust and not Zig?
 

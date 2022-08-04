@@ -1,5 +1,6 @@
 use image::RgbImage;
 use libmemetendo::{
+    audio,
     gba::Gba,
     rom::{Bios, Cartridge, Rom},
     video::screen::{self, FrameBuffer},
@@ -11,6 +12,12 @@ static BIOS_ROM: Lazy<Rom> = Lazy::new(|| {
         "failed to read BIOS ROM; place it in a \"bios.bin\" file within the tests directory",
     )
 });
+
+struct NullAudioDevice;
+
+impl audio::Device for NullAudioDevice {
+    fn push_sample(&mut self, _sample: (i16, i16)) {}
+}
 
 pub struct Runner<'c> {
     pub gba: Gba<'static, 'c>,
@@ -32,7 +39,7 @@ impl<'c> Runner<'c> {
     }
 
     pub fn step(&mut self) {
-        self.gba.step(&mut self.screen, false);
+        self.gba.step(&mut self.screen, &mut NullAudioDevice, false);
     }
 
     pub fn step_frame(&mut self) {

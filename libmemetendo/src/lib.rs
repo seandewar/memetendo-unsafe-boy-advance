@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 pub mod arm7tdmi;
+pub mod audio;
 pub mod bus;
 pub mod dma;
 pub mod gba;
@@ -9,6 +10,9 @@ pub mod keypad;
 pub mod rom;
 pub mod timer;
 pub mod video;
+
+/// 280,896 cycles per frame at ~59.737 Hz.
+pub const CYCLES_PER_SECOND: u32 = 16_779_884;
 
 #[macro_export]
 macro_rules! arbitrary_sign_extend {
