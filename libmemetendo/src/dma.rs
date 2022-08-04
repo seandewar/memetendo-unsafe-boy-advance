@@ -3,7 +3,7 @@ use std::mem::replace;
 use intbits::Bits;
 
 use crate::{
-    bus::Bus,
+    bus::{AlignedExt, Bus},
     irq::{Interrupt, Irq},
 };
 
@@ -53,8 +53,7 @@ impl Dma {
 
     #[must_use]
     pub fn step<B: Bus>(&mut self, irq: &mut Irq, cycles: u8) -> Option<impl Fn(&mut B)> {
-        // TODO: use cycles and transfer more than 1 block at a time if applicable,
-        //       cart DRQ, special timing modes
+        // TODO: proper cycle transfer timings, cart DRQ, special timing modes
         for chan_idx in 0..self.0.len() {
             if !self.0[chan_idx].enabled {
                 continue;
@@ -67,23 +66,26 @@ impl Dma {
             }
 
             let chan = &mut self.0[chan_idx];
-            let transfer_src_addr = chan.curr_src_addr;
-            let transfer_dst_addr = chan.curr_dst_addr;
+            let src_addr = chan.curr_src_addr;
+            let dst_addr = chan.curr_dst_addr;
+            let src_addr_ctrl = chan.src_addr_ctrl;
+            let dst_addr_ctrl = chan.dst_addr_ctrl;
+            let blocks = chan.rem_blocks.min(cycles.into());
             let transfer_word = chan.transfer_word;
+            let stride = if chan.transfer_word { 4 } else { 2 };
 
-            let update_addr = |addr: &mut u32, ctrl| {
-                let stride = if chan.transfer_word { 4 } else { 2 };
+            let update_addr = |addr: &mut u32, ctrl, offset| {
                 match ctrl {
-                    0 | 3 => *addr = addr.wrapping_add(stride),
-                    1 => *addr = addr.wrapping_sub(stride),
+                    0 | 3 => *addr = addr.wrapping_add(offset),
+                    1 => *addr = addr.wrapping_sub(offset),
                     2 => {}
                     _ => unreachable!(),
                 };
             };
-            update_addr(&mut chan.curr_src_addr, chan.src_addr_ctrl);
-            update_addr(&mut chan.curr_dst_addr, chan.dst_addr_ctrl);
+            update_addr(&mut chan.curr_src_addr, src_addr_ctrl, stride * blocks);
+            update_addr(&mut chan.curr_dst_addr, dst_addr_ctrl, stride * blocks);
 
-            chan.rem_blocks -= 1;
+            chan.rem_blocks -= blocks;
             if chan.rem_blocks == 0 {
                 chan.transferring = false;
                 chan.enabled = chan.repeat;
@@ -106,12 +108,19 @@ impl Dma {
             }
 
             return Some(move |bus: &mut B| {
-                if transfer_word {
-                    let value = bus.read_word(transfer_src_addr);
-                    bus.write_word(transfer_dst_addr, value);
-                } else {
-                    let value = bus.read_hword(transfer_src_addr);
-                    bus.write_hword(transfer_dst_addr, value);
+                let mut src_addr = src_addr;
+                let mut dst_addr = dst_addr;
+
+                for _ in 0..blocks {
+                    if transfer_word {
+                        let value = bus.read_word_aligned(src_addr);
+                        bus.write_word_aligned(dst_addr, value);
+                    } else {
+                        let value = bus.read_hword_aligned(src_addr);
+                        bus.write_hword_aligned(dst_addr, value);
+                    }
+                    update_addr(&mut src_addr, src_addr_ctrl, stride);
+                    update_addr(&mut dst_addr, dst_addr_ctrl, stride);
                 }
             });
         }
