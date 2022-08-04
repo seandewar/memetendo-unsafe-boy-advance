@@ -4,7 +4,7 @@ pub const WIDTH: usize = HBLANK_DOT as _;
 pub const HEIGHT: usize = VBLANK_DOT as _;
 
 pub trait Screen {
-    fn present_frame(&mut self, frame_buf: &FrameBuffer);
+    fn finished_frame(&mut self, frame: &FrameBuffer);
 }
 
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
@@ -61,7 +61,7 @@ impl FrameBuffer {
 
     pub fn set_pixel(&mut self, x: usize, y: usize, rgb: Rgb, green_swap: bool) {
         let i = Self::pixel_index(x, y);
-        self.0[i..i + 3].copy_from_slice(&rgb.to_le_bytes()[..]);
+        self.0[i..i + 3].copy_from_slice(&rgb.to_le_bytes());
         if green_swap && x % 2 == 1 {
             self.0.swap(i + 1, i - 2);
         }

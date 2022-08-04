@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 use std::{
+    mem::take,
     path::Path,
     thread::sleep,
     time::{Duration, Instant},
@@ -73,8 +74,7 @@ impl SdlContext {
 }
 
 struct SdlScreen<'r> {
-    frame_buf: FrameBuffer,
-    is_stale: bool,
+    new_frame: bool,
     texture: Texture<'r>,
 }
 
@@ -90,28 +90,23 @@ impl<'r> SdlScreen<'r> {
             .context("failed to create screen texture")?;
 
         Ok(Self {
-            frame_buf: FrameBuffer::new(),
-            is_stale: true,
+            new_frame: false,
             texture,
         })
     }
 
-    fn texture(&mut self) -> Result<&Texture> {
-        if self.is_stale {
-            self.texture
-                .with_lock(None, |buf, _| buf.copy_from_slice(&self.frame_buf.0[..]))
-                .map_err(|e| anyhow!("failed to lock screen texture: {e}"))?;
-            self.is_stale = false;
-        }
+    fn update_texture(&mut self, frame: &FrameBuffer) -> Result<&Texture> {
+        self.texture
+            .with_lock(None, |buf, _| buf.copy_from_slice(&frame.0))
+            .map_err(|e| anyhow!("failed to lock screen texture: {e}"))?;
 
         Ok(&self.texture)
     }
 }
 
 impl Screen for SdlScreen<'_> {
-    fn present_frame(&mut self, frame_buf: &FrameBuffer) {
-        self.frame_buf.0.copy_from_slice(&frame_buf.0[..]);
-        self.is_stale = true;
+    fn finished_frame(&mut self, _frame: &FrameBuffer) {
+        self.new_frame = true;
     }
 }
 
@@ -171,11 +166,10 @@ fn main() -> Result<()> {
     let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
     'main_loop: loop {
         const MAX_REDRAW_SKIP: u32 = 2;
-        const STEPS_PER_REDRAW: u32 = 120_000; // TODO: base this on cycles spent instead
 
         let mut skipped_redraws = 0;
         loop {
-            for _ in 0..STEPS_PER_REDRAW {
+            while !take(&mut screen.new_frame) {
                 gba.step(&mut screen, skipped_redraws > 0);
             }
 
@@ -202,7 +196,7 @@ fn main() -> Result<()> {
         context.win_canvas.clear();
         context
             .win_canvas
-            .copy(screen.texture()?, None, None)
+            .copy(screen.update_texture(gba.video.frame())?, None, None)
             .map_err(|e| anyhow!("failed to draw screen texture: {e}"))?;
         context.win_canvas.present();
 

@@ -100,10 +100,10 @@ impl<'b, 'c> Gba<'b, 'c> {
         if self.haltcnt.0 != State::Stopped {
             // TODO: actual cycle counting
             self.video
-                .step(screen, &mut self.irq, &mut self.dma, skip_drawing, 2);
-            self.timers.step(&mut self.irq, 2);
+                .step(screen, &mut self.irq, &mut self.dma, skip_drawing, 3);
 
-            if let Some(do_transfer) = self.dma.step(&mut self.irq, 2) {
+            self.timers.step(&mut self.irq, 3);
+            if let Some(do_transfer) = self.dma.step(&mut self.irq, 3) {
                 do_transfer(&mut bus!(self));
             }
         }

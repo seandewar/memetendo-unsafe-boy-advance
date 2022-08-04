@@ -84,7 +84,8 @@ pub struct Video {
     y: u8,
     cycle_accum: u16,
     tile_mode_bg_order: ArrayVec<[usize; 4]>,
-    frame_buf: FrameBuffer,
+    frames: [FrameBuffer; 2],
+    back_frame_idx: usize,
 
     vram: Box<[u8]>,
     pub palette_ram: PaletteRam,
@@ -128,7 +129,8 @@ impl Video {
             y: 0,
             cycle_accum: 0,
             tile_mode_bg_order: array_vec![0, 1, 2, 3],
-            frame_buf: FrameBuffer::new(),
+            frames: [FrameBuffer::new(), FrameBuffer::new()],
+            back_frame_idx: 0,
             vram: vec![0; 0x1_8000].into_boxed_slice(),
             palette_ram: PaletteRam::default(),
             oam: Oam::default(),
@@ -166,8 +168,12 @@ impl Video {
 
             if self.x < HBLANK_DOT.into() && self.y < VBLANK_DOT && !skip_drawing {
                 let rgb = self.compute_rgb();
-                self.frame_buf
-                    .set_pixel(self.x.into(), self.y.into(), rgb, self.greenswp.bit(0));
+                self.frames[self.back_frame_idx].set_pixel(
+                    self.x.into(),
+                    self.y.into(),
+                    rgb,
+                    self.greenswp.bit(0),
+                );
             }
 
             self.x += 1;
@@ -186,7 +192,10 @@ impl Video {
                     }
                 }
                 if self.y == VBLANK_DOT - 1 {
-                    screen.present_frame(&self.frame_buf);
+                    screen.finished_frame(&self.frames[self.back_frame_idx]);
+                    if !skip_drawing {
+                        self.back_frame_idx = (self.back_frame_idx + 1) % self.frames.len();
+                    }
                 }
             }
 
@@ -216,6 +225,11 @@ impl Video {
     #[must_use]
     pub fn vram(&mut self) -> Vram {
         Vram(self)
+    }
+
+    #[must_use]
+    pub fn frame(&self) -> &FrameBuffer {
+        &self.frames[self.back_frame_idx.wrapping_sub(1) % self.frames.len()]
     }
 }
 

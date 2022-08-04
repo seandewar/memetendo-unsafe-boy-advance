@@ -36,8 +36,8 @@ impl<'c> Runner<'c> {
     }
 
     pub fn step_frame(&mut self) {
-        self.screen.is_new_frame = false;
-        while !self.screen.is_new_frame {
+        self.screen.new_frame = false;
+        while !self.screen.new_frame {
             self.step();
         }
     }
@@ -59,7 +59,7 @@ impl<'c> Runner<'c> {
 
 pub struct Screen {
     pub image: RgbImage,
-    is_new_frame: bool,
+    new_frame: bool,
 }
 
 impl Default for Screen {
@@ -72,17 +72,17 @@ impl Screen {
     fn new() -> Self {
         Self {
             image: RgbImage::new(screen::WIDTH as u32, screen::HEIGHT as u32),
-            is_new_frame: false,
+            new_frame: false,
         }
     }
 }
 
 impl screen::Screen for Screen {
-    fn present_frame(&mut self, frame_buf: &FrameBuffer) {
+    fn finished_frame(&mut self, frame: &FrameBuffer) {
         self.image
             .as_flat_samples_mut()
             .as_mut_slice()
-            .copy_from_slice(&frame_buf.0[..]);
-        self.is_new_frame = true;
+            .copy_from_slice(&frame.0);
+        self.new_frame = true;
     }
 }
