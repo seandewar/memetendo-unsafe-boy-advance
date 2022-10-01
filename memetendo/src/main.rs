@@ -123,6 +123,7 @@ impl Screen for SdlScreen<'_> {
 }
 
 struct SdlAudioDevice {
+    channels: u8,
     freq: u32,
     freq_counter: u32,
     freq_counter_accum: u32,
@@ -151,6 +152,7 @@ impl SdlAudioDevice {
         }
 
         Ok(Self {
+            channels: spec.channels,
             freq,
             freq_counter: 0,
             freq_counter_accum: 0,
@@ -158,6 +160,22 @@ impl SdlAudioDevice {
             accum_extra_sample: false,
             samples: Vec::new(),
         })
+    }
+
+    fn queue_samples(&mut self, queue: &AudioQueue<i16>) {
+        // Try not to have too many old samples queued, otherwise there may be a noticeable
+        // delay when playing our new samples. This can happen after lots of frame skip.
+        // If there are still ~333ms worth of old samples not yet sent to the hardware, just clear
+        // them all.
+        if queue.size() > (self.freq * u32::from(self.channels)) / 3 {
+            queue.clear();
+        }
+
+        if let Err(e) = queue.queue_audio(&self.samples[..]) {
+            // Probably not fatal.
+            println!("failed to queue {} audio samples: {e}", self.samples.len());
+        }
+        self.samples.clear();
     }
 }
 
@@ -186,8 +204,12 @@ impl audio::Device for SdlAudioDevice {
             self.freq_counter_accum -= self.freq;
         }
 
-        self.samples.push(sample.0);
-        self.samples.push(sample.1);
+        if self.channels > 1 {
+            self.samples.push(sample.0);
+            self.samples.push(sample.1);
+        } else {
+            self.samples.push(sample.0 / 2 + sample.1 / 2);
+        }
     }
 }
 
@@ -213,7 +235,7 @@ fn init_audio_device(context: &SdlContext) -> (Option<AudioQueue<i16>>, Option<S
         &AudioSpecDesired {
             freq: Some(44_100),
             channels: Some(2),
-            samples: Some(1024),
+            samples: Some(2048),
         },
     ) {
         Ok(queue) => queue,
@@ -258,7 +280,7 @@ fn update_keypad(kp: &mut Keypad, kb: &KeyboardState) {
 }
 
 fn main() -> Result<()> {
-    const REDRAW_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
+    const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
     let matches = command!()
         .arg(
@@ -291,41 +313,34 @@ fn main() -> Result<()> {
 
     let (audio_queue, mut audio_device) = init_audio_device(&context);
 
-    let mut next_redraw_time = Instant::now() + REDRAW_DURATION;
+    let mut next_redraw_time = Instant::now() + FRAME_DURATION;
     'main_loop: loop {
-        const MAX_REDRAW_SKIP: u32 = 3;
+        const MAX_FRAME_SKIP: u32 = 3;
 
-        let mut skipped_redraws = 0;
+        let mut skipped_frames = 0;
         loop {
             while !take(&mut screen.new_frame) {
                 gba.step(
                     &mut screen,
                     &mut SdlOptionAudioDevice(audio_device.as_mut()),
-                    skipped_redraws > 0,
+                    skipped_frames > 0,
                 );
             }
             if let (Some(queue), Some(device)) = (audio_queue.as_ref(), audio_device.as_mut()) {
-                if let Err(e) = queue.queue_audio(&device.samples[..]) {
-                    // Probably not fatal.
-                    println!(
-                        "failed to queue {} audio samples: {e}",
-                        device.samples.len()
-                    );
-                }
-                device.samples.clear();
+                device.queue_samples(queue);
             }
 
             let rem_time = next_redraw_time - Instant::now();
-            next_redraw_time += REDRAW_DURATION;
+            next_redraw_time += FRAME_DURATION;
             if rem_time > Duration::ZERO {
                 sleep(rem_time);
                 break;
             }
 
-            if skipped_redraws >= MAX_REDRAW_SKIP {
+            if skipped_frames >= MAX_FRAME_SKIP {
                 break;
             }
-            skipped_redraws += 1;
+            skipped_frames += 1;
         }
 
         for event in context.event_pump.poll_iter() {
@@ -342,8 +357,8 @@ fn main() -> Result<()> {
             .map_err(|e| anyhow!("failed to draw screen texture: {e}"))?;
         context.win_canvas.present();
 
-        if skipped_redraws >= MAX_REDRAW_SKIP {
-            next_redraw_time = Instant::now() + REDRAW_DURATION;
+        if skipped_frames >= MAX_FRAME_SKIP {
+            next_redraw_time = Instant::now() + FRAME_DURATION;
         }
     }
 
