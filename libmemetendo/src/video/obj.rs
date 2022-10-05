@@ -306,10 +306,8 @@ impl Video {
         let (x, y) = (self.x as i16, i16::from(self.y));
         let (obj_x, obj_y) = attrs.pos;
         let (clip_width, clip_height) = attrs.clip_dots_size();
-        if x < obj_x
-            || x >= obj_x + i16::from(clip_width)
-            || y < obj_y
-            || y >= obj_y + i16::from(clip_height)
+        if !(obj_x..obj_x + i16::from(clip_width)).contains(&x)
+            || !(obj_y..obj_y + i16::from(clip_height)).contains(&y)
         {
             return None; // Clipped
         }
@@ -332,10 +330,8 @@ impl Video {
                     (tile_width, tile_height),
                     (obj_dot_x, obj_dot_y),
                 );
-                if obj_dot_x < 0
-                    || obj_dot_x >= i32::from(obj_width)
-                    || obj_dot_y < 0
-                    || obj_dot_y >= i32::from(obj_height)
+                if !(0..i32::from(obj_width)).contains(&obj_dot_x)
+                    || !(0..i32::from(obj_height)).contains(&obj_dot_y)
                 {
                     return None; // Out of sprite bounds
                 }

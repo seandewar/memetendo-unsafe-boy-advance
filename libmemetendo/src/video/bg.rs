@@ -48,24 +48,21 @@ impl Video {
     fn compute_bg_tile_mode_dot(&self, bg_idx: usize) -> Option<DotInfo> {
         let text_mode = self.dispcnt.mode == 0 || bg_idx < 2;
         let (x, y) = if text_mode {
-            let (x, y) = (u32::from(self.x), u32::from(self.y));
+            let (x, y) = (i32::from(self.x), i32::from(self.y));
             let (scroll_x, scroll_y) = self.bgofs[bg_idx].get();
 
-            (u32::from(scroll_x) + x, u32::from(scroll_y) + y)
+            (i32::from(scroll_x) + x, i32::from(scroll_y) + y)
         } else {
-            let (x, y) = self.bg_affine_transform_pos(bg_idx, i32::from(self.x));
-            if x < 0 || y < 0 {
-                return None;
-            }
-
-            #[allow(clippy::cast_sign_loss)]
-            (x as u32, y as u32)
+            self.bg_affine_transform_pos(bg_idx, self.x.into())
         };
 
-        let (tile_x, tile_y) = (x / u32::from(TILE_DOT_LEN), y / u32::from(TILE_DOT_LEN));
-        let screen_tile_len = u32::from(self.bgcnt[bg_idx].screen_tile_len(text_mode));
+        let (tile_x, tile_y) = (x / i32::from(TILE_DOT_LEN), y / i32::from(TILE_DOT_LEN));
+        let screen_tile_len = self.bgcnt[bg_idx].screen_tile_len(text_mode);
         let screen_idx = if text_mode {
-            let screen_pos = (tile_x / screen_tile_len, tile_y / screen_tile_len);
+            let screen_pos = (
+                tile_x / i32::from(screen_tile_len),
+                tile_y / i32::from(screen_tile_len),
+            );
             self.bgcnt[bg_idx].text_mode_screen_index(screen_pos)
         } else {
             0
@@ -74,19 +71,26 @@ impl Video {
         let screen_wraparound = text_mode || self.bgcnt[bg_idx].wraparound;
 
         let (screen_tile_x, screen_tile_y) = if screen_wraparound {
-            (tile_x % screen_tile_len, tile_y % screen_tile_len)
+            (
+                tile_x.rem_euclid(screen_tile_len.into()) as u32,
+                tile_y.rem_euclid(screen_tile_len.into()) as u32,
+            )
         } else {
-            (tile_x, tile_y)
+            if !(0..i32::from(screen_tile_len)).contains(&tile_x)
+                || !(0..i32::from(screen_tile_len)).contains(&tile_y)
+            {
+                return None; // Screen wraparound disabled and out of bounds
+            }
+
+            #[allow(clippy::cast_sign_loss)]
+            (tile_x as u32, tile_y as u32)
         };
-        if screen_tile_x >= screen_tile_len || screen_tile_y >= screen_tile_len {
-            return None;
-        }
-        let screen_tile_idx = screen_tile_y * screen_tile_len + screen_tile_x;
+        let screen_tile_idx = screen_tile_y * u32::from(screen_tile_len) + screen_tile_x;
 
         #[allow(clippy::cast_possible_truncation)]
         let (mut dot_x, mut dot_y) = (
-            (x % u32::from(TILE_DOT_LEN)) as u8,
-            (y % u32::from(TILE_DOT_LEN)) as u8,
+            x.rem_euclid(TILE_DOT_LEN.into()) as u8,
+            y.rem_euclid(TILE_DOT_LEN.into()) as u8,
         );
         let (dots_idx, palette_idx) = if text_mode {
             #[allow(clippy::cast_possible_truncation)]

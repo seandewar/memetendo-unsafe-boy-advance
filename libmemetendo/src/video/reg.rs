@@ -151,7 +151,7 @@ impl BackgroundControl {
         }
     }
 
-    pub fn text_mode_screen_index(self, (screen_x, screen_y): (u32, u32)) -> u8 {
+    pub fn text_mode_screen_index(self, (screen_x, screen_y): (i32, i32)) -> u8 {
         let layout = match self.screen_size {
             0 => [[0, 0], [0, 0]],
             1 => [[0, 1], [0, 1]],
@@ -160,7 +160,7 @@ impl BackgroundControl {
             _ => unreachable!(),
         };
 
-        layout[screen_y as usize % 2][screen_x as usize % 2]
+        layout[screen_y.rem_euclid(2) as usize][screen_x.rem_euclid(2) as usize]
     }
 }
 
