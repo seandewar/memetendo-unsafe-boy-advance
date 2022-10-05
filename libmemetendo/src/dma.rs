@@ -64,14 +64,8 @@ impl Dma {
     pub fn step<B: Bus>(&mut self, irq: &mut Irq, cycles: u8) -> Option<impl Fn(&mut B)> {
         // TODO: proper cycle transfer timings, cart DRQ, special timing modes
         for chan_idx in 0..self.0.len() {
-            if !self.0[chan_idx].enabled {
+            if !self.0[chan_idx].enabled || !self.0[chan_idx].transferring {
                 continue;
-            }
-            if !self.0[chan_idx].transferring {
-                if self.0[chan_idx].timing_mode != 0 {
-                    continue;
-                }
-                self.start_transfer(chan_idx);
             }
 
             let audio_fifo = self.in_audio_fifo_mode(chan_idx);
@@ -240,6 +234,10 @@ impl Bus for Dma {
                     chan.src_addr = chan.initial_src_addr;
                     chan.dst_addr = chan.initial_dst_addr;
                     chan.rem_blocks = chan.initial_blocks;
+
+                    if chan.timing_mode == 0 {
+                        self.start_transfer(chan_idx);
+                    }
                 }
             }
             _ => unreachable!(),
