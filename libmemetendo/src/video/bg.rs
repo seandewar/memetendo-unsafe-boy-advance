@@ -53,17 +53,20 @@ impl Video {
 
             (i32::from(scroll_x) + x, i32::from(scroll_y) + y)
         } else {
+            // Unlike text mode, this may result in a negative position.
             self.bg_affine_transform_pos(bg_idx, self.x.into())
         };
 
-        let (tile_x, tile_y) = (x / i32::from(TILE_DOT_LEN), y / i32::from(TILE_DOT_LEN));
+        let (tile_x, tile_y) = (
+            x.div_euclid(TILE_DOT_LEN.into()),
+            y.div_euclid(TILE_DOT_LEN.into()),
+        );
         let screen_tile_len = self.bgcnt[bg_idx].screen_tile_len(text_mode);
         let screen_idx = if text_mode {
-            let screen_pos = (
+            self.bgcnt[bg_idx].text_mode_screen_index((
                 tile_x / i32::from(screen_tile_len),
                 tile_y / i32::from(screen_tile_len),
-            );
-            self.bgcnt[bg_idx].text_mode_screen_index(screen_pos)
+            ))
         } else {
             0
         };
