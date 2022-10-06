@@ -65,8 +65,13 @@ impl Timers {
 
             let (new_counter, overflowed) = timer.counter.overflowing_add(ticks);
             timer.counter = if overflowed {
-                let extra_ticks = ticks - (u16::MAX - timer.counter);
-                let overflow_count = 1 + (extra_ticks / (u16::MAX - timer.initial));
+                let extra_ticks = u32::from(ticks - (u16::MAX - timer.counter) - 1);
+                let ticks_to_overflow = u32::from(u16::MAX - timer.initial) + 1;
+                #[allow(clippy::cast_possible_truncation)]
+                let new_counter = timer.initial + (extra_ticks % ticks_to_overflow) as u16;
+                #[allow(clippy::cast_possible_truncation)]
+                let overflow_count = 1 + (extra_ticks / ticks_to_overflow) as u8;
+
                 if timer.irq_enabled {
                     irq.request(match i {
                         0 => Interrupt::Timer0,
@@ -76,11 +81,10 @@ impl Timers {
                         _ => unreachable!(),
                     });
                 }
-                #[allow(clippy::cast_possible_truncation)]
-                audio.notify_timer_overflow(i, overflow_count as _);
-                prev_overflow_count = overflow_count;
+                audio.notify_timer_overflow(i, overflow_count);
+                prev_overflow_count = overflow_count.into();
 
-                timer.initial + (extra_ticks % (u16::MAX - timer.initial))
+                new_counter
             } else {
                 new_counter
             };
