@@ -10,14 +10,13 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use clap::{arg, command, Arg};
 use libmemetendo::{
-    audio::{self, SAMPLE_FREQUENCY},
     gba::Gba,
     keypad::{Key, Keypad},
     rom::{Bios, Cartridge, Rom},
     video::screen::{self, FrameBuffer, Screen},
 };
 use sdl2::{
-    audio::{AudioQueue, AudioSpec, AudioSpecDesired},
+    audio::AudioSpecDesired,
     event::Event,
     keyboard::{KeyboardState, Scancode},
     pixels::{Color, PixelFormatEnum},
@@ -25,6 +24,10 @@ use sdl2::{
     video::WindowContext,
     AudioSubsystem, EventPump, Sdl, VideoSubsystem,
 };
+
+use crate::audio::Audio;
+
+mod audio;
 
 struct SdlContext {
     _sdl: Sdl,
@@ -122,142 +125,6 @@ impl Screen for SdlScreen<'_> {
     }
 }
 
-struct SdlAudioDevice {
-    channels: u8,
-    freq: u32,
-    freq_counter: u32,
-    freq_counter_accum: u32,
-    sample_accum: (i32, i32),
-    accum_extra_sample: bool,
-    samples: Vec<i16>,
-}
-
-impl SdlAudioDevice {
-    fn new(spec: &AudioSpec) -> Result<Self> {
-        println!("audio spec: {spec:?}");
-        if spec.channels > 2 {
-            return Err(anyhow!(
-                "only 1 (mono) or 2 (stereo) audio channels are currently supported (got {})",
-                spec.channels
-            ));
-        }
-
-        #[allow(clippy::cast_sign_loss)]
-        let freq = spec.freq as u32;
-        if freq > SAMPLE_FREQUENCY {
-            // We could technically handle this, but it's probably not worth it.
-            return Err(anyhow!(
-                "audio frequency too high (got: {freq} Hz, max: {SAMPLE_FREQUENCY} Hz)"
-            ));
-        }
-
-        Ok(Self {
-            channels: spec.channels,
-            freq,
-            freq_counter: 0,
-            freq_counter_accum: 0,
-            sample_accum: (0, 0),
-            accum_extra_sample: false,
-            samples: Vec::new(),
-        })
-    }
-
-    fn queue_samples(&mut self, queue: &AudioQueue<i16>) {
-        // Try not to have too many old samples queued, otherwise there may be a noticeable
-        // delay when playing our new samples. This can happen after lots of frame skip.
-        // If there are still ~333ms worth of old samples not yet sent to the hardware, just clear
-        // them all.
-        if queue.size() > (self.freq * u32::from(self.channels)) / 3 {
-            queue.clear();
-        }
-
-        if let Err(e) = queue.queue_audio(&self.samples[..]) {
-            // Probably not fatal.
-            println!("failed to queue {} audio samples: {e}", self.samples.len());
-        }
-        self.samples.clear();
-    }
-}
-
-impl audio::Device for SdlAudioDevice {
-    fn push_sample(&mut self, sample: (i16, i16)) {
-        self.sample_accum.0 += i32::from(sample.0);
-        self.sample_accum.1 += i32::from(sample.1);
-        self.freq_counter += 1;
-        if self.freq_counter < (SAMPLE_FREQUENCY / self.freq) + u32::from(self.accum_extra_sample) {
-            return;
-        }
-
-        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        let sample = (
-            (self.sample_accum.0 / self.freq_counter as i32) as i16,
-            (self.sample_accum.1 / self.freq_counter as i32) as i16,
-        );
-        self.freq_counter = 0;
-        self.sample_accum = (0, 0);
-
-        // Driver frequency may not divide exactly with the sample output frequency, so we may
-        // drift behind by a full sample; if so, accumulate an extra sample next time.
-        self.freq_counter_accum += SAMPLE_FREQUENCY % self.freq;
-        self.accum_extra_sample = self.freq_counter_accum >= self.freq;
-        if self.accum_extra_sample {
-            self.freq_counter_accum -= self.freq;
-        }
-
-        if self.channels > 1 {
-            self.samples.push(sample.0);
-            self.samples.push(sample.1);
-        } else {
-            self.samples.push(sample.0 / 2 + sample.1 / 2);
-        }
-    }
-}
-
-struct SdlOptionAudioDevice<'a>(Option<&'a mut SdlAudioDevice>);
-
-impl audio::Device for SdlOptionAudioDevice<'_> {
-    fn push_sample(&mut self, sample: (i16, i16)) {
-        if let Some(ref mut device) = self.0 {
-            device.push_sample(sample);
-        }
-    }
-}
-
-fn init_audio_device(context: &SdlContext) -> (Option<AudioQueue<i16>>, Option<SdlAudioDevice>) {
-    let audio = if let Some(audio) = context.sdl_audio.as_ref() {
-        audio
-    } else {
-        return (None, None);
-    };
-
-    let queue = match audio.open_queue(
-        None,
-        &AudioSpecDesired {
-            freq: Some(44_100),
-            channels: Some(2),
-            samples: Some(2048),
-        },
-    ) {
-        Ok(queue) => queue,
-        Err(e) => {
-            println!("failed to create sdl2 audio queue: {e}");
-            return (None, None);
-        }
-    };
-    let device = match SdlAudioDevice::new(queue.spec()) {
-        Ok(device) => {
-            queue.resume();
-            Some(device)
-        }
-        Err(e) => {
-            println!("failed to create sdl2 audio device: {e}");
-            None
-        }
-    };
-
-    (Some(queue), device)
-}
-
 fn update_keypad(kp: &mut Keypad, kb: &KeyboardState) {
     let pressed = |scancode| kb.is_scancode_pressed(scancode);
 
@@ -311,7 +178,20 @@ fn main() -> Result<()> {
     let mut gba = Gba::new(bios, cart);
     gba.reset(skip_bios);
 
-    let (audio_queue, mut audio_device) = init_audio_device(&context);
+    let mut audio = Audio::new(context.sdl_audio.as_ref().map(|sdl_audio| {
+        (
+            sdl_audio,
+            AudioSpecDesired {
+                freq: Some(44_100),
+                channels: Some(2),
+                samples: Some(2048),
+            },
+        )
+    }))
+    .unwrap_or_else(|(e, audio)| {
+        println!("failed to initialize audio: {e}");
+        audio
+    });
 
     let mut next_redraw_time = Instant::now() + FRAME_DURATION;
     'main_loop: loop {
@@ -320,14 +200,10 @@ fn main() -> Result<()> {
         let mut skipped_frames = 0;
         loop {
             while !take(&mut screen.new_frame) {
-                gba.step(
-                    &mut screen,
-                    &mut SdlOptionAudioDevice(audio_device.as_mut()),
-                    skipped_frames > 0,
-                );
+                gba.step(&mut screen, &mut audio, skipped_frames > 0);
             }
-            if let (Some(queue), Some(device)) = (audio_queue.as_ref(), audio_device.as_mut()) {
-                device.queue_samples(queue);
+            if let Err(e) = audio.queue_samples() {
+                println!("failed to queue audio samples: {e}");
             }
 
             let rem_time = next_redraw_time - Instant::now();

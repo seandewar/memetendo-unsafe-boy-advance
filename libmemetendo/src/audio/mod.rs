@@ -12,7 +12,7 @@ use self::chan::{
 
 mod chan;
 
-pub trait Device {
+pub trait Callback {
     fn push_sample(&mut self, sample: (i16, i16));
 }
 
@@ -58,7 +58,7 @@ impl Audio {
         }
     }
 
-    pub fn step(&mut self, device: &mut impl Device, dma: &mut Dma, cycles: u8) {
+    pub fn step(&mut self, cb: &mut impl Callback, dma: &mut Dma, cycles: u8) {
         // Frame sequencer runs at 512 Hz.
         #[allow(clippy::cast_possible_truncation)] // it's fine clippy, gosh
         const CYCLES_PER_FRAME_SEQ_CLOCK: u16 = (CYCLES_PER_SECOND / 512) as _;
@@ -105,7 +105,7 @@ impl Audio {
             self.channels.2.step_wave();
             self.channels.3.step_noise();
 
-            device.push_sample(self.mix_sample());
+            cb.push_sample(self.mix_sample());
         }
     }
 

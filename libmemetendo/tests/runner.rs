@@ -13,9 +13,9 @@ static BIOS_ROM: Lazy<Rom> = Lazy::new(|| {
     )
 });
 
-struct NullAudioDevice;
+struct NullAudioCallback;
 
-impl audio::Device for NullAudioDevice {
+impl audio::Callback for NullAudioCallback {
     fn push_sample(&mut self, _sample: (i16, i16)) {}
 }
 
@@ -39,7 +39,8 @@ impl<'c> Runner<'c> {
     }
 
     pub fn step(&mut self) {
-        self.gba.step(&mut self.screen, &mut NullAudioDevice, false);
+        self.gba
+            .step(&mut self.screen, &mut NullAudioCallback, false);
     }
 
     pub fn step_frame(&mut self) {

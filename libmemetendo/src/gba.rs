@@ -99,7 +99,7 @@ impl<'b, 'c> Gba<'b, 'c> {
     pub fn step(
         &mut self,
         screen: &mut impl Screen,
-        audio_device: &mut impl audio::Device,
+        audio_cb: &mut impl audio::Callback,
         skip_drawing: bool,
     ) {
         self.keypad.step(&mut self.irq);
@@ -115,7 +115,7 @@ impl<'b, 'c> Gba<'b, 'c> {
             if let Some(do_transfer) = self.dma.step(&mut self.irq, 3) {
                 do_transfer(&mut bus!(self));
             }
-            self.audio.step(audio_device, &mut self.dma, 3);
+            self.audio.step(audio_cb, &mut self.dma, 3);
         }
 
         self.irq.step(&mut self.cpu, &mut self.haltcnt);
