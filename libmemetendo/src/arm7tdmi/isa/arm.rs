@@ -1510,7 +1510,7 @@ mod tests {
 
     #[test]
     fn execute_arm_hword_and_signed_transfer() {
-        let mut bus = VecBus::new(44);
+        let mut bus = VecBus::new(48);
         bus.write_word(0, 0xceec_0a0c);
         bus.write_word(4, 0xfefe_dede);
         bus.write_word(12, 0xbeef_feeb);
@@ -1769,7 +1769,7 @@ mod tests {
 
     #[test]
     fn execute_arm_swap() {
-        let mut bus = VecBus::new(12);
+        let mut bus = VecBus::new(16);
         bus.write_word(4, 9876);
 
         // SWP{cond}{B} Rd,Rm,[Rn]

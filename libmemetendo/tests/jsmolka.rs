@@ -46,6 +46,11 @@ fn bios() {
 }
 
 #[test]
+fn nes() {
+    run_test("tests/jsmolka/gba-tests/nes/nes.gba", &PASS_SCREEN);
+}
+
+#[test]
 fn ppu_stripes() {
     let pass_screen = read_image("tests/jsmolka/ppu_stripes_ok.png");
     run_test("tests/jsmolka/gba-tests/ppu/stripes.gba", &pass_screen);

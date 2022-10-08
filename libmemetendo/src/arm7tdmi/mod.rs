@@ -80,7 +80,8 @@ impl Exception {
 #[derive(Default, Copy, Clone, Debug)]
 pub struct Cpu {
     pub reg: Registers,
-    pipeline_instrs: [u32; 2],
+    /// Holds the instruction to be executed, decoded and fetched.
+    pipeline_instrs: [u32; 3],
     pending_exceptions: [bool; Exception::COUNT],
 }
 
@@ -160,24 +161,29 @@ impl Cpu {
         self.step_pipeline(bus);
     }
 
+    fn prefetch_instr(&mut self, bus: &mut impl Bus) -> u32 {
+        bus.prefetch_instr(self.reg.r[PC_INDEX]);
+
+        match self.reg.cpsr.state {
+            OperationState::Thumb => bus.read_hword(self.reg.r[PC_INDEX]).into(),
+            OperationState::Arm => bus.read_word(self.reg.r[PC_INDEX]),
+        }
+    }
+
     pub fn step_pipeline(&mut self, bus: &mut impl Bus) {
         self.reg.align_pc();
         self.pipeline_instrs[0] = self.pipeline_instrs[1];
-        self.pipeline_instrs[1] = match self.reg.cpsr.state {
-            OperationState::Thumb => bus.read_hword(self.reg.r[PC_INDEX]).into(),
-            OperationState::Arm => bus.read_word(self.reg.r[PC_INDEX]),
-        };
-
-        let instr_size = self.reg.cpsr.state.instr_size();
-        self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(instr_size);
-        bus.prefetch_instr(self.reg.r[PC_INDEX]);
+        self.pipeline_instrs[1] = self.pipeline_instrs[2];
+        self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(self.reg.cpsr.state.instr_size());
+        self.pipeline_instrs[2] = self.prefetch_instr(bus);
     }
 
     /// Forcibly aligns the PC and flushes the instruction pipeline, then fetches the next
     /// instruction at the PC, then advances the PC by one instruction.
     pub fn reload_pipeline(&mut self, bus: &mut impl Bus) {
         self.reg.align_pc();
-        bus.prefetch_instr(self.reg.r[PC_INDEX]);
+        self.pipeline_instrs[0..=1].fill(0);
+        self.pipeline_instrs[2] = self.prefetch_instr(bus);
         self.step_pipeline(bus);
     }
 
