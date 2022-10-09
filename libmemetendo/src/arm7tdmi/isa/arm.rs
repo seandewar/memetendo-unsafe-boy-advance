@@ -19,7 +19,7 @@ fn r_index(instr: u32, pos: u8) -> usize {
 impl Cpu {
     #[bitmatch]
     pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl Bus, instr: u32) {
-        debug_assert!(self.reg.cpsr.state == OperationState::Arm);
+        assert_eq!(self.reg.cpsr.state, OperationState::Arm);
 
         #[allow(clippy::cast_possible_truncation)]
         if !self.meets_condition(instr.bits(28..) as u8) {
@@ -1561,11 +1561,13 @@ mod tests {
         // LDR{cond}SH Rd,<Address>
         // AL SH R5,[R15,<#+7>]!
         #[allow(clippy::cast_sign_loss)]
-        InstrTest::new_arm(0b1110_000_111_1_1_1111_0101_0000_1_11_1_0111)
-            .setup(&|cpu| cpu.reg.r[PC_INDEX] = -7i32 as u32)
-            .assert_r(PC_INDEX, 8)
-            .assert_r(5, 0x0a0c)
-            .run_with_bus(&mut bus);
+        bus.assert_oob(&|bus| {
+            InstrTest::new_arm(0b1110_000_111_1_1_1111_0101_0000_1_11_1_0111)
+                .setup(&|cpu| cpu.reg.r[PC_INDEX] = -7i32 as u32)
+                .assert_r(PC_INDEX, 8)
+                .assert_r(5, 0x0a0c)
+                .run_with_bus(bus);
+        });
 
         // AL SH R15,[R3,<#+6>]
         bus.assert_oob(&|bus| {

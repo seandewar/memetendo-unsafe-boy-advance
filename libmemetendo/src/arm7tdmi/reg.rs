@@ -96,6 +96,10 @@ impl Registers {
         };
     }
 
+    pub fn advance_pc(&mut self) {
+        self.r[PC_INDEX] = self.r[PC_INDEX].wrapping_add(self.cpsr.state.instr_size());
+    }
+
     pub fn set_cpsr(&mut self, bits: u32) {
         let new_cpsr = StatusRegister::from_bits(bits);
         self.change_bank(new_cpsr.mode());

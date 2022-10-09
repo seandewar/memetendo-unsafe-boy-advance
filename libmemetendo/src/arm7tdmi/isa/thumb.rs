@@ -19,7 +19,7 @@ fn r_index(instr: u16, pos: u8) -> usize {
 impl Cpu {
     #[bitmatch]
     pub(in crate::arm7tdmi) fn execute_thumb(&mut self, bus: &mut impl Bus, instr: u16) {
-        debug_assert!(self.reg.cpsr.state == OperationState::Thumb);
+        assert_eq!(self.reg.cpsr.state, OperationState::Thumb);
 
         // TODO: SWI is 2S+1N
         #[allow(clippy::cast_possible_truncation)]

@@ -600,17 +600,13 @@ mod tests {
 
             if self.state == OperationState::Thumb {
                 cpu.op_bx(bus, 1); // Enter Thumb mode.
-                cpu.step_pipeline(bus);
             }
+            cpu.pipeline_instrs = [self.instr, 0];
+
             if let Some(setup_fn) = self.setup_fn {
                 setup_fn(&mut cpu);
             }
-
-            match self.state {
-                OperationState::Thumb => cpu.execute_thumb(bus, self.instr.try_into().unwrap()),
-                OperationState::Arm => cpu.execute_arm(bus, self.instr),
-            }
-            cpu.step_pipeline(bus);
+            cpu.step(bus);
 
             assert_eq!(cpu.reg.r, self.asserted_rs);
             assert_eq!(cpu.reg.cpsr.signed, self.assert_signed, "signed flag");
@@ -636,56 +632,48 @@ mod tests {
         #[must_use]
         pub fn setup(mut self, setup_fn: &'a dyn Fn(&mut Cpu)) -> Self {
             self.setup_fn = Some(setup_fn);
-
             self
         }
 
         #[must_use]
         pub fn assert_r(mut self, index: usize, r: u32) -> Self {
             self.asserted_rs[index] = r;
-
             self
         }
 
         #[must_use]
         pub fn assert_signed(mut self) -> Self {
             self.assert_signed = true;
-
             self
         }
 
         #[must_use]
         pub fn assert_zero(mut self) -> Self {
             self.assert_zero = true;
-
             self
         }
 
         #[must_use]
         pub fn assert_carry(mut self) -> Self {
             self.assert_carry = true;
-
             self
         }
 
         #[must_use]
         pub fn assert_overflow(mut self) -> Self {
             self.assert_overflow = true;
-
             self
         }
 
         #[must_use]
         pub fn assert_irq_enabled(mut self) -> Self {
             self.assert_irq_disabled = false;
-
             self
         }
 
         #[must_use]
         pub fn assert_fiq_enabled(mut self) -> Self {
             self.assert_fiq_disabled = false;
-
             self
         }
     }

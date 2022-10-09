@@ -80,8 +80,8 @@ impl Exception {
 #[derive(Default, Copy, Clone, Debug)]
 pub struct Cpu {
     pub reg: Registers,
-    /// Holds the instruction to be executed, decoded and fetched.
-    pipeline_instrs: [u32; 3],
+    pipeline_instrs: [u32; 2],
+    pipeline_reloaded: bool,
     pending_exceptions: [bool; Exception::COUNT],
 }
 
@@ -93,9 +93,7 @@ impl Cpu {
 
     pub fn reset(&mut self, bus: &mut impl Bus, skip_bios: bool) {
         self.pending_exceptions.fill(false);
-
         self.enter_exception(bus, Exception::Reset);
-        self.step_pipeline(bus);
 
         if skip_bios {
             self.reg.r[..=12].fill(0);
@@ -116,7 +114,6 @@ impl Cpu {
             self.reg.r[SP_INDEX] = 0x0300_7f00;
             self.reg.r[PC_INDEX] = 0x0800_0000;
             self.reload_pipeline(bus);
-            self.step_pipeline(bus);
         }
     }
 
@@ -128,9 +125,7 @@ impl Cpu {
             let raised = take(&mut self.pending_exceptions[priority]);
             let exception = Exception::from_priority(priority).unwrap();
             if raised && self.enter_exception(bus, exception) {
-                // We serviced this exception.
-                self.step_pipeline(bus);
-                return;
+                return; // We serviced this exception.
             }
         }
 
@@ -150,7 +145,14 @@ impl Cpu {
         //     self.reg.spsr()
         // );
 
+        // NOTE: emulated pipelining will have the PC 2 instructions ahead of this executing
+        // instruction, so the actual address of this instruction was PC -4 or -8.
+        // The following two instructions should already be prefetched at this point.
         let instr = self.pipeline_instrs[0];
+        self.pipeline_instrs[0] = self.pipeline_instrs[1];
+        self.pipeline_instrs[1] = self.prefetch_instr(bus);
+        self.pipeline_reloaded = false;
+
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),
             OperationState::Thumb => {
@@ -158,7 +160,10 @@ impl Cpu {
                 self.execute_thumb(bus, instr as u16);
             }
         }
-        self.step_pipeline(bus);
+        if !self.pipeline_reloaded {
+            self.reg.align_pc();
+            self.reg.advance_pc();
+        }
     }
 
     fn prefetch_instr(&mut self, bus: &mut impl Bus) -> u32 {
@@ -170,21 +175,13 @@ impl Cpu {
         }
     }
 
-    pub fn step_pipeline(&mut self, bus: &mut impl Bus) {
-        self.reg.align_pc();
-        self.pipeline_instrs[0] = self.pipeline_instrs[1];
-        self.pipeline_instrs[1] = self.pipeline_instrs[2];
-        self.reg.r[PC_INDEX] = self.reg.r[PC_INDEX].wrapping_add(self.reg.cpsr.state.instr_size());
-        self.pipeline_instrs[2] = self.prefetch_instr(bus);
-    }
-
-    /// Forcibly aligns the PC and flushes the instruction pipeline, then fetches the next
-    /// instruction at the PC, then advances the PC by one instruction.
     pub fn reload_pipeline(&mut self, bus: &mut impl Bus) {
         self.reg.align_pc();
-        self.pipeline_instrs[0..=1].fill(0);
-        self.pipeline_instrs[2] = self.prefetch_instr(bus);
-        self.step_pipeline(bus);
+        self.pipeline_instrs[0] = self.prefetch_instr(bus);
+        self.reg.advance_pc();
+        self.pipeline_instrs[1] = self.prefetch_instr(bus);
+        self.reg.advance_pc();
+        self.pipeline_reloaded = true;
     }
 
     pub fn raise_exception(&mut self, exception: Exception) {
@@ -278,7 +275,6 @@ mod tests {
 
             let old_reg = cpu.reg;
             cpu.enter_exception(&mut NullBus, exception);
-            cpu.step_pipeline(&mut NullBus);
             assert_exception_result(&mut cpu, exception, old_reg);
         }
     }
