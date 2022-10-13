@@ -8,7 +8,7 @@ Unfinished; I'll be working on this in my spare time (for fun!) :)
 ![Pokemon FireRed screenshot](media/pokemon-firered.png)
 ![OpenLara screenshot](media/openlara.png)
 
-It's able to play some games, and has audio support!
+It's able to play most games, and has audio support!
 
 As for tests, it currently passes:
 - [FuzzARM](https://github.com/DenSinH/FuzzARM).

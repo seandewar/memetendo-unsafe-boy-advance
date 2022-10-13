@@ -3,11 +3,12 @@ use intbits::Bits;
 use crate::{
     arm7tdmi::Cpu,
     audio::{self, Audio},
+    bios::Bios,
     bus,
+    cart::Cartridge,
     dma::Dma,
     irq::Irq,
     keypad::Keypad,
-    rom::{Bios, Cartridge},
     timer::Timers,
     video::{screen::Screen, Video},
 };
@@ -112,7 +113,7 @@ impl<'b, 'c> Gba<'b, 'c> {
             self.video
                 .step(screen, &mut self.irq, &mut self.dma, skip_drawing, 3);
             self.timers.step(&mut self.irq, &mut self.audio, 3);
-            if let Some(do_transfer) = self.dma.step(&mut self.irq, 3) {
+            if let Some(do_transfer) = self.dma.step(&mut self.irq, &mut self.cart, 3) {
                 do_transfer(&mut bus!(self));
             }
             self.audio.step(audio_cb, &mut self.dma, 3);
@@ -189,12 +190,8 @@ impl bus::Bus for Bus<'_, '_, '_> {
             0x0600_0000..=0x06ff_ffff => self.video.vram().read_byte(addr & 0x1_ffff),
             // OAM
             0x0700_0000..=0x07ff_ffff => self.video.oam.read_byte(addr & 0x3ff),
-            // ROM Mirror; TODO: Wait states 0, 1 and 2
-            0x0800_0000..=0x09ff_ffff | 0x0a00_0000..=0x0bff_ffff | 0x0c00_0000..=0x0dff_ffff => {
-                self.cart.read_byte(addr & 0x1ff_ffff)
-            }
-            // SRAM
-            0x0e00_0000..=0x0e00_ffff => self.cart.sram.read_byte(addr & 0xffff),
+            // Cartridge
+            0x0800_0000..=0x0fff_ffff => self.cart.read_byte(addr & 0x7ff_ffff),
             // Unused
             _ => 0xff,
         }
@@ -227,8 +224,8 @@ impl bus::Bus for Bus<'_, '_, '_> {
             0x0600_0000..=0x06ff_ffff => {
                 self.video.vram().write_byte(addr & 0x1_ffff, value);
             }
-            // SRAM
-            0x0e00_0000..=0x0e00_ffff => self.cart.sram.write_byte(addr & 0xffff, value),
+            // Cartridge
+            0x0800_0000..=0x0fff_ffff => self.cart.write_byte(addr & 0x7ff_ffff, value),
             // Read-only, Unused, Ignored 8-bit writes to OAM/VRAM
             _ => {}
         }

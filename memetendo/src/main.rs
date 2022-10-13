@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 use std::{
+    fs,
     mem::take,
     path::Path,
     thread::sleep,
@@ -8,11 +9,12 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use clap::{arg, command, Arg};
+use clap::{arg, command, value_parser};
 use libmemetendo::{
+    bios::Bios,
+    cart::{BackupType, Cartridge, Rom},
     gba::Gba,
     keypad::{Key, Keypad},
-    rom::{Bios, Cartridge, Rom},
     video::screen::{self, FrameBuffer, Screen},
 };
 use sdl2::{
@@ -125,6 +127,92 @@ impl Screen for SdlScreen<'_> {
     }
 }
 
+fn main() -> Result<()> {
+    let matches = command!()
+        .arg(arg!(--"skip-bios" "Skip executing BIOS ROM after boot").required(false))
+        .arg(arg!(-b --bios <BIOS_FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
+        .arg(
+            arg!(--backup <BACKUP_TYPE> "Cartridge backup type to use")
+                .value_parser([
+                    "none",
+                    "eeprom-unknown",
+                    "eeprom-512",
+                    "eeprom-8k",
+                    "sram-32k",
+                    "flash-64k",
+                    "flash-128k",
+                ])
+                .required(false),
+        )
+        .arg(arg!(<ROM_FILE> "Cartridge ROM file to execute").allow_invalid_utf8(true))
+        .arg(
+            arg!(--"frame-skip" <FRAME_SKIP> "Maximum frames to skip when behind")
+                .value_parser(value_parser!(u32))
+                .default_value("3")
+                .required(false),
+        )
+        .get_matches();
+
+    let skip_bios = matches.is_present("skip-bios");
+    let bios_file = Path::new(matches.value_of_os("bios").unwrap());
+    let cart_backup_type = matches
+        .get_one::<String>("backup")
+        .map(|s| match s.as_str() {
+            "none" => BackupType::None,
+            "eeprom-unknown" => BackupType::EepromUnknownSize,
+            "eeprom-512" => BackupType::Eeprom512B,
+            "eeprom-8k" => BackupType::Eeprom8KiB,
+            "sram-32k" => BackupType::Sram32KiB,
+            "flash-64k" => BackupType::Flash64KiB,
+            "flash-128k" => BackupType::Flash128KiB,
+            _ => unreachable!(),
+        });
+    let cart_file = Path::new(matches.value_of_os("ROM_FILE").unwrap());
+    let max_frame_skip = *matches.get_one::<u32>("frame-skip").unwrap();
+
+    let bios_rom = fs::read(bios_file).context("failed to read BIOS ROM file")?;
+    let bios = Bios::new(&bios_rom).context("invalid BIOS ROM size")?;
+
+    let cart_rom_data = fs::read(cart_file).context("failed to read cartridge ROM file")?;
+    let cart_rom = Rom::new(cart_rom_data.as_slice()).context("invalid cartridge ROM size")?;
+    let cart_backup_type = cart_backup_type.unwrap_or_else(|| cart_rom.parse_backup_type());
+    println!("cart backup type: {:?}", cart_backup_type);
+    let cart = Cartridge::new(cart_rom, cart_backup_type);
+
+    let mut sdl = SdlContext::init()?;
+    let mut screen = SdlScreen::new(&sdl.win_texture_creator)?;
+    sdl.win_canvas.set_draw_color(Color::BLACK);
+    sdl.win_canvas.clear();
+    sdl.win_canvas.present();
+
+    let mut gba = Gba::new(bios, cart);
+    gba.reset(skip_bios);
+
+    let mut audio = Audio::new(sdl.sdl_audio.as_ref().map(|sdl_audio| {
+        (
+            sdl_audio,
+            AudioSpecDesired {
+                freq: Some(44_100),
+                channels: Some(2),
+                samples: Some(2048),
+            },
+        )
+    }))
+    .unwrap_or_else(|(e, audio)| {
+        println!("failed to initialize audio: {e}");
+        audio
+    });
+
+    main_loop(
+        &mut sdl.event_pump,
+        &mut sdl.win_canvas,
+        &mut screen,
+        &mut audio,
+        &mut gba,
+        max_frame_skip,
+    )
+}
+
 fn update_keypad(kp: &mut Keypad, kb: &KeyboardState) {
     let pressed = |scancode| kb.is_scancode_pressed(scancode);
 
@@ -146,61 +234,22 @@ fn update_keypad(kp: &mut Keypad, kb: &KeyboardState) {
     kp.set_pressed(Key::R, pressed(Scancode::S));
 }
 
-fn main() -> Result<()> {
+fn main_loop(
+    event_pump: &mut EventPump,
+    win_canvas: &mut WindowCanvas,
+    screen: &mut SdlScreen,
+    audio: &mut Audio,
+    gba: &mut Gba,
+    max_frame_skip: u32,
+) -> Result<()> {
     const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
-
-    let matches = command!()
-        .arg(
-            Arg::new("skip-bios")
-                .long("skip-bios")
-                .help("Skip executing BIOS ROM after boot"),
-        )
-        .arg(arg!(-b --bios <BIOS_FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
-        .arg(arg!(<ROM_FILE> "Cartridge ROM file to execute").allow_invalid_utf8(true))
-        .get_matches();
-
-    let skip_bios = matches.is_present("skip-bios");
-    let bios_file = Path::new(matches.value_of_os("bios").unwrap());
-    let cart_file = Path::new(matches.value_of_os("ROM_FILE").unwrap());
-
-    let bios_rom = Rom::from_file(bios_file).context("failed to read BIOS ROM file")?;
-    let bios = Bios::new(&bios_rom).map_err(|_| anyhow!("invalid BIOS ROM size"))?;
-
-    let cart_rom = Rom::from_file(cart_file).context("failed to read cartridge ROM file")?;
-    let cart = Cartridge::new(&cart_rom).map_err(|_| anyhow!("invalid cartridge ROM size"))?;
-
-    let mut context = SdlContext::init()?;
-    let mut screen = SdlScreen::new(&context.win_texture_creator)?;
-    context.win_canvas.set_draw_color(Color::BLACK);
-    context.win_canvas.clear();
-    context.win_canvas.present();
-
-    let mut gba = Gba::new(bios, cart);
-    gba.reset(skip_bios);
-
-    let mut audio = Audio::new(context.sdl_audio.as_ref().map(|sdl_audio| {
-        (
-            sdl_audio,
-            AudioSpecDesired {
-                freq: Some(44_100),
-                channels: Some(2),
-                samples: Some(2048),
-            },
-        )
-    }))
-    .unwrap_or_else(|(e, audio)| {
-        println!("failed to initialize audio: {e}");
-        audio
-    });
 
     let mut next_redraw_time = Instant::now() + FRAME_DURATION;
     'main_loop: loop {
-        const MAX_FRAME_SKIP: u32 = 3;
-
         let mut skipped_frames = 0;
         loop {
             while !take(&mut screen.new_frame) {
-                gba.step(&mut screen, &mut audio, skipped_frames > 0);
+                gba.step(screen, audio, skipped_frames > 0);
             }
             if let Err(e) = audio.queue_samples() {
                 println!("failed to queue audio samples: {e}");
@@ -213,27 +262,26 @@ fn main() -> Result<()> {
                 break;
             }
 
-            if skipped_frames >= MAX_FRAME_SKIP {
+            if skipped_frames >= max_frame_skip {
                 break;
             }
             skipped_frames += 1;
         }
 
-        for event in context.event_pump.poll_iter() {
+        for event in event_pump.poll_iter() {
             if let Event::Quit { .. } = event {
                 break 'main_loop;
             }
         }
-        update_keypad(&mut gba.keypad, &context.event_pump.keyboard_state());
+        update_keypad(&mut gba.keypad, &event_pump.keyboard_state());
 
-        context.win_canvas.clear();
-        context
-            .win_canvas
+        win_canvas.clear();
+        win_canvas
             .copy(screen.update_texture(gba.video.frame())?, None, None)
             .map_err(|e| anyhow!("failed to draw screen texture: {e}"))?;
-        context.win_canvas.present();
+        win_canvas.present();
 
-        if skipped_frames >= MAX_FRAME_SKIP {
+        if skipped_frames >= max_frame_skip {
             next_redraw_time = Instant::now() + FRAME_DURATION;
         }
     }

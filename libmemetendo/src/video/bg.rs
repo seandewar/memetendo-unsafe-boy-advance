@@ -37,12 +37,12 @@ impl Video {
         win: Window,
     ) -> impl Iterator<Item = DotInfo> + '_ {
         self.tile_mode_bg_order
-            .into_iter()
-            .filter(move |&i| {
+            .iter()
+            .filter(move |&&i| {
                 self.dispcnt.display_bg[i]
                     && self.window_control(win).map_or(true, |w| w.display_bg[i])
             })
-            .filter_map(|i| self.compute_bg_tile_mode_dot(i))
+            .filter_map(|&i| self.compute_bg_tile_mode_dot(i))
     }
 
     fn compute_bg_tile_mode_dot(&self, bg_idx: usize) -> Option<DotInfo> {

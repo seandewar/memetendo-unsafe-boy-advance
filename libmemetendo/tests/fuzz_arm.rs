@@ -14,8 +14,7 @@ use util::{read_image, read_test_rom};
 static PASS_SCREEN: Lazy<RgbImage> = Lazy::new(|| read_image("tests/fuzz_arm/ok.png"));
 
 fn run_test(path: impl AsRef<Path>) {
-    let rom = read_test_rom(path);
-    let mut runner = Runner::new(&rom);
+    let mut runner = Runner::new(read_test_rom(path));
     for _ in 0..1000 {
         runner.step_frame();
         if runner.gba.ewram[..4] != [0; 4] {

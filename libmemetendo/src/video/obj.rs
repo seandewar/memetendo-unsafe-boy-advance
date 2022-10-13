@@ -275,8 +275,8 @@ impl Video {
         let region_idx = Oam::region_index(Oam::region_pos((self.x, self.y.into())));
 
         self.oam.regions[region_idx]
-            .into_iter()
-            .map(|i| &self.oam.attrs[usize::from(i)])
+            .iter()
+            .map(|&i| &self.oam.attrs[usize::from(i)])
     }
 
     pub(super) fn check_inside_obj_window(&self) -> bool {

@@ -13,8 +13,7 @@ use util::{read_image, read_test_rom};
 static PASS_SCREEN: Lazy<RgbImage> = Lazy::new(|| read_image("tests/jsmolka/ok.png"));
 
 fn run_test(path: impl AsRef<Path>, pass_screen: &RgbImage) {
-    let rom = read_test_rom(path);
-    let mut runner = Runner::new(&rom);
+    let mut runner = Runner::new(read_test_rom(path));
     for _ in 0..3 {
         runner.step_frame();
         if runner.screen.image == *pass_screen {
@@ -52,12 +51,21 @@ fn nes() {
 
 #[test]
 fn ppu_stripes() {
-    let pass_screen = read_image("tests/jsmolka/ppu_stripes_ok.png");
-    run_test("tests/jsmolka/gba-tests/ppu/stripes.gba", &pass_screen);
+    run_test(
+        "tests/jsmolka/gba-tests/ppu/stripes.gba",
+        &read_image("tests/jsmolka/ppu_stripes_ok.png"),
+    );
 }
 
 #[test]
 fn ppu_shades() {
-    let pass_screen = read_image("tests/jsmolka/ppu_shades_ok.png");
-    run_test("tests/jsmolka/gba-tests/ppu/shades.gba", &pass_screen);
+    run_test(
+        "tests/jsmolka/gba-tests/ppu/shades.gba",
+        &read_image("tests/jsmolka/ppu_shades_ok.png"),
+    );
+}
+
+#[test]
+fn save_none() {
+    run_test("tests/jsmolka/gba-tests/save/none.gba", &PASS_SCREEN);
 }

@@ -4,8 +4,17 @@ use intbits::Bits;
 
 use crate::{
     bus::{AlignedExt, Bus},
+    cart::Cartridge,
     irq::{Interrupt, Irq},
 };
+
+#[derive(Debug, Default, Eq, PartialEq)]
+enum State {
+    #[default]
+    None,
+    StartingTransfer,
+    Transferring,
+}
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
@@ -26,7 +35,7 @@ struct Channel {
     src_addr: u32,
     dst_addr: u32,
     rem_blocks: u32,
-    transferring: bool,
+    state: State,
 }
 
 #[derive(Debug, Default)]
@@ -45,7 +54,7 @@ impl Dma {
     fn start_transfer(&mut self, chan_idx: usize) {
         let audio_fifo = self.in_audio_fifo_mode(chan_idx);
         let chan = &mut self.0[chan_idx];
-        if !chan.enabled || chan.transferring {
+        if !chan.enabled || chan.state != State::None {
             return;
         }
 
@@ -57,22 +66,35 @@ impl Dma {
                 chan.rem_blocks = max_blocks;
             }
         }
-        chan.transferring = true;
+        chan.state = State::StartingTransfer;
     }
 
     #[must_use]
-    pub fn step<B: Bus>(&mut self, irq: &mut Irq, cycles: u8) -> Option<impl Fn(&mut B)> {
+    pub fn step<B: Bus>(
+        &mut self,
+        irq: &mut Irq,
+        cart: &mut Cartridge,
+        cycles: u8,
+    ) -> Option<impl Fn(&mut B)> {
         // TODO: proper cycle transfer timings, cart DRQ, special timing modes
         for chan_idx in 0..self.0.len() {
-            if !self.0[chan_idx].enabled || !self.0[chan_idx].transferring {
+            if !self.0[chan_idx].enabled || self.0[chan_idx].state == State::None {
                 continue;
             }
 
             let audio_fifo = self.in_audio_fifo_mode(chan_idx);
             let chan = &mut self.0[chan_idx];
 
-            let src_addr = chan.src_addr;
             let dst_addr = chan.dst_addr;
+            if chan.state == State::StartingTransfer
+                && dst_addr >= 0x0800_0000
+                && cart.is_eeprom_offset(dst_addr - 0x0800_0000)
+            {
+                cart.notify_eeprom_dma(chan.rem_blocks);
+            }
+            chan.state = State::Transferring;
+
+            let src_addr = chan.src_addr;
             let src_addr_ctrl = chan.src_addr_ctrl;
             let dst_addr_ctrl = if audio_fifo { 2 } else { chan.dst_addr_ctrl };
             let blocks = chan.rem_blocks.min(cycles.into());
@@ -92,7 +114,7 @@ impl Dma {
 
             chan.rem_blocks -= blocks;
             if chan.rem_blocks == 0 {
-                chan.transferring = false;
+                chan.state = State::None;
                 chan.enabled = chan.repeat;
                 if chan.repeat {
                     if chan.dst_addr_ctrl == 3 {
@@ -135,7 +157,7 @@ impl Dma {
 
     #[must_use]
     pub fn transfer_in_progress(&self) -> bool {
-        self.0.iter().any(|chan| chan.transferring)
+        self.0.iter().any(|chan| chan.state != State::None)
     }
 }
 
@@ -160,8 +182,8 @@ impl Dma {
                 continue;
             }
             let fifo_addr = match event {
-                Event::AudioFifoA => Some(0x400_00a0),
-                Event::AudioFifoB => Some(0x400_00a4),
+                Event::AudioFifoA => Some(0x0400_00a0),
+                Event::AudioFifoB => Some(0x0400_00a4),
                 _ => None,
             };
             if let Some(fifo_addr) = fifo_addr {
