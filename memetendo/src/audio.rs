@@ -112,12 +112,11 @@ impl audio::Callback for Callback {
 pub struct Audio(Option<(AudioQueue<i16>, Callback)>);
 
 impl Audio {
+    #[allow(clippy::result_large_err)]
     pub fn new(
         params: Option<(&AudioSubsystem, AudioSpecDesired)>,
     ) -> Result<Self, (String, Self)> {
-        let (sdl_audio, spec) = if let Some(params) = params {
-            params
-        } else {
+        let Some((sdl_audio, spec)) = params else {
             return Ok(Self(None));
         };
 
@@ -137,38 +136,35 @@ impl Audio {
     }
 
     pub fn queue_samples(&mut self) -> Result<(), String> {
-        if let Some((queue, cb)) = self.0.as_mut() {
-            // Limit the max amount of samples we can have enqueued, otherwise we risk having the
-            // audio drift behind if the queue isn't being consumed fast enough.
-            let count = cb
-                .samples_len
-                .min(Callback::samples_len(&cb.spec).saturating_sub(queue.size() as _));
-            if count == 0 {
-                return Ok(());
+        let Some((queue, cb)) = self.0.as_mut() else { return Ok(()); };
+
+        // Limit the max amount of samples we can have enqueued, otherwise we risk having the
+        // audio drift behind if the queue isn't being consumed fast enough.
+        let count = cb
+            .samples_len
+            .min(Callback::samples_len(&cb.spec).saturating_sub(queue.size() as _));
+        if count == 0 {
+            return Ok(());
+        }
+
+        let try_queue = || {
+            if cb.samples_start_idx + count <= cb.samples.len() {
+                queue.queue_audio(&cb.samples[cb.samples_start_idx..][..count])?;
+            } else {
+                // The circular buffer wrapped around, so write in two parts.
+                let first_part = &cb.samples[cb.samples_start_idx..];
+                queue.queue_audio(first_part)?;
+                queue.queue_audio(&cb.samples[..count - first_part.len()])?;
             }
 
-            let try_queue = || {
-                if cb.samples_start_idx + count <= cb.samples.len() {
-                    queue.queue_audio(&cb.samples[cb.samples_start_idx..][..count])?;
-                } else {
-                    // The circular buffer wrapped around, so write in two parts.
-                    let first_part = &cb.samples[cb.samples_start_idx..];
-                    queue.queue_audio(first_part)?;
-                    queue.queue_audio(&cb.samples[..count - first_part.len()])?;
-                }
-
-                Ok(())
-            };
-
-            let result = try_queue();
-            cb.samples_start_idx += count;
-            cb.samples_start_idx %= cb.samples.len();
-            cb.samples_len -= count;
-
-            result
-        } else {
             Ok(())
-        }
+        };
+        let result = try_queue();
+        cb.samples_start_idx += count;
+        cb.samples_start_idx %= cb.samples.len();
+        cb.samples_len -= count;
+
+        result
     }
 }
 

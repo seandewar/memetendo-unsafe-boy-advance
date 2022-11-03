@@ -19,6 +19,9 @@ As for tests, it currently passes:
 - Most things in [PeterLemon/GBA](https://github.com/PeterLemon/GBA).
 - ...and others!
 
+For now, Memetendo Unsafe Boy Advance requires the latest stable Rust compiler
+(1.65) to build.
+
 ## Tests
 
 Run `cargo test` to run tests.  
@@ -50,7 +53,7 @@ point? Who knows!
 ![Origin of the name](media/name-origin.png)
 
 And as of writing, Memetendo Unsafe Boy Advance does not actually use any
-`unsafe` (application) code.
+`unsafe` (non-dependency) code.
 
 ## Why Rust and not Zig?
 
