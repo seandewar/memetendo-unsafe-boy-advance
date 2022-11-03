@@ -138,22 +138,6 @@ impl<'r> Cartridge<'r> {
             || (self.rom.bytes().len() <= 16 * 1024 * 1024 && offset >= 0x500_0000))
     }
 
-    fn access_eeprom(&mut self, addr: u32) -> Option<&mut Eeprom> {
-        self.is_eeprom_offset(addr).then(|| {
-            if let Some(Backup::EepromUnknownSize) = self.backup {
-                // No idea what the size is, but we need something to access... just assume 512B.
-                println!("could not guess EEPROM size; falling back to 512B!");
-                self.backup = Some(Backup::Eeprom(Eeprom::new(false)));
-            }
-
-            if let Some(Backup::Eeprom(eeprom)) = self.backup.as_mut() {
-                eeprom
-            } else {
-                unreachable!()
-            }
-        })
-    }
-
     pub(crate) fn notify_eeprom_dma(&mut self, blocks: u32) {
         if !matches!(self.backup, Some(Backup::EepromUnknownSize)) {
             return;
@@ -181,8 +165,15 @@ impl Bus for Cartridge<'_> {
         match addr {
             // TODO: WAITCNT with wait states 0, 1 and 2
             0x000_0000..=0x1ff_ffff | 0x200_0000..=0x3ff_ffff | 0x400_0000..=0x5ff_ffff => {
-                if let Some(eeprom) = self.access_eeprom(addr) {
-                    eeprom.read_byte(addr)
+                if self.is_eeprom_offset(addr) {
+                    match self.backup.as_mut() {
+                        Some(Backup::Eeprom(eeprom)) => eeprom.read_byte(addr),
+                        // Size is still unknown if there's been no attempt to send a command to
+                        // the EEPROM yet, so we can assume it's in the ready state.
+                        Some(Backup::EepromUnknownSize) if addr % 2 == 0 => 1,
+                        Some(Backup::EepromUnknownSize) => 0,
+                        _ => unreachable!(),
+                    }
                 } else {
                     self.rom
                         .bytes()
@@ -204,8 +195,17 @@ impl Bus for Cartridge<'_> {
         match addr {
             // TODO: WAITCNT with wait states 0, 1 and 2
             0x000_0000..=0x1ff_ffff | 0x200_0000..=0x3ff_ffff | 0x400_0000..=0x5ff_ffff => {
-                if let Some(eeprom) = self.access_eeprom(addr) {
-                    eeprom.write_byte(addr, value);
+                if self.is_eeprom_offset(addr) {
+                    if let Some(Backup::EepromUnknownSize) = self.backup {
+                        println!("could not guess EEPROM size; falling back to 512B!");
+                        self.backup = Some(Backup::Eeprom(Eeprom::new(false)));
+                    }
+
+                    if let Some(Backup::Eeprom(eeprom)) = self.backup.as_mut() {
+                        eeprom.write_byte(addr, value);
+                    } else {
+                        unreachable!();
+                    }
                 }
             }
             0x600_0000..=0x7ff_ffff => match self.backup.as_mut() {
