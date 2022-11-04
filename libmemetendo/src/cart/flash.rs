@@ -28,14 +28,28 @@ enum NextCommandState {
 
 const BANK_LEN: usize = 0x1_0000;
 
-impl Flash {
-    pub fn new(dual_bank: bool) -> Self {
-        Self {
-            buf: vec![0xff; if dual_bank { 2 } else { 1 } * BANK_LEN].into(),
+impl TryFrom<&mut Option<Box<[u8]>>> for Flash {
+    type Error = ();
+
+    fn try_from(buf: &mut Option<Box<[u8]>>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            buf: match buf {
+                Some(b) if b.len() == BANK_LEN || b.len() == 2 * BANK_LEN => buf.take().unwrap(),
+                _ => return Err(()),
+            },
             bank_idx: 0,
             state: State::None,
             next_cmd_state: NextCommandState::None,
-        }
+        })
+    }
+}
+
+impl Flash {
+    pub fn new(dual_bank: bool) -> Self {
+        Self::try_from(&mut Some(
+            vec![0xff; if dual_bank { 2 } else { 1 } * BANK_LEN].into_boxed_slice(),
+        ))
+        .unwrap()
     }
 
     fn buf_index(&self, addr: u32) -> usize {
@@ -44,6 +58,10 @@ impl Flash {
 
     fn is_dual_bank(&self) -> bool {
         self.buf.len() > BANK_LEN
+    }
+
+    pub fn buffer(&self) -> &[u8] {
+        &self.buf
     }
 }
 

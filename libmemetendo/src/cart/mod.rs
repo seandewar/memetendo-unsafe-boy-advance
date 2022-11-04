@@ -70,12 +70,12 @@ impl<'a> Rom<'a> {
                 // Impossible to detect the EEPROM's size from inspecting the ROM.
                 // Try and detect it at runtime.
                 return BackupType::EepromUnknownSize;
-            } else if has_id(b"SRAM") || has_id(b"SRAM_F") {
-                return BackupType::Sram32KiB;
             } else if has_id(b"FLASH") || has_id(b"FLASH512") {
                 return BackupType::Flash64KiB;
             } else if has_id(b"FLASH1M") {
                 return BackupType::Flash128KiB;
+            } else if has_id(b"SRAM") || has_id(b"SRAM_F") {
+                return BackupType::Sram32KiB;
             }
         }
 
@@ -104,8 +104,8 @@ impl<'r> From<Rom<'r>> for Cartridge<'r> {
 enum Backup {
     EepromUnknownSize,
     Eeprom(Eeprom),
-    Sram(Box<[u8]>),
     Flash(Flash),
+    Sram(Box<[u8]>),
 }
 
 impl<'r> Cartridge<'r> {
@@ -118,16 +118,48 @@ impl<'r> Cartridge<'r> {
                 BackupType::EepromUnknownSize => Some(Backup::EepromUnknownSize),
                 BackupType::Eeprom512B => Some(Backup::Eeprom(Eeprom::new(false))),
                 BackupType::Eeprom8KiB => Some(Backup::Eeprom(Eeprom::new(true))),
-                BackupType::Sram32KiB => Some(Backup::Sram(vec![0xff; 32 * 1024].into())),
                 BackupType::Flash64KiB => Some(Backup::Flash(Flash::new(false))),
                 BackupType::Flash128KiB => Some(Backup::Flash(Flash::new(true))),
+                BackupType::Sram32KiB => Some(Backup::Sram(vec![0xff; 32 * 1024].into())),
             },
         }
     }
 
     #[must_use]
+    pub fn try_from_backup(rom: Rom<'r>, mut backup_buf: Option<Box<[u8]>>) -> Option<Self> {
+        Some(Self {
+            rom,
+            backup: match backup_buf {
+                Some(buf) if buf.is_empty() => None,
+                Some(buf) if buf.len() == 32 * 1024 => Some(Backup::Sram(buf)),
+                Some(_) => {
+                    if let Ok(eeprom) = Eeprom::try_from(&mut backup_buf) {
+                        Some(Backup::Eeprom(eeprom))
+                    } else if let Ok(flash) = Flash::try_from(&mut backup_buf) {
+                        Some(Backup::Flash(flash))
+                    } else {
+                        return None;
+                    }
+                }
+                None => None,
+            },
+        })
+    }
+
+    #[must_use]
     pub fn rom(&self) -> &Rom {
         &self.rom
+    }
+
+    #[must_use]
+    pub fn backup_buffer(&self) -> Option<&[u8]> {
+        match self.backup.as_ref() {
+            Some(Backup::EepromUnknownSize) => None,
+            Some(Backup::Eeprom(eeprom)) => Some(eeprom.buffer()),
+            Some(Backup::Flash(flash)) => Some(flash.buffer()),
+            Some(Backup::Sram(buf)) => Some(buf),
+            None => Some(&[]),
+        }
     }
 
     pub(crate) fn is_eeprom_offset(&self, offset: u32) -> bool {

@@ -127,12 +127,45 @@ impl Screen for SdlScreen<'_> {
     }
 }
 
+fn load_cart<'r>(
+    rom: Rom<'r>,
+    backup_path: &impl AsRef<Path>,
+    fallback_backup_type: Option<BackupType>,
+) -> Cartridge<'r> {
+    println!(
+        "reading cartridge backup file: {}",
+        backup_path.as_ref().to_string_lossy()
+    );
+
+    match fs::read(backup_path) {
+        Ok(buf) => {
+            let len = buf.len();
+            let cart = Cartridge::try_from_backup(rom, Some(buf.into_boxed_slice()));
+            if cart.is_none() {
+                println!("failed to determine backup type from file (len: {len})");
+            }
+
+            cart
+        }
+        Err(e) => {
+            println!("failed to read backup file: {e}");
+            None
+        }
+    }
+    .unwrap_or_else(|| {
+        let backup_type = fallback_backup_type.unwrap_or_else(|| rom.parse_backup_type());
+        println!("using backup type: {:?}", backup_type);
+
+        Cartridge::new(rom, backup_type)
+    })
+}
+
 fn main() -> Result<()> {
     let matches = command!()
         .arg(arg!(--"skip-bios" "Skip executing BIOS ROM after boot").required(false))
-        .arg(arg!(-b --bios <BIOS_FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
+        .arg(arg!(-b --bios <FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
         .arg(
-            arg!(--backup <BACKUP_TYPE> "Cartridge backup type to use")
+            arg!(--"backup-fallback" <TYPE> "Cartridge backup type to fallback to")
                 .value_parser([
                     "none",
                     "eeprom-unknown",
@@ -146,7 +179,7 @@ fn main() -> Result<()> {
         )
         .arg(arg!(<ROM_FILE> "Cartridge ROM file to execute").allow_invalid_utf8(true))
         .arg(
-            arg!(--"frame-skip" <FRAME_SKIP> "Maximum frames to skip when behind")
+            arg!(--"frame-skip" <FRAMES> "Maximum frames to skip when behind")
                 .value_parser(value_parser!(u32))
                 .default_value("3")
                 .required(false),
@@ -154,30 +187,33 @@ fn main() -> Result<()> {
         .get_matches();
 
     let skip_bios = matches.is_present("skip-bios");
-    let bios_file = Path::new(matches.value_of_os("bios").unwrap());
-    let cart_backup_type = matches
-        .get_one::<String>("backup")
-        .map(|s| match s.as_str() {
-            "none" => BackupType::None,
-            "eeprom-unknown" => BackupType::EepromUnknownSize,
-            "eeprom-512" => BackupType::Eeprom512B,
-            "eeprom-8k" => BackupType::Eeprom8KiB,
-            "sram-32k" => BackupType::Sram32KiB,
-            "flash-64k" => BackupType::Flash64KiB,
-            "flash-128k" => BackupType::Flash128KiB,
-            _ => unreachable!(),
-        });
-    let cart_file = Path::new(matches.value_of_os("ROM_FILE").unwrap());
+    let bios_path = Path::new(matches.value_of_os("bios").unwrap());
+    let cart_fallback_backup_type =
+        matches
+            .get_one::<String>("backup-fallback")
+            .map(|s| match s.as_str() {
+                "none" => BackupType::None,
+                "eeprom-unknown" => BackupType::EepromUnknownSize,
+                "eeprom-512" => BackupType::Eeprom512B,
+                "eeprom-8k" => BackupType::Eeprom8KiB,
+                "sram-32k" => BackupType::Sram32KiB,
+                "flash-64k" => BackupType::Flash64KiB,
+                "flash-128k" => BackupType::Flash128KiB,
+                _ => unreachable!(),
+            });
+    let cart_path = Path::new(matches.value_of_os("ROM_FILE").unwrap());
     let max_frame_skip = *matches.get_one::<u32>("frame-skip").unwrap();
 
-    let bios_rom = fs::read(bios_file).context("failed to read BIOS ROM file")?;
+    let bios_rom = fs::read(bios_path).context("failed to read BIOS ROM file")?;
     let bios = Bios::new(&bios_rom).context("invalid BIOS ROM size")?;
 
-    let cart_rom_data = fs::read(cart_file).context("failed to read cartridge ROM file")?;
-    let cart_rom = Rom::new(cart_rom_data.as_slice()).context("invalid cartridge ROM size")?;
-    let cart_backup_type = cart_backup_type.unwrap_or_else(|| cart_rom.parse_backup_type());
-    println!("cart backup type: {:?}", cart_backup_type);
-    let cart = Cartridge::new(cart_rom, cart_backup_type);
+    let cart_rom_buf = fs::read(cart_path)
+        .context("failed to read cartridge ROM file")?
+        .into_boxed_slice();
+    let cart_rom = Rom::new(&cart_rom_buf).context("invalid cartridge ROM size")?;
+    let mut cart_backup_path = cart_path.to_owned();
+    cart_backup_path.set_extension("sav");
+    let cart = load_cart(cart_rom, &cart_backup_path, cart_fallback_backup_type);
 
     let mut sdl = SdlContext::init()?;
     let mut screen = SdlScreen::new(&sdl.win_texture_creator)?;
@@ -203,14 +239,26 @@ fn main() -> Result<()> {
         audio
     });
 
-    main_loop(
+    let result = main_loop(
         &mut sdl.event_pump,
         &mut sdl.win_canvas,
         &mut screen,
         &mut audio,
         &mut gba,
         max_frame_skip,
-    )
+    );
+
+    if let Some(cart_backup_buf) = gba.cart.backup_buffer() {
+        println!(
+            "writing to cartridge backup file: {}",
+            cart_backup_path.to_string_lossy()
+        );
+        if let Err(e) = fs::write(cart_backup_path, cart_backup_buf) {
+            println!("failed to write backup file: {e}");
+        }
+    }
+
+    result
 }
 
 fn update_keypad(kp: &mut Keypad, kb: &KeyboardState) {

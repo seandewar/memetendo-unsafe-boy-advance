@@ -10,12 +10,32 @@ pub struct Eeprom {
 
 const BLOCK_LEN: usize = 64;
 
+impl TryFrom<&mut Option<Box<[u8]>>> for Eeprom {
+    type Error = ();
+
+    fn try_from(buf: &mut Option<Box<[u8]>>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            buf: match buf.as_ref() {
+                Some(b) if b.len() == 8 * BLOCK_LEN || b.len() == 128 * BLOCK_LEN => {
+                    buf.take().unwrap()
+                }
+                _ => return Err(()),
+            },
+            state: State::None,
+        })
+    }
+}
+
 impl Eeprom {
     pub fn new(size_8k: bool) -> Self {
-        Self {
-            buf: vec![0xff; if size_8k { 128 } else { 8 } * BLOCK_LEN].into(),
-            state: State::None,
-        }
+        Self::try_from(&mut Some(
+            vec![0xff; if size_8k { 128 } else { 8 } * BLOCK_LEN].into_boxed_slice(),
+        ))
+        .unwrap()
+    }
+
+    pub fn buffer(&self) -> &[u8] {
+        &self.buf
     }
 }
 
