@@ -1,6 +1,7 @@
 use std::mem::size_of;
 
 use libmemetendo::audio::{self, SAMPLE_FREQUENCY};
+use log::info;
 use sdl2::{
     audio::{AudioQueue, AudioSpec, AudioSpecDesired},
     AudioSubsystem,
@@ -21,7 +22,7 @@ struct Callback {
 
 impl Callback {
     fn new(spec: AudioSpec) -> Result<Self, String> {
-        println!("audio spec: {spec:?}");
+        info!("{spec:?}");
 
         if spec.channels > 2 {
             return Err(format!(

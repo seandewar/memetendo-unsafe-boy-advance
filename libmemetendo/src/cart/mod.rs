@@ -1,3 +1,5 @@
+use log::{info, warn};
+
 use crate::{bus::Bus, InvalidRomSize};
 
 use self::{eeprom::Eeprom, flash::Flash};
@@ -154,11 +156,10 @@ impl<'r> Cartridge<'r> {
     #[must_use]
     pub fn backup_buffer(&self) -> Option<&[u8]> {
         match self.backup.as_ref() {
-            Some(Backup::EepromUnknownSize) => None,
+            Some(Backup::EepromUnknownSize) | None => None,
             Some(Backup::Eeprom(eeprom)) => Some(eeprom.buffer()),
             Some(Backup::Flash(flash)) => Some(flash.buffer()),
             Some(Backup::Sram(buf)) => Some(buf),
-            None => Some(&[]),
         }
     }
 
@@ -179,12 +180,12 @@ impl<'r> Cartridge<'r> {
         match blocks {
             // 6-bit addr read or write: 512B.
             9 | 73 => {
-                println!("guessing 512B EEPROM size");
+                info!("guessing 512B EEPROM size");
                 self.backup = Some(Backup::Eeprom(Eeprom::new(false)));
             }
             // 14-bit addr read or write: 8KiB.
             17 | 81 => {
-                println!("guessing 8KiB EEPROM size");
+                info!("guessing 8KiB EEPROM size");
                 self.backup = Some(Backup::Eeprom(Eeprom::new(true)));
             }
             _ => {}
@@ -229,7 +230,7 @@ impl Bus for Cartridge<'_> {
             0x000_0000..=0x1ff_ffff | 0x200_0000..=0x3ff_ffff | 0x400_0000..=0x5ff_ffff => {
                 if self.is_eeprom_offset(addr) {
                     if let Some(Backup::EepromUnknownSize) = self.backup {
-                        println!("could not guess EEPROM size; falling back to 512B!");
+                        warn!("could not guess EEPROM size; falling back to 512B!");
                         self.backup = Some(Backup::Eeprom(Eeprom::new(false)));
                     }
 

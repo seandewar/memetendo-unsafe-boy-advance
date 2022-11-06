@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use intbits::Bits;
 use strum_macros::FromRepr;
 
@@ -42,6 +44,23 @@ pub struct Registers {
     spsr: u32,
     banks: [Bank; 6],
     fiq_r8_12_bank: [u32; 5],
+}
+
+impl Display for Registers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}\ncpsr: {:08x}\nspsr: {:08x}",
+            self.r
+                .iter()
+                .enumerate()
+                .map(|(i, &x)| format!("r{i}: {x:08x}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            self.cpsr.bits(),
+            self.spsr()
+        )
+    }
 }
 
 #[derive(Default, Copy, Clone, Debug)]

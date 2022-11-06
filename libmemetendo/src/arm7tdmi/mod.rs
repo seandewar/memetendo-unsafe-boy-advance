@@ -3,6 +3,7 @@ pub mod reg;
 
 use std::mem::take;
 
+use log::trace;
 use strum::EnumCount;
 use strum_macros::{EnumCount, EnumIter, FromRepr};
 
@@ -129,22 +130,6 @@ impl Cpu {
             }
         }
 
-        // let regs = self
-        //     .reg
-        //     .r
-        //     .iter()
-        //     .copied()
-        //     .map(|x| format!("{x:0x}"))
-        //     .collect::<Vec<_>>()
-        //     .join(", ");
-        // println!(
-        //     "{:08x}: {:08x}, r: [{regs}], cpsr: {:08x}, spsr {:08x}",
-        //     self.reg.r[PC_INDEX],
-        //     self.pipeline_instrs[0],
-        //     self.reg.cpsr.bits(),
-        //     self.reg.spsr()
-        // );
-
         // NOTE: emulated pipelining will have the PC 2 instructions ahead of this executing
         // instruction, so the actual address of this instruction was PC -4 or -8.
         // The following two instructions should already be prefetched at this point.
@@ -153,6 +138,7 @@ impl Cpu {
         self.pipeline_instrs[1] = self.prefetch_instr(bus);
         self.pipeline_reloaded = false;
 
+        trace!("next instr: {instr:08x}\n{}", self.reg);
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),
             OperationState::Thumb => {
@@ -195,6 +181,7 @@ impl Cpu {
             return false;
         }
 
+        trace!("entering exception: {:?}", exception);
         let old_cpsr = self.reg.cpsr;
         self.reg.change_mode(exception.entry_mode());
         self.reg.cpsr.fiq_disabled |= exception.disables_fiq();

@@ -1,7 +1,7 @@
 #![warn(clippy::pedantic)]
 
 use std::{
-    fs,
+    fs, io,
     mem::take,
     path::Path,
     thread::sleep,
@@ -17,6 +17,7 @@ use libmemetendo::{
     keypad::{Key, Keypad},
     video::screen::{self, FrameBuffer, Screen},
 };
+use log::{error, info, warn};
 use sdl2::{
     audio::AudioSpecDesired,
     event::Event,
@@ -55,7 +56,7 @@ impl SdlContext {
         let sdl_audio = match sdl.audio() {
             Ok(audio) => Some(audio),
             Err(e) => {
-                println!("failed to init sdl2 audio subsystem: {e}");
+                error!("failed to init sdl2 audio subsystem: {e}");
                 None
             }
         };
@@ -132,35 +133,44 @@ fn load_cart<'r>(
     backup_path: &impl AsRef<Path>,
     fallback_backup_type: Option<BackupType>,
 ) -> Cartridge<'r> {
-    println!(
-        "reading cartridge backup file: {}",
-        backup_path.as_ref().to_string_lossy()
-    );
-
     match fs::read(backup_path) {
         Ok(buf) => {
             let len = buf.len();
             let cart = Cartridge::try_from_backup(rom, Some(buf.into_boxed_slice()));
             if cart.is_none() {
-                println!("failed to determine backup type from file (len: {len})");
+                error!(
+                    "failed to determine cart backup type from file {} (len: {len})",
+                    backup_path.as_ref().to_string_lossy()
+                );
             }
 
             cart
         }
         Err(e) => {
-            println!("failed to read backup file: {e}");
+            if e.kind() != io::ErrorKind::NotFound {
+                error!(
+                    "failed to read cart backup file {}: {e}",
+                    backup_path.as_ref().to_string_lossy()
+                );
+            }
+
             None
         }
     }
     .unwrap_or_else(|| {
         let backup_type = fallback_backup_type.unwrap_or_else(|| rom.parse_backup_type());
-        println!("using backup type: {:?}", backup_type);
+        info!("using backup type: {:?}", backup_type);
 
         Cartridge::new(rom, backup_type)
     })
 }
 
 fn main() -> Result<()> {
+    env_logger::builder()
+        .format_timestamp(None)
+        .parse_env(env_logger::Env::default().default_filter_or("info"))
+        .init();
+
     let matches = command!()
         .arg(arg!(--"skip-bios" "Skip executing BIOS ROM after boot").required(false))
         .arg(arg!(-b --bios <FILE> "BIOS ROM file to use").allow_invalid_utf8(true))
@@ -235,7 +245,7 @@ fn main() -> Result<()> {
         )
     }))
     .unwrap_or_else(|(e, audio)| {
-        println!("failed to initialize audio: {e}");
+        error!("failed to initialize audio: {e}");
         audio
     });
 
@@ -249,12 +259,12 @@ fn main() -> Result<()> {
     );
 
     if let Some(cart_backup_buf) = gba.cart.backup_buffer() {
-        println!(
-            "writing to cartridge backup file: {}",
+        info!(
+            "writing to cart backup file: {}",
             cart_backup_path.to_string_lossy()
         );
         if let Err(e) = fs::write(cart_backup_path, cart_backup_buf) {
-            println!("failed to write backup file: {e}");
+            error!("failed to write backup file: {e}");
         }
     }
 
@@ -300,7 +310,7 @@ fn main_loop(
                 gba.step(screen, audio, skipped_frames > 0);
             }
             if let Err(e) = audio.queue_samples() {
-                println!("failed to queue audio samples: {e}");
+                warn!("failed to queue audio samples: {e}");
             }
 
             let rem_time = next_redraw_time - Instant::now();
@@ -324,9 +334,9 @@ fn main_loop(
         update_keypad(&mut gba.keypad, &event_pump.keyboard_state());
 
         win_canvas.clear();
-        win_canvas
-            .copy(screen.update_texture(gba.video.frame())?, None, None)
-            .map_err(|e| anyhow!("failed to draw screen texture: {e}"))?;
+        if let Err(e) = win_canvas.copy(screen.update_texture(gba.video.frame())?, None, None) {
+            warn!("failed to draw screen texture: {e}");
+        }
         win_canvas.present();
 
         if skipped_frames >= max_frame_skip {
