@@ -224,10 +224,10 @@ impl Cpu {
             // 32-bit result written to Rd.
             self.reg.r[r_dst_or_hi] = if instr.bit(21) {
                 // MLA{cond}{S} Rd,Rm,Rs,Rn
-                self.op_mla(update_cond, value1, value2, accum1) as u32
+                self.op_mla(update_cond, value1, value2, accum1)
             } else {
                 // MUL{cond}{S} Rd,Rm,Rs
-                self.op_mla(update_cond, value1, value2, 0) as u32
+                self.op_mla(update_cond, value1, value2, 0)
             };
         }
     }
