@@ -1,4 +1,5 @@
 use intbits::Bits;
+use strum_macros::FromRepr;
 use tinyvec::array_vec;
 
 use crate::{arbitrary_sign_extend, bus::Bus};
@@ -96,6 +97,16 @@ impl DisplayStatus {
     }
 }
 
+#[derive(Copy, Clone, Default, Debug, FromRepr)]
+#[repr(u8)]
+pub(super) enum ScreenAreas {
+    #[default]
+    One,
+    TwoHorizontal,
+    TwoVertical,
+    Four,
+}
+
 #[derive(Copy, Clone, Default, Debug)]
 pub(super) struct BackgroundControl {
     pub priority: u8,
@@ -104,7 +115,7 @@ pub(super) struct BackgroundControl {
     pub color256: bool,
     screen_base_block: u8,
     pub wraparound: bool,
-    screen_size: u8,
+    screen_config: ScreenAreas,
     cached_bits: u16,
 }
 
@@ -132,7 +143,7 @@ impl BackgroundControl {
         self.cached_bits.set_bits(8.., bits.into());
         self.screen_base_block = bits.bits(..5);
         self.wraparound = bits.bit(5);
-        self.screen_size = bits.bits(6..);
+        self.screen_config = ScreenAreas::from_repr(bits.bits(6..)).unwrap();
     }
 
     pub fn dots_vram_offset(self) -> usize {
@@ -147,17 +158,16 @@ impl BackgroundControl {
         if text_mode {
             32
         } else {
-            16 << self.screen_size
+            16 << self.screen_config as u8
         }
     }
 
     pub fn text_mode_screen_index(self, (screen_x, screen_y): (i32, i32)) -> u8 {
-        let layout = match self.screen_size {
-            0 => [[0, 0], [0, 0]],
-            1 => [[0, 1], [0, 1]],
-            2 => [[0, 0], [1, 1]],
-            3 => [[0, 1], [2, 3]],
-            _ => unreachable!(),
+        let layout = match self.screen_config {
+            ScreenAreas::One => [[0, 0], [0, 0]],
+            ScreenAreas::TwoHorizontal => [[0, 1], [0, 1]],
+            ScreenAreas::TwoVertical => [[0, 0], [1, 1]],
+            ScreenAreas::Four => [[0, 1], [2, 3]],
         };
 
         layout[screen_y.rem_euclid(2) as usize][screen_x.rem_euclid(2) as usize]
@@ -258,12 +268,22 @@ impl Mosaic {
     }
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, FromRepr, Default, Debug)]
+#[repr(u8)]
+pub(super) enum BlendMode {
+    #[default]
+    None,
+    Alpha,
+    Brighten,
+    Dim,
+}
+
 #[derive(Copy, Clone, Default, Debug)]
 pub(super) struct BlendControl {
     pub bg_target: [[bool; 4]; 2],
     pub obj_target: [bool; 2],
     pub backdrop_target: [bool; 2],
-    pub mode: u8,
+    pub mode: BlendMode,
     cached_bits: u16,
 }
 
@@ -276,7 +296,7 @@ impl BlendControl {
         self.bg_target[0][3] = bits.bit(3);
         self.obj_target[0] = bits.bit(4);
         self.backdrop_target[0] = bits.bit(5);
-        self.mode = bits.bits(6..);
+        self.mode = BlendMode::from_repr(bits.bits(6..)).unwrap();
     }
 
     fn set_hi_bits(&mut self, bits: u8) {

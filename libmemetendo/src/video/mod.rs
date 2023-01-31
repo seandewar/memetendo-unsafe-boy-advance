@@ -17,7 +17,8 @@ use self::{
     obj::Oam,
     reg::{
         BackgroundAffine, BackgroundControl, BackgroundOffset, BlendCoefficient, BlendControl,
-        DisplayControl, DisplayStatus, Mosaic, ReferencePoint, WindowControl, WindowDimensions,
+        BlendMode, DisplayControl, DisplayStatus, Mosaic, ReferencePoint, WindowControl,
+        WindowDimensions,
     },
     screen::{FrameBuffer, Rgb, Screen},
 };
@@ -309,14 +310,13 @@ impl Video {
 
         let dot = match self.bldcnt.mode {
             _ if !is_target(0) => top_dot,
-            mode if is_target(1) && (mode == 1 || obj_alpha_mode) => {
+            mode if is_target(1) && (mode == BlendMode::Alpha || obj_alpha_mode) => {
                 let bot_dot = self.read_dot(top_infos[1]);
                 self.alpha_blend_dots(top_dot, bot_dot)
             }
-            0 | 1 => top_dot,
-            2 => self.brighten_dot(false, top_dot),
-            3 => self.brighten_dot(true, top_dot),
-            _ => unreachable!(),
+            BlendMode::Brighten => self.adjust_dot_brightness(false, top_dot),
+            BlendMode::Dim => self.adjust_dot_brightness(true, top_dot),
+            _ => top_dot,
         };
 
         dot.to_rgb()
@@ -401,7 +401,7 @@ impl Video {
         }
     }
 
-    fn brighten_dot(&self, darken: bool, dot: Dot) -> Dot {
+    fn adjust_dot_brightness(&self, darken: bool, dot: Dot) -> Dot {
         let mul = if darken {
             |comp| -f32::from(comp)
         } else {
@@ -461,11 +461,7 @@ impl Video {
             };
 
             if inside_horiz && inside_vert {
-                return match win_idx {
-                    0 => Window::Inside0,
-                    1 => Window::Inside1,
-                    _ => unreachable!(),
-                };
+                return [Window::Inside0, Window::Inside1][win_idx];
             }
         }
 

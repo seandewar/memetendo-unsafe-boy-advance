@@ -25,13 +25,23 @@ impl Default for AffineAttribute {
     }
 }
 
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, FromRepr)]
+#[repr(u8)]
+enum Shape {
+    #[default]
+    Square,
+    RectangleHorizontal,
+    RectangleVertical,
+    Invalid,
+}
+
 #[derive(Debug, Default, Copy, Clone)]
 struct Attributes {
     pos: (i16, i16),
     affine: AffineAttribute,
     mode: Option<Mode>,
     _mosaic: bool, // TODO
-    shape: u8,
+    shape: Shape,
     size: u8,
     dots_base_idx: u16,
     priority: u8,
@@ -41,11 +51,10 @@ struct Attributes {
 impl Attributes {
     fn tiles_size(&self) -> (u8, u8) {
         let tile_sizes = match self.shape {
-            0 => [(1, 1), (2, 2), (4, 4), (8, 8)],
-            1 => [(2, 1), (4, 1), (4, 2), (8, 4)],
-            2 => [(1, 2), (1, 4), (2, 4), (4, 8)],
-            3 => return (0, 0),
-            _ => unreachable!(),
+            Shape::Square => [(1, 1), (2, 2), (4, 4), (8, 8)],
+            Shape::RectangleHorizontal => [(2, 1), (4, 1), (4, 2), (8, 4)],
+            Shape::RectangleVertical => [(1, 2), (1, 4), (2, 4), (4, 8)],
+            Shape::Invalid => return (0, 0),
         };
 
         tile_sizes[usize::from(self.size)]
@@ -247,7 +256,7 @@ impl Oam {
             affine,
             mode: Mode::from_repr(attrs[0].bits(10..12).into()),
             _mosaic: attrs[0].bit(12),
-            shape: attrs[0].bits(14..) as u8,
+            shape: Shape::from_repr(attrs[0].bits(14..) as _).unwrap(),
             size: attrs[1].bits(14..) as u8,
             dots_base_idx: attrs[2].bits(..10),
             priority: attrs[2].bits(10..12) as u8,

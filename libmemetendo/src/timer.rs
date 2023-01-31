@@ -1,6 +1,7 @@
 use std::mem::{replace, take};
 
 use intbits::Bits;
+use strum_macros::FromRepr;
 
 use crate::{
     audio::Audio,
@@ -8,12 +9,22 @@ use crate::{
     irq::{Interrupt, Irq},
 };
 
+#[derive(Debug, Default, FromRepr)]
+#[repr(u8)]
+enum PrescalarSelect {
+    #[default]
+    Div1,
+    Div64,
+    Div256,
+    Div1024,
+}
+
 #[derive(Debug, Default)]
 struct Control {
     accum: u32,
     initial: u16,
     counter: u16,
-    frequency: u8,
+    prescalar_select: PrescalarSelect,
     cascade: bool,
     irq_enabled: bool,
     start: bool,
@@ -43,12 +54,11 @@ impl Timers {
                 } else {
                     const MAX_DIV: u32 = 1024;
 
-                    let div = match timer.frequency {
-                        0 => 1,
-                        1 => 64,
-                        2 => 256,
-                        3 => MAX_DIV,
-                        _ => unreachable!(),
+                    let div = match timer.prescalar_select {
+                        PrescalarSelect::Div1 => 1,
+                        PrescalarSelect::Div64 => 64,
+                        PrescalarSelect::Div256 => 256,
+                        PrescalarSelect::Div1024 => MAX_DIV,
                     };
                     timer.accum += u32::from(cycles) * MAX_DIV / div;
                     if timer.accum < MAX_DIV {
@@ -73,13 +83,14 @@ impl Timers {
                 let overflow_count = 1 + (extra_ticks / ticks_to_overflow) as u8;
 
                 if timer.irq_enabled {
-                    irq.request(match i {
-                        0 => Interrupt::Timer0,
-                        1 => Interrupt::Timer1,
-                        2 => Interrupt::Timer2,
-                        3 => Interrupt::Timer3,
-                        _ => unreachable!(),
-                    });
+                    irq.request(
+                        [
+                            Interrupt::Timer0,
+                            Interrupt::Timer1,
+                            Interrupt::Timer2,
+                            Interrupt::Timer3,
+                        ][i],
+                    );
                 }
                 audio.notify_timer_overflow(i, overflow_count);
                 prev_overflow_count = overflow_count.into();
@@ -116,7 +127,7 @@ impl Bus for Timers {
             1 => tmcnt.initial.set_bits(8.., value.into()),
             2 => {
                 tmcnt.cached_bits.set_bits(..8, value.into());
-                tmcnt.frequency = value.bits(..2);
+                tmcnt.prescalar_select = PrescalarSelect::from_repr(value.bits(..2)).unwrap();
                 tmcnt.cascade = value.bit(2);
                 tmcnt.irq_enabled = value.bit(6);
 

@@ -1,6 +1,7 @@
 use std::mem::replace;
 
 use intbits::Bits;
+use strum_macros::FromRepr;
 
 use crate::{
     bus::{AlignedExt, Bus},
@@ -16,18 +17,38 @@ enum State {
     Transferring,
 }
 
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, FromRepr)]
+#[repr(u8)]
+enum AddressControl {
+    #[default]
+    Increment,
+    Decrement,
+    Fixed,
+    IncrementAndReload,
+}
+
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, FromRepr)]
+#[repr(u8)]
+enum TimingMode {
+    #[default]
+    Immediate,
+    VBlank,
+    HBlank,
+    Special,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
 struct Channel {
     initial_src_addr: u32,
     initial_dst_addr: u32,
     initial_blocks: u32,
-    src_addr_ctrl: u8,
-    dst_addr_ctrl: u8,
+    src_addr_ctrl: AddressControl,
+    dst_addr_ctrl: AddressControl,
     repeat: bool,
     transfer_word: bool,
     cart_drq: bool,
-    timing_mode: u8,
+    timing_mode: TimingMode,
     irq_enabled: bool,
     enabled: bool,
     cached_dmacnt_hi_bits: u16,
@@ -48,7 +69,7 @@ impl Dma {
     }
 
     fn in_audio_fifo_mode(&self, chan_idx: usize) -> bool {
-        (1..=2).contains(&chan_idx) && self.0[chan_idx].timing_mode == 3
+        (1..=2).contains(&chan_idx) && self.0[chan_idx].timing_mode == TimingMode::Special
     }
 
     fn start_transfer(&mut self, chan_idx: usize) {
@@ -96,17 +117,22 @@ impl Dma {
 
             let src_addr = chan.src_addr;
             let src_addr_ctrl = chan.src_addr_ctrl;
-            let dst_addr_ctrl = if audio_fifo { 2 } else { chan.dst_addr_ctrl };
+            let dst_addr_ctrl = if audio_fifo {
+                AddressControl::Fixed
+            } else {
+                chan.dst_addr_ctrl
+            };
             let blocks = chan.rem_blocks.min(cycles.into());
             let transfer_word = audio_fifo || chan.transfer_word;
             let stride = if transfer_word { 4 } else { 2 };
 
             let update_addr = |addr: &mut u32, ctrl, offset| {
                 match ctrl {
-                    0 | 3 => *addr = addr.wrapping_add(offset),
-                    1 => *addr = addr.wrapping_sub(offset),
-                    2 => {}
-                    _ => unreachable!(),
+                    AddressControl::Increment | AddressControl::IncrementAndReload => {
+                        *addr = addr.wrapping_add(offset);
+                    }
+                    AddressControl::Decrement => *addr = addr.wrapping_sub(offset),
+                    AddressControl::Fixed => {}
                 };
             };
             update_addr(&mut chan.src_addr, src_addr_ctrl, stride * blocks);
@@ -117,20 +143,21 @@ impl Dma {
                 chan.state = State::None;
                 chan.enabled = chan.repeat;
                 if chan.repeat {
-                    if chan.dst_addr_ctrl == 3 {
+                    if chan.dst_addr_ctrl == AddressControl::IncrementAndReload {
                         chan.dst_addr = chan.initial_dst_addr;
                     }
                     chan.rem_blocks = chan.initial_blocks;
                 }
 
                 if chan.irq_enabled {
-                    irq.request(match chan_idx {
-                        0 => Interrupt::Dma0,
-                        1 => Interrupt::Dma1,
-                        2 => Interrupt::Dma2,
-                        3 => Interrupt::Dma3,
-                        _ => unreachable!(),
-                    });
+                    irq.request(
+                        [
+                            Interrupt::Dma0,
+                            Interrupt::Dma1,
+                            Interrupt::Dma2,
+                            Interrupt::Dma3,
+                        ][chan_idx],
+                    );
                 }
             }
 
@@ -172,15 +199,16 @@ pub enum Event {
 impl Dma {
     pub fn notify(&mut self, event: Event) {
         let event_timing_mode = match event {
-            Event::VBlank => 1,
-            Event::HBlank => 2,
-            Event::AudioFifoA | Event::AudioFifoB => 3,
+            Event::VBlank => TimingMode::VBlank,
+            Event::HBlank => TimingMode::HBlank,
+            Event::AudioFifoA | Event::AudioFifoB => TimingMode::Special,
         };
 
         for chan_idx in 0..self.0.len() {
             if !self.0[chan_idx].enabled || self.0[chan_idx].timing_mode != event_timing_mode {
                 continue;
             }
+
             let fifo_addr = match event {
                 Event::AudioFifoA => Some(0x0400_00a0),
                 Event::AudioFifoB => Some(0x0400_00a4),
@@ -230,6 +258,11 @@ impl Bus for Dma {
             _ => unreachable!(),
         };
 
+        #[allow(clippy::cast_possible_truncation)]
+        let mut update_src_addr_ctrl = |cached_hi_bits: u16| {
+            chan.src_addr_ctrl = AddressControl::from_repr(cached_hi_bits.bits(7..9) as _).unwrap();
+        };
+
         match offset {
             // DMAXSAD
             0..=3 => set_addr_byte(&mut chan.initial_src_addr, offset & 3, value),
@@ -240,16 +273,16 @@ impl Bus for Dma {
             9 => chan.initial_blocks.set_bits(8.., value.into()),
             10 => {
                 chan.cached_dmacnt_hi_bits.set_bits(..8, value.into());
-                chan.dst_addr_ctrl = value.bits(5..7);
-                chan.src_addr_ctrl.set_bit(0, value.bit(7));
+                chan.dst_addr_ctrl = AddressControl::from_repr(value.bits(5..7)).unwrap();
+                update_src_addr_ctrl(chan.cached_dmacnt_hi_bits);
             }
             11 => {
                 chan.cached_dmacnt_hi_bits.set_bits(8.., value.into());
-                chan.src_addr_ctrl.set_bit(1, value.bit(0));
+                update_src_addr_ctrl(chan.cached_dmacnt_hi_bits);
                 chan.repeat = value.bit(1);
                 chan.transfer_word = value.bit(2);
                 chan.cart_drq = value.bit(3);
-                chan.timing_mode = value.bits(4..6);
+                chan.timing_mode = TimingMode::from_repr(value.bits(4..6)).unwrap();
                 chan.irq_enabled = value.bit(6);
 
                 if !replace(&mut chan.enabled, value.bit(7)) && chan.enabled {
@@ -257,7 +290,7 @@ impl Bus for Dma {
                     chan.dst_addr = chan.initial_dst_addr;
                     chan.rem_blocks = chan.initial_blocks;
 
-                    if chan.timing_mode == 0 {
+                    if chan.timing_mode == TimingMode::Immediate {
                         self.start_transfer(chan_idx);
                     }
                 }
