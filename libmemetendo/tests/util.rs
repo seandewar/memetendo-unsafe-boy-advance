@@ -1,7 +1,7 @@
-use std::path::Path;
+use std::{fs, path::Path, rc::Rc};
 
 use image::RgbImage;
-use libmemetendo::cart::Rom;
+use libmemetendo::cart;
 
 pub fn read_image(path: impl AsRef<Path>) -> RgbImage {
     image::io::Reader::open(path)
@@ -11,11 +11,9 @@ pub fn read_image(path: impl AsRef<Path>) -> RgbImage {
         .into_rgb8()
 }
 
-pub fn read_test_rom(path: impl AsRef<Path>) -> Rom<'static> {
-    Rom::new(Box::leak(
-        std::fs::read(path)
-            .expect("failed to read test ROM; did you fetch the submodules?")
-            .into_boxed_slice(),
+pub fn read_cart_rom(path: impl AsRef<Path>) -> cart::Rom {
+    cart::Rom::new(Rc::from(
+        fs::read(path).expect("failed to read test ROM; did you fetch the submodules?"),
     ))
     .expect("bad ROM size")
 }

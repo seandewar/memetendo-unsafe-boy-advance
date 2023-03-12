@@ -8,12 +8,12 @@ use std::path::Path;
 use image::RgbImage;
 use once_cell::sync::Lazy;
 use runner::Runner;
-use util::{read_image, read_test_rom};
+use util::{read_cart_rom, read_image};
 
 static PASS_SCREEN: Lazy<RgbImage> = Lazy::new(|| read_image("tests/jsmolka/ok.png"));
 
 fn run_test(path: impl AsRef<Path>, pass_screen: &RgbImage) {
-    let mut runner = Runner::new(read_test_rom(path));
+    let mut runner = Runner::new(read_cart_rom(path));
     for _ in 0..3 {
         runner.step_frame();
         if runner.screen.image == *pass_screen {

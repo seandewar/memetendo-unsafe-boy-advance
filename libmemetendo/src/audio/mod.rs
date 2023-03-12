@@ -16,6 +16,12 @@ pub trait Callback {
     fn push_sample(&mut self, sample: (i16, i16));
 }
 
+pub struct NullCallback;
+
+impl Callback for NullCallback {
+    fn push_sample(&mut self, _sample: (i16, i16)) {}
+}
+
 #[derive(Debug, Default)]
 pub struct Audio {
     channels: (ToneAndSweep, Tone, Wave, Noise, Fifo<true>, Fifo<false>),

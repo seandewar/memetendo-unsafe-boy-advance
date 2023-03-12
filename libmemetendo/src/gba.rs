@@ -3,7 +3,7 @@ use intbits::Bits;
 use crate::{
     arm7tdmi::Cpu,
     audio::{self, Audio},
-    bios::Bios,
+    bios::{self, Bios},
     bus,
     cart::Cartridge,
     dma::Dma,
@@ -49,7 +49,7 @@ impl bus::Bus for HaltControl {
     }
 }
 
-pub struct Gba<'b, 'c> {
+pub struct Gba {
     pub cpu: Cpu,
     pub irq: Irq,
     pub haltcnt: HaltControl,
@@ -60,14 +60,14 @@ pub struct Gba<'b, 'c> {
     pub video: Video,
     pub audio: Audio,
     pub keypad: Keypad,
-    pub bios: Bios<'b>,
-    pub cart: Cartridge<'c>,
+    pub bios: Bios,
+    pub cart: Cartridge,
     io_todo: Box<[u8]>,
 }
 
-impl<'b, 'c> Gba<'b, 'c> {
+impl Gba {
     #[must_use]
-    pub fn new(bios: Bios<'b>, cart: Cartridge<'c>) -> Self {
+    pub fn new(bios_rom: bios::Rom, cart: Cartridge) -> Self {
         Self {
             cpu: Cpu::new(),
             irq: Irq::new(),
@@ -79,7 +79,7 @@ impl<'b, 'c> Gba<'b, 'c> {
             video: Video::new(),
             audio: Audio::new(),
             keypad: Keypad::new(),
-            bios,
+            bios: Bios::new(bios_rom),
             cart,
             io_todo: vec![0; 0x801].into_boxed_slice(),
         }
@@ -123,7 +123,7 @@ impl<'b, 'c> Gba<'b, 'c> {
     }
 }
 
-pub struct Bus<'a, 'b, 'c> {
+pub struct Bus<'a> {
     pub irq: &'a mut Irq,
     pub haltcnt: &'a mut HaltControl,
     pub timers: &'a mut Timers,
@@ -133,8 +133,8 @@ pub struct Bus<'a, 'b, 'c> {
     pub video: &'a mut Video,
     pub audio: &'a mut Audio,
     pub keypad: &'a mut Keypad,
-    pub bios: &'a mut Bios<'b>,
-    pub cart: &'a mut Cartridge<'c>,
+    pub bios: &'a mut Bios,
+    pub cart: &'a mut Cartridge,
     pub io_todo: &'a mut Box<[u8]>,
 }
 
@@ -160,7 +160,7 @@ macro_rules! bus {
     }};
 }
 
-impl bus::Bus for Bus<'_, '_, '_> {
+impl bus::Bus for Bus<'_> {
     fn read_byte(&mut self, addr: u32) -> u8 {
         match addr {
             // BIOS

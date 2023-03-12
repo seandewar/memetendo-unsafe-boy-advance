@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use log::{info, warn};
 
 use crate::{bus::Bus, InvalidRomSize};
@@ -19,15 +21,15 @@ pub enum BackupType {
     Flash128KiB,
 }
 
-#[derive(Default, Copy, Clone)]
-pub struct Rom<'a>(&'a [u8]);
+#[derive(Clone)]
+pub struct Rom(Rc<[u8]>);
 
-impl<'a> TryFrom<&'a [u8]> for Rom<'a> {
+impl TryFrom<Rc<[u8]>> for Rom {
     type Error = InvalidRomSize;
 
     /// # Errors
     /// Returns an error if the size of the cartridge ROM image exceeds 32MiB.
-    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+    fn try_from(buf: Rc<[u8]>) -> Result<Self, Self::Error> {
         if buf.len() > 0x200_0000 {
             return Err(InvalidRomSize);
         }
@@ -36,19 +38,10 @@ impl<'a> TryFrom<&'a [u8]> for Rom<'a> {
     }
 }
 
-impl<'a> TryFrom<&'a mut [u8]> for Rom<'a> {
-    type Error = InvalidRomSize;
-
-    /// See `Self::try_from(&[u8])`
-    fn try_from(buf: &'a mut [u8]) -> Result<Self, Self::Error> {
-        Self::try_from(&*buf)
-    }
-}
-
-impl<'a> Rom<'a> {
-    /// See `Self::try_from(&[u8])`
+impl Rom {
+    /// See `Self::try_from(Rc<[u8]>)`
     #[allow(clippy::missing_errors_doc)]
-    pub fn new(buf: &'a [u8]) -> Result<Self, InvalidRomSize> {
+    pub fn new(buf: Rc<[u8]>) -> Result<Self, InvalidRomSize> {
         Self::try_from(buf)
     }
 
@@ -86,19 +79,20 @@ impl<'a> Rom<'a> {
 
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
-        self.0
+        self.0.as_ref()
     }
 }
 
 #[derive(Clone)]
-pub struct Cartridge<'r> {
-    rom: Rom<'r>,
+pub struct Cartridge {
+    rom: Rom,
     backup: Option<Backup>,
 }
 
-impl<'r> From<Rom<'r>> for Cartridge<'r> {
-    fn from(rom: Rom<'r>) -> Self {
-        Self::new(rom, rom.parse_backup_type())
+impl From<Rom> for Cartridge {
+    fn from(rom: Rom) -> Self {
+        let backup_type = rom.parse_backup_type();
+        Self::new(rom, backup_type)
     }
 }
 
@@ -110,9 +104,9 @@ enum Backup {
     Sram(Box<[u8]>),
 }
 
-impl<'r> Cartridge<'r> {
+impl Cartridge {
     #[must_use]
-    pub fn new(rom: Rom<'r>, backup_type: BackupType) -> Self {
+    pub fn new(rom: Rom, backup_type: BackupType) -> Self {
         Self {
             rom,
             backup: match backup_type {
@@ -128,23 +122,25 @@ impl<'r> Cartridge<'r> {
     }
 
     #[must_use]
-    pub fn try_from_backup(rom: Rom<'r>, mut backup_buf: Option<Box<[u8]>>) -> Option<Self> {
-        Some(Self {
-            rom,
-            backup: match backup_buf {
-                Some(buf) if buf.is_empty() => None,
-                Some(buf) if buf.len() == 32 * 1024 => Some(Backup::Sram(buf)),
-                Some(_) => {
-                    if let Ok(eeprom) = Eeprom::try_from(&mut backup_buf) {
-                        Some(Backup::Eeprom(eeprom))
-                    } else if let Ok(flash) = Flash::try_from(&mut backup_buf) {
-                        Some(Backup::Flash(flash))
-                    } else {
-                        return None;
-                    }
+    pub fn try_from_backup(rom: &Rom, mut backup_buf: Option<Box<[u8]>>) -> Option<Self> {
+        let backup = match backup_buf {
+            Some(buf) if buf.is_empty() => None,
+            Some(buf) if buf.len() == 32 * 1024 => Some(Backup::Sram(buf)),
+            Some(_) => {
+                if let Ok(eeprom) = Eeprom::try_from(&mut backup_buf) {
+                    Some(Backup::Eeprom(eeprom))
+                } else if let Ok(flash) = Flash::try_from(&mut backup_buf) {
+                    Some(Backup::Flash(flash))
+                } else {
+                    return None;
                 }
-                None => None,
-            },
+            }
+            None => None,
+        };
+
+        Some(Self {
+            rom: rom.clone(),
+            backup,
         })
     }
 
@@ -193,7 +189,7 @@ impl<'r> Cartridge<'r> {
     }
 }
 
-impl Bus for Cartridge<'_> {
+impl Bus for Cartridge {
     fn read_byte(&mut self, addr: u32) -> u8 {
         match addr {
             // TODO: WAITCNT with wait states 0, 1 and 2

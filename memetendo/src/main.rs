@@ -4,6 +4,7 @@ use std::{
     fs, io,
     mem::take,
     path::Path,
+    rc::Rc,
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -11,8 +12,8 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use clap::{arg, command, value_parser};
 use libmemetendo::{
-    bios::Bios,
-    cart::{BackupType, Cartridge, Rom},
+    bios,
+    cart::{self, BackupType, Cartridge},
     gba::Gba,
     keypad::{Key, Keypad},
     video::screen::{self, FrameBuffer, Screen},
@@ -128,15 +129,15 @@ impl Screen for SdlScreen<'_> {
     }
 }
 
-fn load_cart<'r>(
-    rom: Rom<'r>,
+fn load_cart(
+    rom: cart::Rom,
     backup_path: &impl AsRef<Path>,
     fallback_backup_type: Option<BackupType>,
-) -> Cartridge<'r> {
+) -> Cartridge {
     match fs::read(backup_path) {
         Ok(buf) => {
             let len = buf.len();
-            let cart = Cartridge::try_from_backup(rom, Some(buf.into_boxed_slice()));
+            let cart = Cartridge::try_from_backup(&rom, Some(buf.into_boxed_slice()));
             if cart.is_none() {
                 error!(
                     "failed to determine cart backup type from file {} (len: {len})",
@@ -159,7 +160,7 @@ fn load_cart<'r>(
     }
     .unwrap_or_else(|| {
         let backup_type = fallback_backup_type.unwrap_or_else(|| rom.parse_backup_type());
-        info!("using backup type: {:?}", backup_type);
+        info!("using backup type: {backup_type:?}");
 
         Cartridge::new(rom, backup_type)
     })
@@ -214,13 +215,11 @@ fn main() -> Result<()> {
     let cart_path = Path::new(matches.value_of_os("ROM_FILE").unwrap());
     let max_frame_skip = *matches.get_one::<u32>("frame-skip").unwrap();
 
-    let bios_rom = fs::read(bios_path).context("failed to read BIOS ROM file")?;
-    let bios = Bios::new(&bios_rom).context("invalid BIOS ROM size")?;
+    let bios_rom_buf = fs::read(bios_path).context("failed to read BIOS ROM file")?;
+    let bios_rom = bios::Rom::new(Rc::from(bios_rom_buf)).context("invalid BIOS ROM size")?;
 
-    let cart_rom_buf = fs::read(cart_path)
-        .context("failed to read cartridge ROM file")?
-        .into_boxed_slice();
-    let cart_rom = Rom::new(&cart_rom_buf).context("invalid cartridge ROM size")?;
+    let cart_rom_buf = fs::read(cart_path).context("failed to read cartridge ROM file")?;
+    let cart_rom = cart::Rom::new(Rc::from(cart_rom_buf)).context("invalid cartridge ROM size")?;
     let mut cart_backup_path = cart_path.to_owned();
     cart_backup_path.set_extension("sav");
     let cart = load_cart(cart_rom, &cart_backup_path, cart_fallback_backup_type);
@@ -231,7 +230,7 @@ fn main() -> Result<()> {
     sdl.win_canvas.clear();
     sdl.win_canvas.present();
 
-    let mut gba = Gba::new(bios, cart);
+    let mut gba = Gba::new(bios_rom, cart);
     gba.reset(skip_bios);
 
     let mut audio = Audio::new(sdl.sdl_audio.as_ref().map(|sdl_audio| {

@@ -1,37 +1,30 @@
+use std::{fs, rc::Rc};
+
 use image::RgbImage;
 use libmemetendo::{
-    audio,
-    bios::Bios,
-    cart::{Cartridge, Rom},
+    audio, bios,
+    cart::{self, Cartridge},
     gba::Gba,
     video::screen::{self, FrameBuffer},
 };
-use once_cell::sync::Lazy;
 
-static BIOS_ROM: Lazy<Box<[u8]>> =
-    Lazy::new(|| {
-        std::fs::read("tests/bios.bin").expect(
-        "failed to read BIOS ROM; place it in a \"bios.bin\" file within the tests directory",
-        ).into_boxed_slice()
-    });
-
-struct NullAudioCallback;
-
-impl audio::Callback for NullAudioCallback {
-    fn push_sample(&mut self, _sample: (i16, i16)) {}
+thread_local! {
+    static BIOS_ROM: bios::Rom = {
+        let buf = fs::read("tests/bios.bin").expect(
+            "failed to read BIOS ROM; place it in a \"bios.bin\" file within the tests directory",
+        );
+        bios::Rom::new(Rc::from(buf)).expect("bad BIOS ROM")
+    };
 }
 
-pub struct Runner<'c> {
-    pub gba: Gba<'static, 'c>,
+pub struct Runner {
+    pub gba: Gba,
     pub screen: Screen,
 }
 
-impl<'c> Runner<'c> {
-    pub fn new(test_rom: Rom<'c>) -> Self {
-        let bios = Bios::new(&BIOS_ROM).expect("bad BIOS ROM");
-        let cart = Cartridge::from(test_rom);
-
-        let mut gba = Gba::new(bios, cart);
+impl Runner {
+    pub fn new(test_rom: cart::Rom) -> Self {
+        let mut gba = Gba::new(BIOS_ROM.with(bios::Rom::clone), Cartridge::from(test_rom));
         gba.reset(true);
 
         Self {
@@ -42,7 +35,7 @@ impl<'c> Runner<'c> {
 
     pub fn step(&mut self) {
         self.gba
-            .step(&mut self.screen, &mut NullAudioCallback, false);
+            .step(&mut self.screen, &mut audio::NullCallback, false);
     }
 
     pub fn step_frame(&mut self) {

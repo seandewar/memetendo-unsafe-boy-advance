@@ -1,0 +1,33 @@
+[package]
+name = "web-memetendo"
+version = "0.1.0"
+description = "WASM Web frontend for Memetendo Unsafe Boy Advance"
+authors = ["Sean Dewar <https://github.com/seandewar>"]
+edition = "2021"
+
+[dependencies]
+libmemetendo = { path = "../libmemetendo" }
+console_error_panic_hook = "0.1.7"
+console_log = "0.2.1"
+js-sys = "0.3.61"
+log = "0.4.17"
+wasm-bindgen = "0.2.84"
+
+[dependencies.web-sys]
+version = "0.3.61"
+features = [
+            "Blob",
+            "CanvasRenderingContext2d",
+            "Document",
+            "DomException",
+            "Element",
+            "Event",
+            "EventTarget",
+            "File",
+            "FileList",
+            "FileReader",
+            "HtmlCanvasElement",
+            "HtmlInputElement",
+            "ImageData",
+            "Window",
+]

@@ -1,45 +1,47 @@
+use std::rc::Rc;
+
 use crate::{bus::Bus, InvalidRomSize};
 
 #[derive(Clone)]
-pub struct Bios<'a> {
-    rom: &'a [u8],
+pub struct Rom(Rc<[u8]>);
+
+impl TryFrom<Rc<[u8]>> for Rom {
+    type Error = InvalidRomSize;
+
+    /// # Errors
+    /// Returns an error if the size of the BIOS ROM image is not 16KiB.
+    fn try_from(buf: Rc<[u8]>) -> Result<Self, Self::Error> {
+        if buf.len() != 0x4000 {
+            return Err(InvalidRomSize);
+        }
+
+        Ok(Self(buf))
+    }
+}
+
+impl Rom {
+    /// See `Self::try_from(Rc<[u8]>)`
+    #[allow(clippy::missing_errors_doc)]
+    pub fn new(buf: Rc<[u8]>) -> Result<Self, InvalidRomSize> {
+        Self::try_from(buf)
+    }
+}
+
+#[derive(Clone)]
+pub struct Bios {
+    rom: Rom,
     readable: bool,
     prefetch_addr: u32,
 }
 
-impl<'a> TryFrom<&'a [u8]> for Bios<'a> {
-    type Error = InvalidRomSize;
-
-    /// # Errors
-    ///
-    /// Returns an error if the size of the BIOS ROM image is not 16KiB.
-    fn try_from(rom: &'a [u8]) -> Result<Self, Self::Error> {
-        if rom.len() != 0x4000 {
-            return Err(InvalidRomSize);
-        }
-
-        Ok(Self {
+impl Bios {
+    #[must_use]
+    pub fn new(rom: Rom) -> Self {
+        Self {
             rom,
             readable: false,
             prefetch_addr: 0,
-        })
-    }
-}
-
-impl<'a> TryFrom<&'a mut [u8]> for Bios<'a> {
-    type Error = InvalidRomSize;
-
-    /// See `Self::try_from(&[u8])`.
-    fn try_from(rom: &'a mut [u8]) -> Result<Self, Self::Error> {
-        Self::try_from(&*rom)
-    }
-}
-
-impl<'a> Bios<'a> {
-    /// See `Self::try_from(&[u8])`.
-    #[allow(clippy::missing_errors_doc)]
-    pub fn new(rom: &'a [u8]) -> Result<Self, InvalidRomSize> {
-        Self::try_from(rom)
+        }
     }
 
     pub fn reset(&mut self) {
@@ -55,9 +57,9 @@ impl<'a> Bios<'a> {
     }
 }
 
-impl Bus for Bios<'_> {
+impl Bus for Bios {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        self.rom.read_byte(if self.readable {
+        self.rom.0.as_ref().read_byte(if self.readable {
             addr
         } else {
             self.prefetch_addr | (addr & 0b11)

@@ -5,17 +5,17 @@ mod util;
 
 use std::{ffi::OsStr, fs::read_dir, path::Path};
 
-use libmemetendo::{cart::Rom, keypad::Key};
-use once_cell::sync::Lazy;
+use libmemetendo::{cart, keypad::Key};
 use runner::Runner;
-use util::{read_image, read_test_rom};
+use util::{read_cart_rom, read_image};
 
-static TEST_ROM: Lazy<Rom<'static>> = Lazy::new(|| {
-    read_test_rom("tests/armwrestler_gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba")
-});
+thread_local! {
+    static TEST_ROM: cart::Rom =
+        read_cart_rom("tests/armwrestler_gba/armwrestler-gba-fixed/armwrestler-gba-fixed.gba");
+}
 
 fn run_test(menu_entry_idx: u32, pass_screens_dir: impl AsRef<Path>) {
-    let mut runner = Runner::new(*TEST_ROM);
+    let mut runner = Runner::new(TEST_ROM.with(cart::Rom::clone));
     runner.step_frames(5); // Wait for startup
     for _ in 0..menu_entry_idx {
         runner.gba.keypad.set_pressed(Key::Down, true);
@@ -26,7 +26,6 @@ fn run_test(menu_entry_idx: u32, pass_screens_dir: impl AsRef<Path>) {
 
     let mut pass_screens = read_dir(pass_screens_dir)
         .unwrap()
-        .into_iter()
         .map(|entry| entry.unwrap().path())
         .filter_map(|path| {
             path.file_stem()
