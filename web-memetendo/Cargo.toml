@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 libmemetendo = { path = "../libmemetendo" }
+anyhow = "1.0.69"
 console_error_panic_hook = "0.1.7"
 console_log = "0.2.1"
 js-sys = "0.3.61"
@@ -20,7 +21,6 @@ features = [
             "CanvasRenderingContext2d",
             "Document",
             "DomException",
-            "Element",
             "Event",
             "EventTarget",
             "File",
