@@ -8,13 +8,14 @@ use libmemetendo::{
     audio, bios,
     cart::{self, Cartridge},
     gba::Gba,
+    keypad::Key,
     video::screen::{self, FrameBuffer},
 };
 use log::{info, Level};
 use wasm_bindgen::{prelude::*, Clamped, JsCast};
 use web_sys::{
-    CanvasRenderingContext2d, Event, FileReader, HtmlCanvasElement, HtmlInputElement, ImageData,
-    Window,
+    CanvasRenderingContext2d, Document, Event, FileReader, HtmlCanvasElement, HtmlInputElement,
+    ImageData, KeyboardEvent, Window,
 };
 
 struct Screen {
@@ -89,10 +90,9 @@ impl Screen {
 
 struct Context {
     window: Window,
-    screen: Rc<RefCell<Screen>>, // TODO: this sucks
+    document: Document,
+    screen: Rc<RefCell<Screen>>, // TODO: Rc<RefCell<>> sucks; is there a good way around it?
     gba: Option<Gba>,
-    // This type is used so that the closure is able to call request_animation_frame() on itself to
-    // schedule future updates.
     updater: Option<Closure<dyn Fn()>>,
     selected_bios_rom: Option<bios::Rom>,
     selected_cart_rom: Option<cart::Rom>,
@@ -102,6 +102,7 @@ impl Context {
     fn new(window: &Window) -> Result<Self> {
         Ok(Self {
             window: window.clone(),
+            document: window.document().unwrap(),
             screen: Rc::new(RefCell::new(Screen::new(window)?)),
             gba: None,
             updater: None,
@@ -130,11 +131,11 @@ fn maybe_start_emulation(ctx: &Rc<RefCell<Context>>) -> bool {
     borrowed_ctx.screen.borrow().clear();
 
     if borrowed_ctx.updater.is_none() {
-        borrowed_ctx.updater = Some(Closure::new({
+        borrowed_ctx.updater = Some({
             let ctx = Rc::clone(ctx);
             let screen = Rc::clone(&borrowed_ctx.screen);
 
-            move || {
+            Closure::new(move || {
                 let mut borrowed_ctx = ctx.borrow_mut();
                 let Some(ref mut gba) = borrowed_ctx.gba else {
                     borrowed_ctx.updater = None;
@@ -158,8 +159,8 @@ fn maybe_start_emulation(ctx: &Rc<RefCell<Context>>) -> bool {
                             .unchecked_ref(),
                     )
                     .unwrap();
-            }
-        }));
+            })
+        });
 
         borrowed_ctx
             .window
@@ -177,6 +178,10 @@ fn maybe_start_emulation(ctx: &Rc<RefCell<Context>>) -> bool {
     true
 }
 
+fn alert(window: &Window, message: impl AsRef<str>) {
+    window.alert_with_message(message.as_ref()).unwrap();
+}
+
 fn main() {
     panic::set_hook(Box::new(console_error_panic_hook::hook));
     console_log::init_with_level(Level::Info)
@@ -186,106 +191,133 @@ fn main() {
     let ctx = match Context::new(&window) {
         Ok(ctx) => Rc::new(RefCell::new(ctx)),
         Err(e) => {
-            window
-                .alert_with_message(&format!("Loading failed: {e}"))
-                .unwrap();
+            alert(&window, format!("Loading failed: {e}"));
             return;
         }
     };
 
-    init_file_input(&window, "memetendo-bios-file", {
+    init_file_input(&ctx.borrow(), "memetendo-bios-file", {
         let ctx = Rc::clone(&ctx);
         move |rom_buf: Vec<u8>| {
             let Ok(rom) = bios::Rom::new(Rc::from(rom_buf)) else {
-                    ctx.borrow().window
-                        .alert_with_message("Invalid BIOS ROM size!")
-                        .unwrap();
-                    return;
-                };
+                alert(&ctx.borrow().window, "Invalid BIOS ROM size!");
+                return;
+            };
 
             ctx.borrow_mut().selected_bios_rom = Some(rom);
             maybe_start_emulation(&ctx);
         }
     });
-
-    init_file_input(&window, "memetendo-cart-file", {
+    init_file_input(&ctx.borrow(), "memetendo-cart-file", {
         let ctx = Rc::clone(&ctx);
         move |rom_buf: Vec<u8>| {
             let Ok(rom) = cart::Rom::new(Rc::from(rom_buf)) else {
-                    ctx.borrow().window
-                        .alert_with_message("Invalid cartridge ROM size!")
-                        .unwrap();
-                    return;
-                };
+                alert(&ctx.borrow().window, "Invalid cartridge ROM size!");
+                return;
+            };
 
             ctx.borrow_mut().selected_cart_rom = Some(rom);
             maybe_start_emulation(&ctx);
         }
     });
-}
 
-fn init_file_input(window: &Window, id: &str, mut callback: impl FnMut(Vec<u8>) + 'static) {
-    let reader = FileReader::new().unwrap();
-    {
-        let window = window.clone();
-        reader.set_onloadend(Some(
-            Closure::<dyn FnMut(_)>::new(move |event: Event| {
-                let reader = event.target().unwrap().dyn_into::<FileReader>().unwrap();
-                let array_buf = reader.result().unwrap();
-                if array_buf.is_null() {
-                    let dom_exception = reader.error().unwrap();
-                    window
-                        .alert_with_message(&format!(
-                            "Failed to open file: {} (code {}).",
-                            dom_exception.message(),
-                            dom_exception.code(),
-                        ))
-                        .unwrap();
-                    return;
-                }
-
-                callback(Uint8Array::new(&array_buf).to_vec());
-            })
+    let document = window.document().unwrap();
+    document.set_onkeydown(Some(
+        create_keypress_handler(Rc::clone(&ctx), true)
             .into_js_value()
             .unchecked_ref(),
-        ));
-    }
+    ));
+    document.set_onkeyup(Some(
+        create_keypress_handler(Rc::clone(&ctx), false)
+            .into_js_value()
+            .unchecked_ref(),
+    ));
+}
 
-    let input = window
-        .document()
-        .unwrap()
+// TODO: uses event.code(), so we need to have some sort of prompt that shows the actual key if the
+// keyboard layout isn't QWERTY.
+fn create_keypress_handler(
+    ctx: Rc<RefCell<Context>>,
+    pressed: bool,
+) -> Closure<dyn FnMut(KeyboardEvent)> {
+    Closure::new(move |event: KeyboardEvent| {
+        let Some(ref mut gba) = ctx.borrow_mut().gba else {
+            return;
+        };
+
+        let key = match event.code().as_str() {
+            "KeyX" => Key::A,
+            "KeyZ" => Key::B,
+            "ShiftLeft" | "ShiftRight" => Key::Select,
+            "Enter" => Key::Start,
+            "ArrowUp" => Key::Up,
+            "ArrowDown" => Key::Down,
+            "ArrowLeft" => Key::Left,
+            "ArrowRight" => Key::Right,
+            "KeyA" => Key::L,
+            "KeyS" => Key::R,
+            _ => return,
+        };
+        gba.keypad.set_pressed(key, pressed);
+    })
+}
+
+fn init_file_input(ctx: &Context, id: &str, mut callback: impl FnMut(Vec<u8>) + 'static) {
+    let reader = FileReader::new().unwrap();
+
+    reader.set_onloadend(Some({
+        let window = ctx.window.clone();
+        Closure::<dyn FnMut(_)>::new(move |event: Event| {
+            let reader = event.target().unwrap().dyn_into::<FileReader>().unwrap();
+            let array_buf = reader.result().unwrap();
+            if array_buf.is_null() {
+                let dom_exception = reader.error().unwrap();
+                alert(
+                    &window,
+                    format!(
+                        "Failed to open file: {} (code {}).",
+                        dom_exception.message(),
+                        dom_exception.code(),
+                    ),
+                );
+                return;
+            }
+
+            callback(Uint8Array::new(&array_buf).to_vec());
+        })
+        .into_js_value()
+        .unchecked_ref()
+    }));
+
+    let input = ctx
+        .document
         .get_element_by_id(id)
         .unwrap()
         .dyn_into::<HtmlInputElement>()
         .unwrap();
     input.set_value("");
 
-    {
-        let window = window.clone();
-        input
-            .add_event_listener_with_callback(
-                "change",
-                Closure::<dyn Fn(_)>::new(move |event: Event| {
-                    let input = event
-                        .target()
-                        .unwrap()
-                        .dyn_into::<HtmlInputElement>()
-                        .unwrap();
+    input
+        .add_event_listener_with_callback("change", {
+            let window = ctx.window.clone();
+            Closure::<dyn Fn(_)>::new(move |event: Event| {
+                let input = event
+                    .target()
+                    .unwrap()
+                    .dyn_into::<HtmlInputElement>()
+                    .unwrap();
 
-                    let files = input.files().unwrap();
-                    if files.length() != 1 {
-                        window
-                            .alert_with_message("One file must be selected!")
-                            .unwrap();
-                        return;
-                    }
+                let files = input.files().unwrap();
+                if files.length() != 1 {
+                    alert(&window, "One file must be selected!");
+                    return;
+                }
 
-                    let file = files.item(0).unwrap();
-                    reader.read_as_array_buffer(&file).unwrap();
-                })
-                .into_js_value()
-                .unchecked_ref(),
-            )
-            .unwrap();
-    }
+                let file = files.item(0).unwrap();
+                reader.read_as_array_buffer(&file).unwrap();
+            })
+            .into_js_value()
+            .unchecked_ref()
+        })
+        .unwrap();
 }
