@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+      <meta charset="utf-8"/>
+      <meta name="description"
+            content="A Game Boy Advance emulator in your browser."/>
+      <title>🕸️ Web Memetendo 🎮</title>
+
+      <script type="module">
+          import initSync from "./build/web_memetendo.js";
+          initSync();
+      </script>
+  </head>
+
+  <body style="text-align: center">
+      <h1>🕸️ Web Memetendo 🎮</h1>
+      <noscript>
+          <p>JavaScript must be enabled for Web Memetendo to work!</p>
+      </noscript>
+      <div>
+          <canvas id="memetendo-screen" width="240" height="160"
+                  style="background: #0"></canvas>
+      </div>
+      <div>
+          <p id="memetendo-status">Loading...</p>
+      </div>
+      <fieldset id="memetendo-options" style="display: inline" disabled>
+          <div>
+              <label for="memetendo-bios-file">
+                  BIOS:
+                  <input id="memetendo-bios-file" type="file"
+                         accept=".gba,.bin"/>
+              </label>
+          </div>
+          <div>
+              <label for="memetendo-cart-file">
+                  Cartridge:
+                  <input id="memetendo-cart-file" type="file"
+                         accept=".gba,.bin"/>
+              </label>
+          </div>
+          <div>
+              <label for="memetendo-frame-skip">
+                  Max Frame Skip:
+                  <input id="memetendo-frame-skip" type="number" min="0"/>
+              </label>
+          </div>
+          <div>
+              <fieldset id="memetendo-backups"
+                        style="border: none; padding: 1em 0 0 0"
+                        hidden>
+                  <label for="memetendo-import-backup">
+                      Import Save Data:
+                      <input id="memetendo-import-backup" type="file"
+                                                          accept=".sav"/>
+                  </label>
+                  <br/>
+                  <button id="memetendo-export-backup" type="button">
+                      Export Save Data
+                  </button>
+              </fieldset>
+          </div>
+      </fieldset>
+      <div>
+          <p>
+              Web Memetendo is powered by
+              <a href="https://webassembly.org/" target="_blank">Wasm</a>.
+              <br/>
+              GitHub:
+              <a href="https://github.com/seandewar/memetendo-unsafe-boy-advance"
+                 target="_blank">seandewar/memetendo-unsafe-boy-advance</a>.
+          </p>
+      </div>
+      <div>
+          <h2>(QWERTY) Controls:</h2>
+          <ul style="list-style-position: inside; padding-left: 0">
+              <li>X/Z = A/B</li>
+              <li>A/S = L/R</li>
+              <li>Shift/Return = Select/Start</li>
+              <li>Arrows = D-Pad</li>
+          </ul>
+      </div>
+  </body>
+</html>
