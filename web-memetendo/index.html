@@ -4,12 +4,13 @@
       <meta charset="utf-8"/>
       <title>WebMemetendo</title>
   </head>
-  <body>
-      <h1>WebMemetendo</h1>
+  <body style="text-align: center">
+      <h1>🕸️ WebMemetendo 🎮</h1>
       <div>
           <canvas id="memetendo-screen" width="240" height="160"
-              style="background: #000000"></canvas>
+                  style="background: #000000"></canvas>
       </div>
+      <br/>
       <div>
           <label for="memetendo-bios-file">
               BIOS:
@@ -20,6 +21,12 @@
           <label for="memetendo-cart-file">
               Cartridge:
               <input id="memetendo-cart-file" type="file" accept=".gba,.bin"/>
+          </label>
+      </div>
+      <div>
+          <label for="memetendo-frame-skip">
+              Max Frame Skip:
+              <input id="memetendo-frame-skip" type="number" min="0"/>
           </label>
       </div>
   </body>
