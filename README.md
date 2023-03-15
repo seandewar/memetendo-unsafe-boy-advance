@@ -1,8 +1,10 @@
 # Memetendo Unsafe Boy Advance
 
-Unfinished; I'll be working on this in my spare time (for fun!) :)
+[Try Memetendo out in your browser!](https://seandewar.github.io/memetendo-unsafe-boy-advance/)
 
 ## Status
+
+Unfinished; I'll be working on this in my spare time (for fun!) :)
 
 ![Doom 2 screenshot](media/doom2.png)
 ![Pokemon FireRed screenshot](media/pokemon-firered.png)

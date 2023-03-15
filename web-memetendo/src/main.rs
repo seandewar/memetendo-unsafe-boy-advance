@@ -310,6 +310,7 @@ fn create_keypress_handler(
             _ => return,
         };
         gba.keypad.set_pressed(key, pressed);
+        event.prevent_default();
     })
 }
 

@@ -2,15 +2,17 @@
 <html lang="en">
   <head>
       <meta charset="utf-8"/>
-      <title>WebMemetendo</title>
+      <title>🕸️ WebMemetendo 🎮</title>
   </head>
-  <body style="text-align: center">
+  <body style="text-align: center; background-image: url('https://i.ytimg.com/vi/_s5BGv3QqWc/hqdefault.jpg')">
       <h1>🕸️ WebMemetendo 🎮</h1>
       <div>
           <canvas id="memetendo-screen" width="240" height="160"
                   style="background: #000000"></canvas>
       </div>
-      <br/>
+      <div>
+          <p>Select a BIOS and Cartridge ROM file to start!</p>
+      </div>
       <div>
           <label for="memetendo-bios-file">
               BIOS:
@@ -28,6 +30,29 @@
               Max Frame Skip:
               <input id="memetendo-frame-skip" type="number" min="0"/>
           </label>
+      </div>
+      <div>
+          <p>
+              WebMemetendo is powered by
+              <a href="https://webassembly.org/" target="_blank">Wasm</a>.
+              <br/>
+              Unlike the SDL version, it does not support sound (yet), and saved
+              game data is not persisted.
+              <br/>
+              GitHub:
+              <a href="https://github.com/seandewar/memetendo-unsafe-boy-advance"
+                 target="_blank">seandewar/memetendo-unsafe-boy-advance</a>.
+          </p>
+      </div>
+      <div>
+          <h2>(QWERTY) Controls:</h2>
+          <ul style="list-style-position: inside; padding-left: 0">
+              <li>X = A, Z = B</li>
+              <li>A = L, S = R</li>
+              <li>Arrows = D-Pad</li>
+              <li>Shift = Select</li>
+              <li>Return = Start</li>
+          </ul>
       </div>
   </body>
 </html>
