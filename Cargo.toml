@@ -1,6 +1,6 @@
 [workspace]
 members = ["libmemetendo", "memetendo", "web-memetendo"]
-default-members = ["memetendo"]
+default-members = ["libmemetendo", "memetendo"]
 
 [profile.dev]
 opt-level = 1

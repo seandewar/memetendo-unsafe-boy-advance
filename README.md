@@ -1,6 +1,6 @@
 # Memetendo Unsafe Boy Advance
 
-[Try Memetendo out in your browser!](https://seandewar.github.io/memetendo-unsafe-boy-advance/)
+[Try it out in your browser!](https://seandewar.github.io/memetendo-unsafe-boy-advance/)
 
 ## Status
 
@@ -10,7 +10,8 @@ Unfinished; I'll be working on this in my spare time (for fun!) :)
 ![Pokemon FireRed screenshot](media/pokemon-firered.png)
 ![OpenLara screenshot](media/openlara.png)
 
-It's able to play most games, and has audio support!
+It's able to play most games, and has audio support!  
+[Here's a video of it running DOOM!](https://www.youtube.com/watch?v=mdFqmEEttws)
 
 As for tests, it currently passes:
 - [FuzzARM](https://github.com/DenSinH/FuzzARM).
@@ -22,7 +23,7 @@ As for tests, it currently passes:
 - ...and others!
 
 For now, Memetendo Unsafe Boy Advance requires the latest stable Rust compiler
-(1.65) to build.
+(1.70) to build.
 
 ## Tests
 

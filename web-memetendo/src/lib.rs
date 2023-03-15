@@ -2,10 +2,11 @@
 
 use std::{cell::RefCell, mem::take, panic, rc::Rc};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Context, Result};
+use audio::Audio;
 use js_sys::{Reflect, Uint8Array};
 use libmemetendo::{
-    audio, bios,
+    bios,
     cart::{self, Cartridge},
     gba::Gba,
     keypad::Key,
@@ -17,6 +18,8 @@ use web_sys::{
     CanvasRenderingContext2d, Document, Event, FileReader, HtmlCanvasElement, HtmlInputElement,
     ImageData, KeyboardEvent, Window,
 };
+
+mod audio;
 
 struct Screen {
     canvas_ctx: CanvasRenderingContext2d,
@@ -73,7 +76,7 @@ impl Screen {
             })
             .unwrap()
             .map(|ctx| ctx.dyn_into::<CanvasRenderingContext2d>().unwrap())
-            .ok_or_else(|| anyhow!("failed to get 2D canvas rendering context"))?;
+            .context("failed to get 2D canvas rendering context")?;
 
         Ok(Self {
             canvas_ctx,
@@ -88,10 +91,12 @@ impl Screen {
     }
 }
 
-struct Context {
+struct State {
     window: Window,
     document: Document,
-    screen: Rc<RefCell<Screen>>, // TODO: Rc<RefCell<>> sucks; is there a good way around it?
+    // TODO: Rc<RefCell<T>> sucks; is there a good way around it?
+    audio: Rc<RefCell<Audio>>,
+    screen: Rc<RefCell<Screen>>,
     gba: Option<Gba>,
     updater: Option<Closure<dyn Fn(f64)>>,
     max_frame_skip: u32,
@@ -100,11 +105,20 @@ struct Context {
     selected_cart_rom: Option<cart::Rom>,
 }
 
-impl Context {
-    fn new(window: &Window) -> Result<Self> {
+impl State {
+    async fn new(window: &Window) -> Result<Self> {
+        let audio = Audio::new().await.unwrap_or_else(|(e, audio)| {
+            alert(
+                window,
+                format!("Audio initialization failed; sound will be muted: {e:?}."),
+            );
+            audio
+        });
+
         Ok(Self {
             window: window.clone(),
             document: window.document().unwrap(),
+            audio: Rc::new(RefCell::new(audio)),
             screen: Rc::new(RefCell::new(Screen::new(window)?)),
             gba: None,
             updater: None,
@@ -116,67 +130,73 @@ impl Context {
     }
 }
 
-fn maybe_start_emulation(ctx: &Rc<RefCell<Context>>) -> bool {
-    let mut borrowed_ctx = ctx.borrow_mut();
-    let Some(ref bios_rom) = borrowed_ctx.selected_bios_rom else {
+fn maybe_start_emulation(state: &Rc<RefCell<State>>) -> bool {
+    let mut borrowed_state = state.borrow_mut();
+    let Some(ref bios_rom) = borrowed_state.selected_bios_rom else {
         return false;
     };
-    let Some(ref cart_rom) = borrowed_ctx.selected_cart_rom else {
+    let Some(ref cart_rom) = borrowed_state.selected_cart_rom else {
         return false;
     };
 
     let backup_type = cart_rom.parse_backup_type();
     info!("starting emulation - using cart backup type: {backup_type:?}");
-    borrowed_ctx.gba = Some(Gba::new(
+    borrowed_state.gba = Some(Gba::new(
         bios_rom.clone(),
         Cartridge::new(cart_rom.clone(), backup_type),
     ));
-    borrowed_ctx.screen.borrow().clear();
-    borrowed_ctx.next_frame_ms = None;
+    borrowed_state.screen.borrow().clear();
+    borrowed_state.audio.borrow().resume();
+    borrowed_state.next_frame_ms = None;
 
-    if borrowed_ctx.updater.is_none() {
-        borrowed_ctx.updater = Some({
-            let ctx = Rc::clone(ctx);
-            let screen = Rc::clone(&borrowed_ctx.screen);
+    if borrowed_state.updater.is_none() {
+        borrowed_state.updater = Some({
+            let state = Rc::clone(state);
+            let screen = Rc::clone(&borrowed_state.screen);
+            let audio = Rc::clone(&borrowed_state.audio);
 
             Closure::new(move |ms: f64| {
                 const FRAME_DURATION_MS: f64 = 1000.0 / 59.737;
 
-                let mut borrowed_ctx = ctx.borrow_mut();
-                let max_frame_skip = borrowed_ctx.max_frame_skip;
-                let mut next_frame_ms = borrowed_ctx.next_frame_ms.unwrap_or(ms);
+                let mut borrowed_state = state.borrow_mut();
+                let mut next_frame_ms = borrowed_state.next_frame_ms.unwrap_or(ms);
 
-                let Some(ref mut gba) = borrowed_ctx.gba else {
-                    borrowed_ctx.updater = None;
-                    return;
-                };
-                let mut screen = screen.borrow_mut();
+                if ms >= next_frame_ms {
+                    let max_frame_skip = borrowed_state.max_frame_skip;
 
-                let mut skipped_frames = 0;
-                loop {
-                    while !take(&mut screen.new_frame) {
-                        // TODO: audio
-                        gba.step(&mut *screen, &mut audio::NullCallback, skipped_frames > 0);
+                    let Some(ref mut gba) = borrowed_state.gba else {
+                        borrowed_state.updater = None;
+                        return;
+                    };
+                    let mut screen = screen.borrow_mut();
+                    let mut audio = audio.borrow_mut();
+
+                    let mut skipped_frames = 0;
+                    loop {
+                        while !take(&mut screen.new_frame) {
+                            gba.step(&mut *screen, &mut *audio, skipped_frames > 0);
+                        }
+                        audio.queue_samples();
+
+                        next_frame_ms += FRAME_DURATION_MS;
+                        if next_frame_ms > ms {
+                            borrowed_state.next_frame_ms = Some(next_frame_ms);
+                            break;
+                        }
+
+                        if skipped_frames >= max_frame_skip {
+                            // Too far behind; reschedule for the next frame.
+                            borrowed_state.next_frame_ms = None;
+                            break;
+                        }
+                        skipped_frames += 1;
                     }
-
-                    next_frame_ms += FRAME_DURATION_MS;
-                    if next_frame_ms > ms {
-                        borrowed_ctx.next_frame_ms = Some(next_frame_ms);
-                        break;
-                    }
-
-                    if skipped_frames >= max_frame_skip {
-                        // Too far behind; reschedule for the next frame.
-                        borrowed_ctx.next_frame_ms = None;
-                        break;
-                    }
-                    skipped_frames += 1;
                 }
 
-                borrowed_ctx
+                borrowed_state
                     .window
                     .request_animation_frame(
-                        borrowed_ctx
+                        borrowed_state
                             .updater
                             .as_ref()
                             .unwrap()
@@ -187,10 +207,10 @@ fn maybe_start_emulation(ctx: &Rc<RefCell<Context>>) -> bool {
             })
         });
 
-        borrowed_ctx
+        borrowed_state
             .window
             .request_animation_frame(
-                borrowed_ctx
+                borrowed_state
                     .updater
                     .as_ref()
                     .unwrap()
@@ -207,40 +227,36 @@ fn alert(window: &Window, message: impl AsRef<str>) {
     window.alert_with_message(message.as_ref()).unwrap();
 }
 
-fn main() {
-    panic::set_hook(Box::new(console_error_panic_hook::hook));
-    console_log::init_with_level(Level::Info)
-        .unwrap_or_else(|e| eprintln!("failed to init console logger: {e}"));
-
+async fn memetendo_main() {
     let window = web_sys::window().unwrap();
-    let ctx = match Context::new(&window) {
-        Ok(ctx) => Rc::new(RefCell::new(ctx)),
+    let state = match State::new(&window).await {
+        Ok(state) => Rc::new(RefCell::new(state)),
         Err(e) => {
             alert(&window, format!("Loading failed: {e}"));
             return;
         }
     };
 
-    init_file_input(&ctx.borrow(), "memetendo-bios-file", {
-        let ctx = Rc::clone(&ctx);
+    init_file_input(&state.borrow(), "memetendo-bios-file", {
+        let state = Rc::clone(&state);
         move |rom_buf: Vec<u8>| {
             let Ok(rom) = bios::Rom::new(Rc::from(rom_buf)) else {
-                alert(&ctx.borrow().window, "Invalid BIOS ROM size!");
+                alert(&state.borrow().window, "Invalid BIOS ROM size!");
                 return;
             };
-            ctx.borrow_mut().selected_bios_rom = Some(rom);
-            maybe_start_emulation(&ctx);
+            state.borrow_mut().selected_bios_rom = Some(rom);
+            maybe_start_emulation(&state);
         }
     });
-    init_file_input(&ctx.borrow(), "memetendo-cart-file", {
-        let ctx = Rc::clone(&ctx);
+    init_file_input(&state.borrow(), "memetendo-cart-file", {
+        let state = Rc::clone(&state);
         move |rom_buf: Vec<u8>| {
             let Ok(rom) = cart::Rom::new(Rc::from(rom_buf)) else {
-                alert(&ctx.borrow().window, "Invalid cartridge ROM size!");
+                alert(&state.borrow().window, "Invalid cartridge ROM size!");
                 return;
             };
-            ctx.borrow_mut().selected_cart_rom = Some(rom);
-            maybe_start_emulation(&ctx);
+            state.borrow_mut().selected_cart_rom = Some(rom);
+            maybe_start_emulation(&state);
         }
     });
 
@@ -248,7 +264,7 @@ fn main() {
     document
         .add_event_listener_with_callback(
             "keydown",
-            create_keypress_handler(&ctx, true)
+            create_keypress_handler(&state, true)
                 .into_js_value()
                 .unchecked_ref(),
         )
@@ -256,7 +272,7 @@ fn main() {
     document
         .add_event_listener_with_callback(
             "keyup",
-            create_keypress_handler(&ctx, false)
+            create_keypress_handler(&state, false)
                 .into_js_value()
                 .unchecked_ref(),
         )
@@ -267,17 +283,17 @@ fn main() {
         .unwrap()
         .dyn_into::<HtmlInputElement>()
         .unwrap();
-    frame_skip_input.set_value(&ctx.borrow().max_frame_skip.to_string());
+    frame_skip_input.set_value(&state.borrow().max_frame_skip.to_string());
     frame_skip_input
         .add_event_listener_with_callback("change", {
-            let ctx = Rc::clone(&ctx);
+            let state = Rc::clone(&state);
             Closure::<dyn Fn(_)>::new(move |event: Event| {
                 let input = event
                     .target()
                     .unwrap()
                     .dyn_into::<HtmlInputElement>()
                     .unwrap();
-                ctx.borrow_mut().max_frame_skip = input.value().parse().unwrap();
+                state.borrow_mut().max_frame_skip = input.value().parse().unwrap();
             })
             .into_js_value()
             .unchecked_ref()
@@ -288,12 +304,12 @@ fn main() {
 // TODO: uses event.code(), so we need to have some sort of prompt that shows the actual key if the
 // keyboard layout isn't QWERTY.
 fn create_keypress_handler(
-    ctx: &Rc<RefCell<Context>>,
+    state: &Rc<RefCell<State>>,
     pressed: bool,
 ) -> Closure<dyn FnMut(KeyboardEvent)> {
-    let ctx = Rc::clone(ctx);
+    let state = Rc::clone(state);
     Closure::new(move |event: KeyboardEvent| {
-        let Some(ref mut gba) = ctx.borrow_mut().gba else {
+        let Some(ref mut gba) = state.borrow_mut().gba else {
             return;
         };
         let key = match event.code().as_str() {
@@ -314,11 +330,11 @@ fn create_keypress_handler(
     })
 }
 
-fn init_file_input(ctx: &Context, id: &str, mut callback: impl FnMut(Vec<u8>) + 'static) {
+fn init_file_input(state: &State, id: &str, mut callback: impl FnMut(Vec<u8>) + 'static) {
     let reader = FileReader::new().unwrap();
     reader
         .add_event_listener_with_callback("loadend", {
-            let window = ctx.window.clone();
+            let window = state.window.clone();
             Closure::<dyn FnMut(_)>::new(move |event: Event| {
                 let reader = event.target().unwrap().dyn_into::<FileReader>().unwrap();
                 let array_buf = reader.result().unwrap();
@@ -342,7 +358,7 @@ fn init_file_input(ctx: &Context, id: &str, mut callback: impl FnMut(Vec<u8>) + 
         })
         .unwrap();
 
-    let input = ctx
+    let input = state
         .document
         .get_element_by_id(id)
         .unwrap()
@@ -351,7 +367,7 @@ fn init_file_input(ctx: &Context, id: &str, mut callback: impl FnMut(Vec<u8>) + 
     input.set_value("");
     input
         .add_event_listener_with_callback("change", {
-            let window = ctx.window.clone();
+            let window = state.window.clone();
             Closure::<dyn Fn(_)>::new(move |event: Event| {
                 let input = event
                     .target()
@@ -371,4 +387,13 @@ fn init_file_input(ctx: &Context, id: &str, mut callback: impl FnMut(Vec<u8>) + 
             .unchecked_ref()
         })
         .unwrap();
+}
+
+#[wasm_bindgen(start)]
+pub fn main() {
+    panic::set_hook(Box::new(console_error_panic_hook::hook));
+    console_log::init_with_level(Level::Info)
+        .unwrap_or_else(|e| eprintln!("failed to init console logger: {e}"));
+
+    wasm_bindgen_futures::spawn_local(memetendo_main());
 }

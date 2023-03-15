@@ -1,9 +1,12 @@
 [package]
 name = "web-memetendo"
 version = "0.1.0"
-description = "WASM Web frontend for Memetendo Unsafe Boy Advance"
+description = "WASM Web front-end for Memetendo Unsafe Boy Advance"
 authors = ["Sean Dewar <https://github.com/seandewar>"]
 edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
 
 [dependencies]
 libmemetendo = { path = "../libmemetendo" }
@@ -12,11 +15,18 @@ console_error_panic_hook = "0.1.7"
 console_log = "0.2.1"
 js-sys = "0.3.61"
 log = "0.4.17"
-wasm-bindgen = "0.2.84"
+wasm-bindgen = "0.2.87"
+wasm-bindgen-futures = "0.4.36"
 
 [dependencies.web-sys]
 version = "0.3.61"
 features = [
+            "AudioContext",
+            "AudioContextOptions",
+            "AudioDestinationNode",
+            "AudioWorklet",
+            "AudioWorkletNode",
+            "AudioWorkletNodeOptions",
             "Blob",
             "CanvasRenderingContext2d",
             "Document",
@@ -30,5 +40,6 @@ features = [
             "HtmlInputElement",
             "ImageData",
             "KeyboardEvent",
+            "MessagePort",
             "Window",
 ]

@@ -26,7 +26,7 @@ use sdl2::{
     pixels::{Color, PixelFormatEnum},
     render::{Texture, TextureCreator, WindowCanvas},
     video::WindowContext,
-    AudioSubsystem, EventPump, Sdl, VideoSubsystem,
+    AudioSubsystem, EventPump,
 };
 
 use crate::audio::Audio;
@@ -34,8 +34,6 @@ use crate::audio::Audio;
 mod audio;
 
 struct SdlContext {
-    _sdl: Sdl,
-    _sdl_video: VideoSubsystem,
     sdl_audio: Option<AudioSubsystem>,
     win_canvas: WindowCanvas,
     win_texture_creator: TextureCreator<WindowContext>,
@@ -82,8 +80,6 @@ impl SdlContext {
         let win_texture_creator = win_canvas.texture_creator();
 
         Ok(Self {
-            _sdl: sdl,
-            _sdl_video: sdl_video,
             sdl_audio,
             win_canvas,
             win_texture_creator,

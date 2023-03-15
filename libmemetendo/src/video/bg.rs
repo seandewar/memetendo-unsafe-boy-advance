@@ -138,8 +138,7 @@ impl Video {
     }
 
     pub(super) fn compute_bg_bitmap_mode_dot(&self, win: Window) -> Option<DotInfo> {
-        if !self.dispcnt.display_bg[2]
-            || self.window_control(win).map_or(false, |w| !w.display_bg[2])
+        if !self.dispcnt.display_bg[2] || self.window_control(win).is_some_and(|w| !w.display_bg[2])
         {
             return None;
         }

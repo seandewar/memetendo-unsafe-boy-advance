@@ -298,12 +298,12 @@ impl Video {
     }
 
     pub(super) fn compute_top_obj_dot(&self, win: Window) -> Option<DotInfo> {
-        if !self.dispcnt.display_obj || self.window_control(win).map_or(false, |w| !w.display_obj) {
+        if !self.dispcnt.display_obj || self.window_control(win).is_some_and(|w| !w.display_obj) {
             return None;
         }
 
         self.region_attrs_iter()
-            .filter(|&attrs| attrs.mode.map_or(false, |mode| mode != Mode::WindowMask))
+            .filter(|&attrs| attrs.mode.is_some_and(|mode| mode != Mode::WindowMask))
             .find_map(|attrs| self.compute_obj_dot(attrs))
     }
 

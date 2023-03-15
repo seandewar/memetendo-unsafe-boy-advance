@@ -137,7 +137,9 @@ impl Audio {
     }
 
     pub fn queue_samples(&mut self) -> Result<(), String> {
-        let Some((queue, cb)) = self.0.as_mut() else { return Ok(()); };
+        let Some((queue, cb)) = self.0.as_mut() else {
+            return Ok(());
+        };
 
         // Limit the max amount of samples we can have enqueued, otherwise we risk having the
         // audio drift behind if the queue isn't being consumed fast enough.
