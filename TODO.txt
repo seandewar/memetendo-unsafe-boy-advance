@@ -31,3 +31,5 @@ web-memetendo:
   around the screen for spice!
 - Set up a GitHub Action for updating the gh-pages site.
 - Need a script or something for building with wasm-pack.
+- Revisit some of the error handling; do we need to unwrap() so much, or did we
+  miss unwrap()ping some errors that ought to not actually happen?

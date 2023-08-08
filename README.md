@@ -22,8 +22,16 @@ As for tests, it currently passes:
 - Most things in [PeterLemon/GBA](https://github.com/PeterLemon/GBA).
 - ...and others!
 
+## Building
+
 For now, Memetendo Unsafe Boy Advance requires the latest stable Rust compiler
 (1.70) to build.
+
+Just use `cargo build` to build (optionally passing the `--release` argument to
+build with full optimizations), or `cargo run` to build and run.
+
+Instructions for building Web Memetendo can be found
+[here](web-memetendo/README.md).
 
 ## Tests
 
