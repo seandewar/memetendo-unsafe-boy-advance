@@ -10,7 +10,7 @@ use crate::{
     irq::Irq,
     keypad::Keypad,
     timer::Timers,
-    video::{screen::Screen, Video},
+    video::{self, Video},
 };
 
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
@@ -99,9 +99,8 @@ impl Gba {
 
     pub fn step(
         &mut self,
-        screen: &mut impl Screen,
+        video_cb: &mut impl video::Callback,
         audio_cb: &mut impl audio::Callback,
-        skip_drawing: bool,
     ) {
         self.keypad.step(&mut self.irq);
 
@@ -110,8 +109,7 @@ impl Gba {
         }
         if self.haltcnt.0 != State::Stopped {
             // TODO: actual cycle counting
-            self.video
-                .step(screen, &mut self.irq, &mut self.dma, skip_drawing, 3);
+            self.video.step(video_cb, &mut self.irq, &mut self.dma, 3);
             self.timers.step(&mut self.irq, &mut self.audio, 3);
             if let Some(do_transfer) = self.dma.step(&mut self.irq, &mut self.cart, 3) {
                 do_transfer(&mut bus!(self));
@@ -172,6 +170,7 @@ impl bus::Bus for Bus<'_> {
             // I/O Registers
             0x0400_0000..=0x0400_03fe => {
                 let addr = addr & 0x3ff;
+                #[allow(clippy::match_overlapping_arm)]
                 match addr {
                     0x000..=0x056 => self.video.read_byte(addr),
                     0x060..=0x0a7 => self.audio.read_byte(addr),
@@ -206,6 +205,7 @@ impl bus::Bus for Bus<'_> {
             // I/O Registers
             0x0400_0000..=0x0400_03fe => {
                 let addr = addr & 0x3ff;
+                #[allow(clippy::match_overlapping_arm)]
                 match addr {
                     0x000..=0x056 => self.video.write_byte(addr, value),
                     0x060..=0x0a7 => self.audio.write_byte(addr, value),

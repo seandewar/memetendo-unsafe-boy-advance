@@ -10,7 +10,8 @@ use libmemetendo::{
     cart::{self, Cartridge},
     gba::Gba,
     keypad::Key,
-    video::screen::{self, FrameBuffer},
+    util::video::FrameBuffer,
+    video::{self, HBLANK_DOT, VBLANK_DOT},
 };
 use log::{info, Level};
 use wasm_bindgen::{prelude::*, Clamped, JsCast};
@@ -21,43 +22,44 @@ use web_sys::{
 
 mod audio;
 
-struct Screen {
+struct VideoCallback {
     canvas_ctx: CanvasRenderingContext2d,
     new_frame: bool,
+    frame_skipping: bool,
+    buf: FrameBuffer<4>,
 }
 
-impl screen::Screen for Screen {
-    fn finished_frame(&mut self, frame: &FrameBuffer) {
-        self.new_frame = true;
+impl video::Callback for VideoCallback {
+    fn put_dot(&mut self, x: u8, y: u8, dot: video::Dot) {
+        self.buf.put_dot(x, y, dot);
+    }
 
-        // TODO: cringe
-        let mut buf = [0xff; 4 * screen::WIDTH * screen::HEIGHT];
-        for y in 0..screen::HEIGHT {
-            for x in 0..screen::WIDTH {
-                let i = 4 * (y * screen::WIDTH + x);
-                let rgb = frame.pixel(x, y);
-                buf[i] = rgb.r;
-                buf[i + 1] = rgb.g;
-                buf[i + 2] = rgb.b;
-            }
+    fn end_frame(&mut self, green_swap: bool) {
+        self.new_frame = true;
+        if self.frame_skipping {
+            return;
+        }
+        if green_swap {
+            self.buf.green_swap();
         }
 
-        // TODO: write some JS glue to avoid creating a new ImageData each time...
-        #[allow(clippy::cast_possible_truncation)]
         let image_data = ImageData::new_with_u8_clamped_array_and_sh(
-            Clamped(&buf[..]),
-            screen::WIDTH as _,
-            screen::HEIGHT as _,
+            Clamped(&self.buf.0),
+            HBLANK_DOT.into(),
+            VBLANK_DOT.into(),
         )
         .unwrap();
-
         self.canvas_ctx
             .put_image_data(&image_data, 0.0, 0.0)
             .unwrap();
     }
+
+    fn is_frame_skipping(&self) -> bool {
+        self.frame_skipping
+    }
 }
 
-impl Screen {
+impl VideoCallback {
     fn new(window: &Window) -> Result<Self> {
         let canvas = window
             .document()
@@ -81,13 +83,14 @@ impl Screen {
         Ok(Self {
             canvas_ctx,
             new_frame: false,
+            frame_skipping: false,
+            buf: FrameBuffer::new(0xff),
         })
     }
 
     fn clear(&self) {
-        #[allow(clippy::cast_precision_loss)]
         self.canvas_ctx
-            .clear_rect(0.0, 0.0, screen::WIDTH as _, screen::HEIGHT as _);
+            .clear_rect(0.0, 0.0, HBLANK_DOT.into(), VBLANK_DOT.into());
     }
 }
 
@@ -96,7 +99,7 @@ struct State {
     document: Document,
     // TODO: Rc<RefCell<T>> sucks; is there a good way around it?
     audio: Rc<RefCell<Audio>>,
-    screen: Rc<RefCell<Screen>>,
+    video_cb: Rc<RefCell<VideoCallback>>,
     gba: Option<Gba>,
     updater: Option<Closure<dyn Fn(f64)>>,
     max_frame_skip: u32,
@@ -119,7 +122,7 @@ impl State {
             window: window.clone(),
             document: window.document().unwrap(),
             audio: Rc::new(RefCell::new(audio)),
-            screen: Rc::new(RefCell::new(Screen::new(window)?)),
+            video_cb: Rc::new(RefCell::new(VideoCallback::new(window)?)),
             gba: None,
             updater: None,
             max_frame_skip: 3,
@@ -145,14 +148,14 @@ fn maybe_start_emulation(state: &Rc<RefCell<State>>) -> bool {
         bios_rom.clone(),
         Cartridge::new(cart_rom.clone(), backup_type),
     ));
-    borrowed_state.screen.borrow().clear();
+    borrowed_state.video_cb.borrow().clear();
     borrowed_state.audio.borrow().resume();
     borrowed_state.next_frame_ms = None;
 
     if borrowed_state.updater.is_none() {
         borrowed_state.updater = Some({
             let state = Rc::clone(state);
-            let screen = Rc::clone(&borrowed_state.screen);
+            let video_cb = Rc::clone(&borrowed_state.video_cb);
             let audio = Rc::clone(&borrowed_state.audio);
 
             Closure::new(move |ms: f64| {
@@ -168,13 +171,14 @@ fn maybe_start_emulation(state: &Rc<RefCell<State>>) -> bool {
                         borrowed_state.updater = None;
                         return;
                     };
-                    let mut screen = screen.borrow_mut();
+                    let mut video_cb = video_cb.borrow_mut();
                     let mut audio = audio.borrow_mut();
 
                     let mut skipped_frames = 0;
                     loop {
-                        while !take(&mut screen.new_frame) {
-                            gba.step(&mut *screen, &mut *audio, skipped_frames > 0);
+                        video_cb.frame_skipping = skipped_frames > 0;
+                        while !take(&mut video_cb.new_frame) {
+                            gba.step(&mut *video_cb, &mut *audio);
                         }
                         audio.queue_samples();
 

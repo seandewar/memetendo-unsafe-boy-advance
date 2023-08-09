@@ -1,7 +1,6 @@
 mod bg;
 mod obj;
 mod reg;
-pub mod screen;
 
 use intbits::Bits;
 use tinyvec::{array_vec, ArrayVec};
@@ -20,7 +19,6 @@ use self::{
         BlendMode, DisplayControl, DisplayStatus, Mosaic, ReferencePoint, WindowControl,
         WindowDimensions,
     },
-    screen::{FrameBuffer, Rgb, Screen},
 };
 
 #[derive(Copy, Clone)]
@@ -85,8 +83,6 @@ pub struct Video {
     y: u8,
     cycle_accum: u16,
     tile_mode_bg_order: ArrayVec<[usize; 4]>,
-    frames: [FrameBuffer; 2],
-    back_frame_idx: usize,
 
     vram: Box<[u8]>,
     pub palette_ram: PaletteRam,
@@ -130,8 +126,6 @@ impl Video {
             y: 0,
             cycle_accum: 0,
             tile_mode_bg_order: array_vec![0, 1, 2, 3],
-            frames: [FrameBuffer::new(), FrameBuffer::new()],
-            back_frame_idx: 0,
             vram: vec![0; 0x1_8000].into_boxed_slice(),
             palette_ram: PaletteRam::default(),
             oam: Oam::default(),
@@ -154,27 +148,16 @@ impl Video {
         }
     }
 
-    #[allow(clippy::similar_names)]
-    pub fn step(
-        &mut self,
-        screen: &mut impl Screen,
-        irq: &mut Irq,
-        dma: &mut Dma,
-        skip_drawing: bool,
-        cycles: u8,
-    ) {
+    // Panic should be impossible as self.x should be < HBLANK_DOT when calling screen.put_dot(),
+    // which fits in a u8.
+    #[allow(clippy::missing_panics_doc)]
+    pub fn step(&mut self, cb: &mut impl Callback, irq: &mut Irq, dma: &mut Dma, cycles: u8) {
         self.cycle_accum += u16::from(cycles);
         while self.cycle_accum >= 4 {
             self.cycle_accum -= 4;
 
-            if self.x < HBLANK_DOT.into() && self.y < VBLANK_DOT && !skip_drawing {
-                let rgb = self.compute_rgb();
-                self.frames[self.back_frame_idx].set_pixel(
-                    self.x.into(),
-                    self.y.into(),
-                    rgb,
-                    self.greenswp.bit(0),
-                );
+            if self.x < HBLANK_DOT.into() && self.y < VBLANK_DOT && !cb.is_frame_skipping() {
+                cb.put_dot(self.x.try_into().unwrap(), self.y, self.compute_dot());
             }
 
             self.x += 1;
@@ -193,10 +176,7 @@ impl Video {
                     }
                 }
                 if self.y == VBLANK_DOT - 1 {
-                    screen.finished_frame(&self.frames[self.back_frame_idx]);
-                    if !skip_drawing {
-                        self.back_frame_idx = (self.back_frame_idx + 1) % self.frames.len();
-                    }
+                    cb.end_frame(self.greenswp.bit(0));
                 }
             }
 
@@ -227,25 +207,14 @@ impl Video {
     pub fn vram(&mut self) -> Vram {
         Vram(self)
     }
-
-    #[must_use]
-    pub fn frame(&self) -> &FrameBuffer {
-        &self.frames[self.back_frame_idx.wrapping_sub(1) % self.frames.len()]
-    }
 }
 
 #[derive(Debug, Copy, Clone)]
-struct Dot {
+pub struct Dot {
     r: u8,
     g: u8,
     b: u8,
 }
-
-const WHITE_DOT: Dot = Dot {
-    r: 31,
-    g: 31,
-    b: 31,
-};
 
 impl From<u16> for Dot {
     #[allow(clippy::cast_possible_truncation)]
@@ -259,15 +228,40 @@ impl From<u16> for Dot {
 }
 
 impl Dot {
-    fn to_rgb(self) -> Rgb {
-        debug_assert!(self.r < 32 && self.g < 32 && self.b < 32);
+    pub const MAX_COMPONENT: u8 = 31;
+    pub const WHITE: Dot = Dot::new(
+        Self::MAX_COMPONENT,
+        Self::MAX_COMPONENT,
+        Self::MAX_COMPONENT,
+    );
 
-        Rgb {
-            r: self.r * 8,
-            g: self.g * 8,
-            b: self.b * 8,
-        }
+    const fn new(r: u8, g: u8, b: u8) -> Dot {
+        debug_assert!(
+            r <= Self::MAX_COMPONENT && g <= Self::MAX_COMPONENT && b <= Self::MAX_COMPONENT
+        );
+        Dot { r, g, b }
     }
+
+    #[must_use]
+    pub const fn red(self) -> u8 {
+        self.r
+    }
+
+    #[must_use]
+    pub const fn green(self) -> u8 {
+        self.g
+    }
+
+    #[must_use]
+    pub const fn blue(self) -> u8 {
+        self.b
+    }
+}
+
+pub trait Callback {
+    fn put_dot(&mut self, x: u8, y: u8, dot: Dot);
+    fn end_frame(&mut self, green_swap: bool);
+    fn is_frame_skipping(&self) -> bool;
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -278,9 +272,9 @@ enum DotInfo {
 }
 
 impl Video {
-    fn compute_rgb(&mut self) -> Rgb {
+    fn compute_dot(&mut self) -> Dot {
         if self.dispcnt.forced_blank {
-            return WHITE_DOT.to_rgb();
+            return Dot::WHITE;
         }
 
         // TODO: mosaics
@@ -308,7 +302,7 @@ impl Video {
             targeted && win_blendfx
         };
 
-        let dot = match self.bldcnt.mode {
+        match self.bldcnt.mode {
             _ if !is_target(0) => top_dot,
             mode if is_target(1) && (mode == BlendMode::Alpha || obj_alpha_mode) => {
                 let bot_dot = self.read_dot(top_infos[1]);
@@ -317,9 +311,7 @@ impl Video {
             BlendMode::Brighten => self.adjust_dot_brightness(false, top_dot),
             BlendMode::Dim => self.adjust_dot_brightness(true, top_dot),
             _ => top_dot,
-        };
-
-        dot.to_rgb()
+        }
     }
 
     fn read_dot(&mut self, info: DotInfo) -> Dot {
@@ -391,30 +383,28 @@ impl Video {
         let factor = (self.bldalpha.0.factor(), self.bldalpha.1.factor());
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let blend = |top: u8, bot: u8| {
-            31.min((f32::from(top) * factor.0 + f32::from(bot) * factor.1) as u32) as u8
+            u32::from(Dot::MAX_COMPONENT)
+                .min((f32::from(top) * factor.0 + f32::from(bot) * factor.1) as u32)
+                as u8
         };
 
-        Dot {
-            r: blend(top.r, bot.r),
-            g: blend(top.g, bot.g),
-            b: blend(top.b, bot.b),
-        }
+        Dot::new(
+            blend(top.r, bot.r),
+            blend(top.g, bot.g),
+            blend(top.b, bot.b),
+        )
     }
 
     fn adjust_dot_brightness(&self, darken: bool, dot: Dot) -> Dot {
         let mul = if darken {
             |comp| -f32::from(comp)
         } else {
-            |comp| f32::from(31 - comp)
+            |comp| f32::from(Dot::MAX_COMPONENT - comp)
         };
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let blend = |comp| (f32::from(comp) + mul(comp) * self.bldy.factor()) as u8;
 
-        Dot {
-            r: blend(dot.r),
-            g: blend(dot.g),
-            b: blend(dot.b),
-        }
+        Dot::new(blend(dot.r), blend(dot.g), blend(dot.b))
     }
 }
 

@@ -391,7 +391,11 @@ impl Cpu {
     }
 }
 
-#[allow(clippy::unusual_byte_groupings, clippy::too_many_lines)]
+#[allow(
+    clippy::unusual_byte_groupings,
+    clippy::too_many_lines,
+    clippy::unreadable_literal
+)]
 #[cfg(test)]
 mod tests {
     use crate::{

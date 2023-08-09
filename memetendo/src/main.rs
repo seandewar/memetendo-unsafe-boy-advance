@@ -16,7 +16,8 @@ use libmemetendo::{
     cart::{self, BackupType, Cartridge},
     gba::Gba,
     keypad::{Key, Keypad},
-    video::screen::{self, FrameBuffer, Screen},
+    util::video::FrameBuffer,
+    video::{self, HBLANK_DOT, VBLANK_DOT},
 };
 use log::{error, info, warn};
 use sdl2::{
@@ -60,12 +61,11 @@ impl SdlContext {
             }
         };
 
-        #[allow(clippy::cast_possible_truncation)]
         let window = sdl_video
             .window(
                 "Memetendo Unsafe Boy Advance",
-                screen::WIDTH as u32,
-                screen::HEIGHT as u32,
+                HBLANK_DOT.into(),
+                VBLANK_DOT.into(),
             )
             .position_centered()
             .resizable()
@@ -88,40 +88,52 @@ impl SdlContext {
     }
 }
 
-struct SdlScreen<'r> {
-    new_frame: bool,
+struct VideoCallback<'r> {
     texture: Texture<'r>,
+    new_frame: bool,
+    frame_skipping: bool,
+    buf: FrameBuffer,
 }
 
-impl<'r> SdlScreen<'r> {
+impl<'r> VideoCallback<'r> {
     fn new<T>(texture_creator: &'r TextureCreator<T>) -> Result<Self> {
-        #[allow(clippy::cast_possible_truncation)]
         let texture = texture_creator
-            .create_texture_streaming(
-                PixelFormatEnum::RGB24,
-                screen::WIDTH as u32,
-                screen::HEIGHT as u32,
-            )
+            .create_texture_streaming(PixelFormatEnum::RGB24, HBLANK_DOT.into(), VBLANK_DOT.into())
             .context("failed to create screen texture")?;
 
         Ok(Self {
-            new_frame: false,
             texture,
+            new_frame: false,
+            frame_skipping: false,
+            buf: FrameBuffer::default(),
         })
-    }
-
-    fn update_texture(&mut self, frame: &FrameBuffer) -> Result<&Texture> {
-        self.texture
-            .with_lock(None, |buf, _| buf.copy_from_slice(&frame.0))
-            .map_err(|e| anyhow!("failed to lock screen texture: {e}"))?;
-
-        Ok(&self.texture)
     }
 }
 
-impl Screen for SdlScreen<'_> {
-    fn finished_frame(&mut self, _frame: &FrameBuffer) {
+impl video::Callback for VideoCallback<'_> {
+    fn put_dot(&mut self, x: u8, y: u8, dot: video::Dot) {
+        self.buf.put_dot(x, y, dot);
+    }
+
+    fn end_frame(&mut self, green_swap: bool) {
         self.new_frame = true;
+        if self.frame_skipping {
+            return;
+        }
+
+        if green_swap {
+            self.buf.green_swap();
+        }
+
+        if let Err(e) = self.texture.with_lock(None, |texture_buf, _| {
+            texture_buf.copy_from_slice(&self.buf.0);
+        }) {
+            warn!("failed to lock screen texture: {e}");
+        }
+    }
+
+    fn is_frame_skipping(&self) -> bool {
+        self.frame_skipping
     }
 }
 
@@ -221,7 +233,7 @@ fn main() -> Result<()> {
     let cart = load_cart(cart_rom, &cart_backup_path, cart_fallback_backup_type);
 
     let mut sdl = SdlContext::init()?;
-    let mut screen = SdlScreen::new(&sdl.win_texture_creator)?;
+    let mut video_cb = VideoCallback::new(&sdl.win_texture_creator)?;
     sdl.win_canvas.set_draw_color(Color::BLACK);
     sdl.win_canvas.clear();
     sdl.win_canvas.present();
@@ -244,10 +256,10 @@ fn main() -> Result<()> {
         audio
     });
 
-    let result = main_loop(
+    main_loop(
         &mut sdl.event_pump,
         &mut sdl.win_canvas,
-        &mut screen,
+        &mut video_cb,
         &mut audio,
         &mut gba,
         max_frame_skip,
@@ -263,7 +275,7 @@ fn main() -> Result<()> {
         }
     }
 
-    result
+    Ok(())
 }
 
 fn update_keypad(kp: &mut Keypad, kb: &KeyboardState) {
@@ -290,19 +302,20 @@ fn update_keypad(kp: &mut Keypad, kb: &KeyboardState) {
 fn main_loop(
     event_pump: &mut EventPump,
     win_canvas: &mut WindowCanvas,
-    screen: &mut SdlScreen,
+    video_cb: &mut VideoCallback,
     audio: &mut Audio,
     gba: &mut Gba,
     max_frame_skip: u32,
-) -> Result<()> {
+) {
     const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
     let mut next_redraw_time = Instant::now() + FRAME_DURATION;
     'main_loop: loop {
         let mut skipped_frames = 0;
         loop {
-            while !take(&mut screen.new_frame) {
-                gba.step(screen, audio, skipped_frames > 0);
+            video_cb.frame_skipping = skipped_frames > 0;
+            while !take(&mut video_cb.new_frame) {
+                gba.step(video_cb, audio);
             }
             if let Err(e) = audio.queue_samples() {
                 warn!("failed to queue audio samples: {e}");
@@ -329,7 +342,7 @@ fn main_loop(
         update_keypad(&mut gba.keypad, &event_pump.keyboard_state());
 
         win_canvas.clear();
-        if let Err(e) = win_canvas.copy(screen.update_texture(gba.video.frame())?, None, None) {
+        if let Err(e) = win_canvas.copy(&video_cb.texture, None, None) {
             warn!("failed to draw screen texture: {e}");
         }
         win_canvas.present();
@@ -338,6 +351,4 @@ fn main_loop(
             next_redraw_time = Instant::now() + FRAME_DURATION;
         }
     }
-
-    Ok(())
 }

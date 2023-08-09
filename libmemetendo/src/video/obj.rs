@@ -8,7 +8,7 @@ use crate::{
     video::{HBLANK_DOT, VBLANK_DOT},
 };
 
-use super::{screen, DotPaletteInfo, Video, Window, TILE_DOT_LEN};
+use super::{DotPaletteInfo, Video, Window, TILE_DOT_LEN};
 
 #[derive(Debug, Copy, Clone)]
 enum AffineAttribute {
@@ -99,8 +99,8 @@ pub struct Oam {
 }
 
 const REGIONS_SIZE: (usize, usize) = (
-    screen::WIDTH / TILE_DOT_LEN as usize,
-    screen::HEIGHT / TILE_DOT_LEN as usize,
+    (HBLANK_DOT / TILE_DOT_LEN) as _,
+    (VBLANK_DOT / TILE_DOT_LEN) as _,
 );
 
 impl Default for Oam {

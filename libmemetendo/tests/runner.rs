@@ -2,10 +2,11 @@ use std::{fs, rc::Rc};
 
 use image::RgbImage;
 use libmemetendo::{
-    audio, bios,
+    bios,
     cart::{self, Cartridge},
     gba::Gba,
-    video::screen::{self, FrameBuffer},
+    util::{self, video::FrameBuffer},
+    video::{self, HBLANK_DOT, VBLANK_DOT},
 };
 
 thread_local! {
@@ -19,7 +20,7 @@ thread_local! {
 
 pub struct Runner {
     pub gba: Gba,
-    pub screen: Screen,
+    pub screen: VideoCallback,
 }
 
 impl Runner {
@@ -29,13 +30,13 @@ impl Runner {
 
         Self {
             gba,
-            screen: Screen::new(),
+            screen: VideoCallback::new(),
         }
     }
 
     pub fn step(&mut self) {
         self.gba
-            .step(&mut self.screen, &mut audio::NullCallback, false);
+            .step(&mut self.screen, &mut util::audio::NullCallback);
     }
 
     pub fn step_frame(&mut self) {
@@ -60,32 +61,46 @@ impl Runner {
     }
 }
 
-pub struct Screen {
+pub struct VideoCallback {
     pub image: RgbImage,
     new_frame: bool,
+    buf: FrameBuffer,
 }
 
-impl Default for Screen {
+impl Default for VideoCallback {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Screen {
+impl VideoCallback {
     fn new() -> Self {
         Self {
-            image: RgbImage::new(screen::WIDTH as u32, screen::HEIGHT as u32),
+            image: RgbImage::new(HBLANK_DOT.into(), VBLANK_DOT.into()),
             new_frame: false,
+            buf: FrameBuffer::default(),
         }
     }
 }
 
-impl screen::Screen for Screen {
-    fn finished_frame(&mut self, frame: &FrameBuffer) {
+impl video::Callback for VideoCallback {
+    fn put_dot(&mut self, x: u8, y: u8, dot: video::Dot) {
+        self.buf.put_dot(x, y, dot);
+    }
+
+    fn end_frame(&mut self, green_swap: bool) {
+        self.new_frame = true;
+        if green_swap {
+            self.buf.green_swap();
+        }
+
         self.image
             .as_flat_samples_mut()
             .as_mut_slice()
-            .copy_from_slice(&frame.0);
-        self.new_frame = true;
+            .copy_from_slice(&self.buf.0);
+    }
+
+    fn is_frame_skipping(&self) -> bool {
+        false
     }
 }

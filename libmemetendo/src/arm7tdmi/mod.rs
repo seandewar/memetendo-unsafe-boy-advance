@@ -11,6 +11,9 @@ use crate::bus::Bus;
 
 use self::reg::{OperationMode, OperationState, Registers, LR_INDEX, PC_INDEX, SP_INDEX};
 
+/// 280,896 cycles per frame at ~59.737 Hz.
+pub const CYCLES_PER_SECOND: u32 = 16_779_884;
+
 #[derive(Copy, Clone, PartialEq, Eq, FromRepr, EnumIter, EnumCount, Debug)]
 pub enum Exception {
     Reset,

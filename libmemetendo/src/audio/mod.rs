@@ -2,7 +2,7 @@ use std::mem::{replace, take};
 
 use intbits::Bits;
 
-use crate::{bus::Bus, dma::Dma, CYCLES_PER_SECOND};
+use crate::{arm7tdmi::CYCLES_PER_SECOND, bus::Bus, dma::Dma};
 
 use self::chan::{
     noise::Noise,
@@ -14,12 +14,6 @@ mod chan;
 
 pub trait Callback {
     fn push_sample(&mut self, sample: (i16, i16));
-}
-
-pub struct NullCallback;
-
-impl Callback for NullCallback {
-    fn push_sample(&mut self, _sample: (i16, i16)) {}
 }
 
 #[derive(Debug, Default)]
