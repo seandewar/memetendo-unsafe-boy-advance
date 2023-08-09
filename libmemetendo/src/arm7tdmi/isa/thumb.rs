@@ -22,9 +22,8 @@ impl Cpu {
         assert_eq!(self.reg.cpsr.state, OperationState::Thumb);
 
         // TODO: SWI is 2S+1N
-        #[allow(clippy::cast_possible_truncation)]
         #[bitmatch]
-        match instr.bits(8..) as u8 {
+        match u8::try_from(instr.bits(8..)).unwrap() {
             "1011_0000" => self.execute_thumb13(instr),
             "1101_1111" => {
                 self.enter_exception(bus, Exception::SoftwareInterrupt);
@@ -52,8 +51,7 @@ impl Cpu {
     /// Thumb.1: Move shifted register.
     fn execute_thumb1(&mut self, instr: u16) {
         let value = self.reg.r[r_index(instr, 3)];
-        #[allow(clippy::cast_possible_truncation)]
-        let offset = instr.bits(6..11) as u8;
+        let offset = u8::try_from(instr.bits(6..11)).unwrap();
 
         self.reg.r[r_index(instr, 0)] = match instr.bits(11..13) {
             // LSL{S} Rd,Rs,#Offset
@@ -70,8 +68,7 @@ impl Cpu {
     fn execute_thumb2(&mut self, instr: u16) {
         let value1 = self.reg.r[r_index(instr, 3)];
         let r = r_index(instr, 6);
-        #[allow(clippy::cast_possible_truncation)]
-        let value2 = r as u32;
+        let value2 = u32::try_from(r).unwrap();
 
         self.reg.r[r_index(instr, 0)] = match instr.bits(9..11) {
             // ADD{S} Rd,Rs,Rn
@@ -107,11 +104,10 @@ impl Cpu {
     }
 
     /// Thumb.4: ALU operations.
-    #[allow(clippy::cast_possible_truncation)]
     fn execute_thumb4(&mut self, instr: u16) {
         let r_dst = r_index(instr, 0);
         let value = self.reg.r[r_index(instr, 3)];
-        let offset = value as u8;
+        let offset = u8::try_from(value.bits(..8)).unwrap();
 
         match instr.bits(6..10) {
             // AND{S} Rd,Rs
@@ -197,7 +193,6 @@ impl Cpu {
 
     /// Thumb.7: Load or store with register offset, OR
     /// Thumb.8: Load or store sign-extended byte or half-word (if bit 9 is set in `instr`).
-    #[allow(clippy::cast_possible_truncation)]
     fn execute_thumb7_or_thumb8(&mut self, bus: &mut impl Bus, instr: u16) {
         let r = r_index(instr, 0);
         let base_addr = self.reg.r[r_index(instr, 3)];
@@ -209,7 +204,7 @@ impl Cpu {
             // Thumb.8
             match op {
                 // STRH Rd,[Rb,Ro]
-                0 => Self::op_strh(bus, addr, self.reg.r[r] as u16),
+                0 => Self::op_strh(bus, addr, self.reg.r[r].bits(..16).try_into().unwrap()),
                 // LDSB Rd,[Rb,Ro]
                 1 => self.reg.r[r] = Self::op_ldrb_or_ldsb(bus, addr, true),
                 // LDRH/LDSH Rd,[Rb,Ro]
@@ -222,7 +217,7 @@ impl Cpu {
                 // STR Rd,[Rb,Ro]
                 0 => Self::op_str(bus, addr, self.reg.r[r]),
                 // STRB Rd,[Rb,Ro]
-                1 => Self::op_strb(bus, addr, self.reg.r[r] as u8),
+                1 => Self::op_strb(bus, addr, self.reg.r[r].bits(..8).try_into().unwrap()),
                 // LDR Rd,[Rb,Ro]
                 2 => self.reg.r[r] = Self::op_ldr(bus, addr),
                 // LDRB Rd,[Rb,Ro]
@@ -246,8 +241,7 @@ impl Cpu {
             // LDR Rd,[Rb,#nn]
             1 => self.reg.r[r] = Self::op_ldr(bus, word_addr),
             // STRB Rd,[Rb,#nn]
-            #[allow(clippy::cast_possible_truncation)]
-            2 => Self::op_strb(bus, addr, self.reg.r[r] as u8),
+            2 => Self::op_strb(bus, addr, self.reg.r[r].bits(..8).try_into().unwrap()),
             // LDRB Rd,[Rb,#nn]
             3 => self.reg.r[r] = Self::op_ldrb_or_ldsb(bus, addr, false),
             _ => unreachable!(),
@@ -266,8 +260,7 @@ impl Cpu {
             self.reg.r[r] = Self::op_ldrh_or_ldsh(bus, addr, false);
         } else {
             // STRH Rd,[Rb,#nn]
-            #[allow(clippy::cast_possible_truncation)]
-            Self::op_strh(bus, addr, self.reg.r[r] as u16);
+            Self::op_strh(bus, addr, self.reg.r[r].bits(..16).try_into().unwrap());
         }
     }
 
@@ -322,8 +315,7 @@ impl Cpu {
         };
 
         let r_list_extra = if pop { PC_INDEX } else { LR_INDEX };
-        #[allow(clippy::cast_possible_truncation)]
-        let r_list = u16::from(instr as u8).with_bit(r_list_extra, instr.bit(8));
+        let r_list = instr.bits(..8).with_bit(r_list_extra, instr.bit(8));
 
         if pop {
             // POP {Rlist}{PC} (LDMFD)
@@ -336,8 +328,7 @@ impl Cpu {
 
     /// Thumb.15: Multiple load or store.
     fn execute_thumb15(&mut self, bus: &mut impl Bus, instr: u16) {
-        #[allow(clippy::cast_possible_truncation)]
-        let r_list = (instr as u8).into();
+        let r_list = instr.bits(..8);
         let r_base = r_index(instr, 8);
 
         let flags = BlockTransferFlags {
@@ -357,9 +348,9 @@ impl Cpu {
     }
 
     /// Thumb.16: Conditional branch.
-    #[allow(clippy::cast_possible_truncation)]
     fn execute_thumb16(&mut self, bus: &mut impl Bus, instr: u16) {
-        if self.meets_condition(instr.bits(8..12) as u8) {
+        #[allow(clippy::cast_possible_truncation)]
+        if self.meets_condition(instr.bits(8..12).try_into().unwrap()) {
             // B{cond} label
             self.op_branch(bus, self.reg.r[PC_INDEX], 2 * i32::from(instr as i8));
         }

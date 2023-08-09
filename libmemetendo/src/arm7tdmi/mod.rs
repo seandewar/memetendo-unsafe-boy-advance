@@ -3,6 +3,7 @@ pub mod reg;
 
 use std::mem::take;
 
+use intbits::Bits;
 use log::trace;
 use strum::EnumCount;
 use strum_macros::{EnumCount, EnumIter, FromRepr};
@@ -145,8 +146,7 @@ impl Cpu {
         match self.reg.cpsr.state {
             OperationState::Arm => self.execute_arm(bus, instr),
             OperationState::Thumb => {
-                #[allow(clippy::cast_possible_truncation)]
-                self.execute_thumb(bus, instr as u16);
+                self.execute_thumb(bus, instr.bits(..16).try_into().unwrap());
             }
         }
         if !self.pipeline_reloaded {

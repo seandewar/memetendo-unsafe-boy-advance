@@ -65,7 +65,7 @@ impl Bus for Vram<'_> {
     fn write_byte(&mut self, addr: u32, value: u8) {
         // Like palette RAM, but only write a hword for BG data.
         let addr = Self::offset(addr);
-        if (addr as usize) < self.0.dispcnt.obj_vram_offset() {
+        if usize::try_from(addr).unwrap() < self.0.dispcnt.obj_vram_offset() {
             self.0
                 .vram
                 .write_hword(addr, u16::from_le_bytes([value, value]));
@@ -217,12 +217,11 @@ pub struct Dot {
 }
 
 impl From<u16> for Dot {
-    #[allow(clippy::cast_possible_truncation)]
     fn from(value: u16) -> Self {
         Dot {
-            r: value.bits(..5) as u8,
-            g: value.bits(5..10) as u8,
-            b: value.bits(10..15) as u8,
+            r: value.bits(..5).try_into().unwrap(),
+            g: value.bits(5..10).try_into().unwrap(),
+            b: value.bits(10..15).try_into().unwrap(),
         }
     }
 }
@@ -324,10 +323,9 @@ impl Video {
                 bg::DotInfo::TileMode { palette, .. } => palette_ram(palette.ram_offset()),
                 bg::DotInfo::Mode3 { pos: (x, y) } => vram(2 * (y * u32::from(HBLANK_DOT) + x)),
                 bg::DotInfo::Mode4 { color_idx } => palette_ram(2 * u32::from(color_idx)),
-                #[allow(clippy::cast_possible_truncation)]
-                bg::DotInfo::Mode5 { pos: (x, y) } => {
-                    vram(self.dispcnt.frame_vram_offset() as u32 + 2 * (y * 160 + x))
-                }
+                bg::DotInfo::Mode5 { pos: (x, y) } => vram(
+                    u32::try_from(self.dispcnt.frame_vram_offset()).unwrap() + 2 * (y * 160 + x),
+                ),
             },
             DotInfo::Backdrop => palette_ram(0),
         }
@@ -383,9 +381,11 @@ impl Video {
         let factor = (self.bldalpha.0.factor(), self.bldalpha.1.factor());
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let blend = |top: u8, bot: u8| {
-            u32::from(Dot::MAX_COMPONENT)
-                .min((f32::from(top) * factor.0 + f32::from(bot) * factor.1) as u32)
-                as u8
+            u8::try_from(
+                u32::from(Dot::MAX_COMPONENT)
+                    .min((f32::from(top) * factor.0 + f32::from(bot) * factor.1) as u32),
+            )
+            .unwrap()
         };
 
         Dot::new(

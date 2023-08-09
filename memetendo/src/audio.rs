@@ -31,8 +31,7 @@ impl Callback {
             ));
         }
 
-        #[allow(clippy::cast_possible_wrap)]
-        if spec.freq > SAMPLE_FREQUENCY as i32 {
+        if spec.freq > i32::try_from(SAMPLE_FREQUENCY).unwrap() {
             // We could technically handle this, but it's probably not worth it.
             return Err(format!(
                 "audio frequency too high (got: {} Hz, max: {SAMPLE_FREQUENCY} Hz)",
@@ -55,7 +54,7 @@ impl Callback {
     }
 
     fn samples_len(spec: &AudioSpec) -> usize {
-        spec.size as usize / size_of::<i16>()
+        usize::try_from(spec.size).unwrap() / size_of::<i16>()
     }
 }
 
@@ -65,16 +64,14 @@ impl audio::Callback for Callback {
         self.sample_accum.1 += i32::from(sample.1);
 
         self.freq_counter += 1;
-        #[allow(clippy::cast_sign_loss)]
-        let freq = self.spec.freq as u32;
+        let freq = self.spec.freq.try_into().unwrap();
         if self.freq_counter < (SAMPLE_FREQUENCY / freq) + u32::from(self.accum_extra_sample) {
             return;
         }
 
-        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let sample = (
-            (self.sample_accum.0 / self.freq_counter as i32) as i16,
-            (self.sample_accum.1 / self.freq_counter as i32) as i16,
+            i16::try_from(self.sample_accum.0 / i32::try_from(self.freq_counter).unwrap()).unwrap(),
+            i16::try_from(self.sample_accum.1 / i32::try_from(self.freq_counter).unwrap()).unwrap(),
         );
         self.freq_counter = 0;
         self.sample_accum = (0, 0);
@@ -145,7 +142,7 @@ impl Audio {
         // audio drift behind if the queue isn't being consumed fast enough.
         let count = cb
             .samples_len
-            .min(Callback::samples_len(&cb.spec).saturating_sub(queue.size() as _));
+            .min(Callback::samples_len(&cb.spec).saturating_sub(queue.size().try_into().unwrap()));
         if count == 0 {
             return Ok(());
         }

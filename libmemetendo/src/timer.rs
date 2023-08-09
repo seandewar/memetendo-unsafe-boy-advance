@@ -40,6 +40,8 @@ impl Timers {
         Self::default()
     }
 
+    // Panics if the ticks calculation overflows u16, but that shouldn't be possible.
+    #[allow(clippy::missing_panics_doc)]
     pub fn step(&mut self, irq: &mut Irq, audio: &mut Audio, cycles: u8) {
         let mut prev_overflow_count = 0;
         for (i, timer) in self.0.iter_mut().enumerate() {
@@ -65,8 +67,7 @@ impl Timers {
                         continue;
                     }
 
-                    #[allow(clippy::cast_possible_truncation)]
-                    let ticks = (timer.accum / MAX_DIV) as u16;
+                    let ticks = u16::try_from(timer.accum / MAX_DIV).unwrap();
                     timer.accum %= MAX_DIV;
 
                     ticks
@@ -77,10 +78,9 @@ impl Timers {
             timer.counter = if overflowed {
                 let extra_ticks = u32::from(ticks - (u16::MAX - timer.counter) - 1);
                 let ticks_to_overflow = u32::from(u16::MAX - timer.initial) + 1;
-                #[allow(clippy::cast_possible_truncation)]
-                let new_counter = timer.initial + (extra_ticks % ticks_to_overflow) as u16;
-                #[allow(clippy::cast_possible_truncation)]
-                let overflow_count = 1 + (extra_ticks / ticks_to_overflow) as u8;
+                let new_counter =
+                    timer.initial + u16::try_from(extra_ticks % ticks_to_overflow).unwrap();
+                let overflow_count = 1 + u8::try_from(extra_ticks / ticks_to_overflow).unwrap();
 
                 if timer.irq_enabled {
                     irq.request(
@@ -107,13 +107,12 @@ impl Bus for Timers {
     fn read_byte(&mut self, addr: u32) -> u8 {
         assert!((0x100..0x110).contains(&addr), "IO register address OOB");
 
-        let tmcnt = &mut self.0[(addr as usize & 0xf) / 4];
-        #[allow(clippy::cast_possible_truncation)]
-        match addr as usize & 3 {
-            0 => tmcnt.counter as u8,
-            1 => tmcnt.counter.bits(8..) as u8,
-            2 => tmcnt.cached_bits as u8,
-            3 => tmcnt.cached_bits.bits(8..) as u8,
+        let tmcnt = &mut self.0[usize::try_from(addr & 0xf).unwrap() / 4];
+        match addr & 3 {
+            0 => tmcnt.counter.bits(..8).try_into().unwrap(),
+            1 => tmcnt.counter.bits(8..).try_into().unwrap(),
+            2 => tmcnt.cached_bits.bits(..8).try_into().unwrap(),
+            3 => tmcnt.cached_bits.bits(8..).try_into().unwrap(),
             _ => unreachable!(),
         }
     }
@@ -121,8 +120,8 @@ impl Bus for Timers {
     fn write_byte(&mut self, addr: u32, value: u8) {
         assert!((0x100..0x110).contains(&addr), "IO register address OOB");
 
-        let tmcnt = &mut self.0[(addr as usize & 0xf) / 4];
-        match addr as usize & 3 {
+        let tmcnt = &mut self.0[usize::try_from(addr & 0xf).unwrap() / 4];
+        match addr & 3 {
             0 => tmcnt.initial.set_bits(..8, value.into()),
             1 => tmcnt.initial.set_bits(8.., value.into()),
             2 => {

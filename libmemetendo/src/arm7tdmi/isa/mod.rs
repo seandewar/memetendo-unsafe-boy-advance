@@ -184,7 +184,6 @@ impl Cpu {
         result
     }
 
-    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
     fn op_asr(
         &mut self,
         update_cond: bool,
@@ -192,14 +191,11 @@ impl Cpu {
         value: u32,
         offset: u8,
     ) -> u32 {
+        #[allow(clippy::cast_possible_wrap)]
         let mut result = value as i32;
         // A value shifted 32 or more times is either 0 or has all bits set depending on the
         // initial value of the sign bit (due to sign extension)
-        let overflow_result = if result.is_negative() {
-            u32::MAX as i32
-        } else {
-            0
-        };
+        let overflow_result: i32 = if result.is_negative() { !0 } else { 0 };
 
         if offset > 0 {
             result = result
@@ -217,6 +213,7 @@ impl Cpu {
             result = overflow_result;
         }
 
+        #[allow(clippy::cast_sign_loss)]
         let result = result as u32;
         if update_cond {
             self.reg.cpsr.set_nz_from_word(result);
@@ -475,11 +472,7 @@ impl Cpu {
 
         let result = u32::from(bus.read_hword_aligned(addr)).rotate_right(8 * (addr & 1));
 
-        #[allow(
-            clippy::cast_sign_loss,
-            clippy::cast_possible_wrap,
-            clippy::cast_possible_truncation
-        )]
+        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         if sign_extend {
             i32::from(result as i16) as _
         } else {

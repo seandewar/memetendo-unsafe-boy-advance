@@ -53,7 +53,7 @@ impl Flash {
     }
 
     fn buf_index(&self, addr: u32) -> usize {
-        self.bank_idx * BANK_LEN + addr as usize
+        self.bank_idx * BANK_LEN + usize::try_from(addr).unwrap()
     }
 
     fn is_dual_bank(&self) -> bool {
@@ -80,7 +80,7 @@ impl Bus for Flash {
     }
 
     fn write_byte(&mut self, addr: u32, value: u8) {
-        if addr as usize >= BANK_LEN {
+        if usize::try_from(addr).unwrap() >= BANK_LEN {
             return;
         }
 

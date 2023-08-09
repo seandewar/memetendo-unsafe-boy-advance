@@ -179,37 +179,45 @@ impl Audio {
 
 impl Bus for Audio {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        let ctrl_offset = 8 * (addr as usize & 7);
-        #[allow(clippy::cast_possible_truncation)]
+        let ctrl_offset = 8 * usize::try_from(addr & 7).unwrap();
         match addr {
             // SOUND1CNT
             0x60..=0x67 => self
                 .channels
                 .0
                 .ctrl_bits()
-                .bits(ctrl_offset..ctrl_offset + 8) as u8,
+                .bits(ctrl_offset..ctrl_offset + 8)
+                .try_into()
+                .unwrap(),
             // SOUND2CNT
             0x68..=0x6f => self
                 .channels
                 .1
                 .ctrl_bits()
-                .bits(ctrl_offset..ctrl_offset + 8) as u8,
+                .bits(ctrl_offset..ctrl_offset + 8)
+                .try_into()
+                .unwrap(),
             // SOUND3CNT
             0x70..=0x77 => self
                 .channels
                 .2
                 .ctrl_bits()
-                .bits(ctrl_offset..ctrl_offset + 8) as u8,
+                .bits(ctrl_offset..ctrl_offset + 8)
+                .try_into()
+                .unwrap(),
             // SOUND4CNT
             0x78..=0x7f => self
                 .channels
                 .3
                 .ctrl_bits()
-                .bits(ctrl_offset..ctrl_offset + 8) as u8,
+                .bits(ctrl_offset..ctrl_offset + 8)
+                .try_into()
+                .unwrap(),
             // SOUNDCNT
             0x80..=0x87 => {
                 let cached_bits =
-                    self.cached_soundcnt_bits.bits(ctrl_offset..ctrl_offset + 8) as u8;
+                    u8::try_from(self.cached_soundcnt_bits.bits(ctrl_offset..ctrl_offset + 8))
+                        .unwrap();
 
                 if addr == 0x84 {
                     cached_bits
@@ -245,7 +253,9 @@ impl Bus for Audio {
             // SOUNDBIAS
             0x88..=0x8f => self
                 .cached_soundbias_bits
-                .bits(ctrl_offset..ctrl_offset + 8) as u8,
+                .bits(ctrl_offset..ctrl_offset + 8)
+                .try_into()
+                .unwrap(),
             // WAVE_RAM
             0x90..=0x9f => self.channels.2.wave_ram().read_byte(addr & 0xf),
             0x00..=0x5f | 0xa8.. => panic!("IO register address OOB"),
@@ -258,16 +268,28 @@ impl Bus for Audio {
             return;
         }
 
-        let ctrl_offset = 8 * (addr as usize & 7);
+        let ctrl_offset = 8 * usize::try_from(addr & 7).unwrap();
         match addr {
             // SOUND1CNT
-            0x60..=0x67 => self.channels.0.set_ctrl_byte(addr as usize & 7, value),
+            0x60..=0x67 => self
+                .channels
+                .0
+                .set_ctrl_byte((addr & 7).try_into().unwrap(), value),
             // SOUND2CNT
-            0x68..=0x6f => self.channels.1.set_ctrl_byte(addr as usize & 7, value),
+            0x68..=0x6f => self
+                .channels
+                .1
+                .set_ctrl_byte((addr & 7).try_into().unwrap(), value),
             // SOUND3CNT
-            0x70..=0x77 => self.channels.2.set_ctrl_byte(addr as usize & 7, value),
+            0x70..=0x77 => self
+                .channels
+                .2
+                .set_ctrl_byte((addr & 7).try_into().unwrap(), value),
             // SOUND4CNT
-            0x78..=0x7f => self.channels.3.set_ctrl_byte(addr as usize & 7, value),
+            0x78..=0x7f => self
+                .channels
+                .3
+                .set_ctrl_byte((addr & 7).try_into().unwrap(), value),
             // SOUNDCNT
             0x80..=0x87 => {
                 self.cached_soundcnt_bits

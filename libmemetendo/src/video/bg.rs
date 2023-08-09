@@ -90,14 +90,12 @@ impl Video {
         };
         let screen_tile_idx = screen_tile_y * u32::from(screen_tile_len) + screen_tile_x;
 
-        #[allow(clippy::cast_possible_truncation)]
         let (mut dot_x, mut dot_y) = (
-            x.rem_euclid(TILE_DOT_LEN.into()) as u8,
-            y.rem_euclid(TILE_DOT_LEN.into()) as u8,
+            u8::try_from(x.rem_euclid(TILE_DOT_LEN.into()).bits(..8)).unwrap(),
+            u8::try_from(y.rem_euclid(TILE_DOT_LEN.into()).bits(..8)).unwrap(),
         );
         let (dots_idx, palette_idx) = if text_mode {
-            #[allow(clippy::cast_possible_truncation)]
-            let tile_info_offset = screen_base_offset as u32 + 2 * screen_tile_idx;
+            let tile_info_offset = u32::try_from(screen_base_offset).unwrap() + 2 * screen_tile_idx;
             let tile_info = self.vram.as_ref().read_hword(tile_info_offset);
             let dots_idx = usize::from(tile_info.bits(..10));
 
@@ -114,7 +112,7 @@ impl Video {
 
             (dots_idx, (!color256).then_some(tile_info.bits(12..)))
         } else {
-            let dots_idx_offset = screen_base_offset + screen_tile_idx as usize;
+            let dots_idx_offset = screen_base_offset + usize::try_from(screen_tile_idx).unwrap();
             if dots_idx_offset >= self.vram.len() {
                 return None;
             }
@@ -154,7 +152,7 @@ impl Video {
             _ if x >= HBLANK_DOT.into() || y >= VBLANK_DOT.into() => None,
             3 => Some(DotInfo::Mode3 { pos: (x, y) }),
             4 => {
-                let (x, y) = (x as usize, y as usize);
+                let (x, y) = (usize::try_from(x).unwrap(), usize::try_from(y).unwrap());
                 let frame_offset = self.dispcnt.frame_vram_offset();
                 let color_idx = self.vram[frame_offset + y * usize::from(HBLANK_DOT) + x];
 

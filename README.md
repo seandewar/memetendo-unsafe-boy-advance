@@ -1,14 +1,17 @@
 # Memetendo Unsafe Boy Advance
 
+A [Game Boy Advance](https://en.wikipedia.org/wiki/Game_Boy_Advance) emulator,
+written in Rust. 🦀
+
 [Try it out in your browser!](https://seandewar.github.io/memetendo-unsafe-boy-advance/)
 
 ## Status
 
-Unfinished; I'll be working on this in my spare time (for fun!) :)
-
 ![Doom 2 screenshot](media/doom2.png)
 ![Pokemon FireRed screenshot](media/pokemon-firered.png)
 ![OpenLara screenshot](media/openlara.png)
+
+Unfinished; I'll be working on this in my spare time (for fun!) :)
 
 It's able to play most games, and has audio support!  
 [Here's a video of it running DOOM!](https://www.youtube.com/watch?v=mdFqmEEttws)

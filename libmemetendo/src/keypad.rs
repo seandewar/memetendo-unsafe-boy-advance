@@ -61,14 +61,14 @@ impl Keypad {
 
 impl Bus for Keypad {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        #[allow(clippy::cast_possible_truncation)]
         match addr {
             // KEYINPUT
-            0x130 => !self.pressed as u8,
-            0x131 => !self.pressed.bits(8..) as u8,
+            0x130 => (!self.pressed).bits(..8).try_into().unwrap(),
+            0x131 => (!self.pressed).bits(8..).try_into().unwrap(),
             // KEYCNT
-            0x132 => self.keycnt.irq_keys as u8,
-            0x133 => (self.keycnt.irq_keys.bits(8..) as u8)
+            0x132 => self.keycnt.irq_keys.bits(..8).try_into().unwrap(),
+            0x133 => u8::try_from(self.keycnt.irq_keys.bits(8..))
+                .unwrap()
                 .with_bit(6, self.keycnt.irq_enabled)
                 .with_bit(7, self.keycnt.irq_all_pressed),
             _ => panic!("IO register address OOB"),

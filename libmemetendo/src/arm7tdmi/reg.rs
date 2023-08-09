@@ -21,10 +21,11 @@ impl OperationMode {
         self as _
     }
 
-    #[allow(clippy::cast_possible_truncation)]
+    // Only panics if usize is smaller than 5 bits... which is impossible.
+    #[allow(clippy::missing_panics_doc)]
     #[must_use]
     pub fn from_bits(bits: u32) -> Option<Self> {
-        Self::from_repr(bits.bits(..5) as _)
+        Self::from_repr(bits.bits(..5).try_into().unwrap())
     }
 
     #[must_use]
@@ -154,7 +155,6 @@ pub enum OperationState {
 }
 
 impl OperationState {
-    #[allow(clippy::cast_possible_truncation)]
     #[must_use]
     pub fn from_bits(bits: u32) -> Option<Self> {
         Self::from_repr((bits & (1 << 5)) as _)

@@ -206,7 +206,7 @@ impl Bus for Cartridge {
                 } else {
                     self.rom
                         .bytes()
-                        .get(addr as usize & 0x1ff_ffff)
+                        .get(usize::try_from(addr).unwrap() & 0x1ff_ffff)
                         .copied()
                         .unwrap_or(0)
                 }

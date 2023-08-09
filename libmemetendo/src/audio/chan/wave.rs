@@ -33,11 +33,11 @@ pub struct WaveRam<'a>(&'a mut Wave);
 //       but is this worth implementing?
 impl Bus for WaveRam<'_> {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        self.0.wave_ram_banks[(self.0.bank_idx + 1) % 2][addr as usize]
+        self.0.wave_ram_banks[(self.0.bank_idx + 1) % 2][usize::try_from(addr).unwrap()]
     }
 
     fn write_byte(&mut self, addr: u32, value: u8) {
-        self.0.wave_ram_banks[(self.0.bank_idx + 1) % 2][addr as usize] = value;
+        self.0.wave_ram_banks[(self.0.bank_idx + 1) % 2][usize::try_from(addr).unwrap()] = value;
     }
 }
 
@@ -160,9 +160,7 @@ impl<const FIFO_A: bool> Fifo<FIFO_A> {
             }
             self.len -= count;
 
-            #[allow(clippy::cast_possible_truncation)]
-            let sample = (sample_accum / i32::from(steps)) as _;
-            sample
+            i8::try_from(sample_accum / i32::from(steps)).unwrap()
         } else {
             0
         };

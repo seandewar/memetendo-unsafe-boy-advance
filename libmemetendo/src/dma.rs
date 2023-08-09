@@ -231,15 +231,16 @@ impl Bus for Dma {
     fn read_byte(&mut self, addr: u32) -> u8 {
         assert!((0xb0..0xe0).contains(&addr), "IO register address OOB");
 
-        let chan = &mut self.0[(addr as usize - 0xb0) / 12];
-        #[allow(clippy::cast_possible_truncation)]
-        match (addr as usize - 0xb0) % 12 {
+        let chan = &mut self.0[usize::try_from(addr - 0xb0).unwrap() / 12];
+        match (addr - 0xb0) % 12 {
             // DMAXCNT
-            10 => chan.cached_dmacnt_hi_bits as u8,
+            10 => chan.cached_dmacnt_hi_bits.bits(..8).try_into().unwrap(),
             11 => chan
                 .cached_dmacnt_hi_bits
                 .with_bit(15, chan.enabled)
-                .bits(8..) as u8,
+                .bits(8..)
+                .try_into()
+                .unwrap(),
             _ => 0,
         }
     }
@@ -247,9 +248,9 @@ impl Bus for Dma {
     fn write_byte(&mut self, addr: u32, value: u8) {
         assert!((0xb0..0xe0).contains(&addr), "IO register address OOB");
 
-        let chan_idx = (addr as usize - 0xb0) / 12;
+        let chan_idx = usize::try_from(addr - 0xb0).unwrap() / 12;
         let chan = &mut self.0[chan_idx];
-        let offset = (addr as usize - 0xb0) % 12;
+        let offset = usize::try_from(addr - 0xb0).unwrap() % 12;
 
         let set_addr_byte = |addr: &mut u32, i, value: u8| match i {
             0..=2 => addr.set_bits((i * 8)..(i * 8) + 8, value.into()),
@@ -258,9 +259,9 @@ impl Bus for Dma {
             _ => unreachable!(),
         };
 
-        #[allow(clippy::cast_possible_truncation)]
         let mut update_src_addr_ctrl = |cached_hi_bits: u16| {
-            chan.src_addr_ctrl = AddressControl::from_repr(cached_hi_bits.bits(7..9) as _).unwrap();
+            chan.src_addr_ctrl =
+                AddressControl::from_repr(cached_hi_bits.bits(7..9).try_into().unwrap()).unwrap();
         };
 
         match offset {

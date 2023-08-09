@@ -214,8 +214,7 @@ impl Bus for Oam {
         }
 
         self.buf.write_hword(addr, value);
-        #[allow(clippy::cast_possible_truncation)]
-        self.update_cached_attrs((addr / OAM_ENTRY_STRIDE) as u8, false);
+        self.update_cached_attrs((addr / OAM_ENTRY_STRIDE).try_into().unwrap(), false);
     }
 }
 
@@ -229,10 +228,9 @@ impl Oam {
         ];
 
         let affine = if attrs[0].bit(8) {
-            #[allow(clippy::cast_possible_truncation)]
             AffineAttribute::Enabled {
                 double_size: attrs[0].bit(9),
-                params_idx: attrs[1].bits(9..14) as u8,
+                params_idx: attrs[1].bits(9..14).try_into().unwrap(),
             }
         } else {
             AffineAttribute::Disabled {
@@ -243,23 +241,21 @@ impl Oam {
         let color256 = attrs[0].bit(13);
         let palette_idx = (!color256).then_some(attrs[2].bits(12..));
 
-        #[allow(clippy::cast_possible_wrap)]
-        let mut y = attrs[0].bits(..8) as i16;
+        let mut y = i16::try_from(attrs[0].bits(..8)).unwrap();
         #[allow(clippy::cast_possible_truncation)]
         if y >= VBLANK_DOT.into() {
             y = i16::from(y as i8);
         }
 
-        #[allow(clippy::cast_possible_truncation)]
         Attributes {
             pos: (arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9), y),
             affine,
             mode: Mode::from_repr(attrs[0].bits(10..12).into()),
             _mosaic: attrs[0].bit(12),
-            shape: Shape::from_repr(attrs[0].bits(14..) as _).unwrap(),
-            size: attrs[1].bits(14..) as u8,
+            shape: Shape::from_repr(attrs[0].bits(14..).try_into().unwrap()).unwrap(),
+            size: attrs[1].bits(14..).try_into().unwrap(),
             dots_base_idx: attrs[2].bits(..10),
-            priority: attrs[2].bits(10..12) as u8,
+            priority: attrs[2].bits(10..12).try_into().unwrap(),
             palette_idx,
         }
     }
@@ -321,8 +317,10 @@ impl Video {
             return None; // Clipped
         }
 
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let (mut obj_dot_x, mut obj_dot_y) = ((x - obj_x) as u8, (y - obj_y) as u8);
+        let (mut obj_dot_x, mut obj_dot_y) = (
+            u8::try_from((x - obj_x).bits(..8)).unwrap(),
+            u8::try_from((y - obj_y).bits(..8)).unwrap(),
+        );
         (obj_dot_x, obj_dot_y) = match attrs.affine {
             AffineAttribute::Enabled {
                 double_size,
@@ -345,8 +343,10 @@ impl Video {
                     return None; // Out of sprite bounds
                 }
 
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                (obj_dot_x as u8, obj_dot_y as u8)
+                (
+                    obj_dot_x.bits(..8).try_into().unwrap(),
+                    obj_dot_y.bits(..8).try_into().unwrap(),
+                )
             }
             AffineAttribute::Disabled { flip, .. } => {
                 Self::flip_tile_dot_pos(flip, (tile_width, tile_height), (obj_dot_x, obj_dot_y))

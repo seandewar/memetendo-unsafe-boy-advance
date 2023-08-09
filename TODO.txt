@@ -1,8 +1,4 @@
 libmemetendo:
-- Get rid of some of the truncating `as` casts and clippy-related annotations.
-  Using smaller types and instead widening with `into()` is better.
-  Also consider using more `try_into()` over `as`, even if we know the cast will
-  not actually truncate on the platforms memetendo supports, etc.
 - Finish implementing proper soft (and maybe hard) resets.
 - Finish implementing proper BIOS skipping.
 - Proper cycle counting to make timings more accurate!
@@ -22,7 +18,6 @@ libmemetendo:
 - More tests, especially for the video stuff!
 
 web-memetendo:
-- Write some JS glue to more directly write to buffers from WASM.
 - Spruce up the index a bit; maybe add a nice GBA (or toaster)-inspired chrome
   around the screen for spice!
 - Set up a GitHub Action for updating the gh-pages site.

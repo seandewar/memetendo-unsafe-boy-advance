@@ -179,7 +179,7 @@ impl bus::Bus for Bus<'_> {
                     0x130..=0x133 => self.keypad.read_byte(addr),
                     0x200..=0x203 | 0x208..=0x20b => self.irq.read_byte(addr),
                     0x301 => self.haltcnt.read_byte(addr),
-                    0x000..=0x800 => self.io_todo[addr as usize], // TODO
+                    0x000..=0x800 => self.io_todo[usize::try_from(addr).unwrap()], // TODO
                     _ => 0,
                 }
             }
@@ -214,7 +214,7 @@ impl bus::Bus for Bus<'_> {
                     0x130..=0x133 => self.keypad.write_byte(addr, value),
                     0x200..=0x203 | 0x208..=0x20b => self.irq.write_byte(addr, value),
                     0x301 => self.haltcnt.write_byte(addr, value),
-                    0x000..=0x800 => self.io_todo[addr as usize] = value, // TODO
+                    0x000..=0x800 => self.io_todo[usize::try_from(addr).unwrap()] = value, // TODO
                     _ => {}
                 }
             }

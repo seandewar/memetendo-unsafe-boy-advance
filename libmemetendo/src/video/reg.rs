@@ -170,7 +170,8 @@ impl BackgroundControl {
             ScreenAreas::Four => [[0, 1], [2, 3]],
         };
 
-        layout[screen_y.rem_euclid(2) as usize][screen_x.rem_euclid(2) as usize]
+        layout[usize::try_from(screen_y.rem_euclid(2)).unwrap()]
+            [usize::try_from(screen_x.rem_euclid(2)).unwrap()]
     }
 }
 
@@ -321,14 +322,13 @@ impl BlendCoefficient {
 
 impl Bus for Video {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        #[allow(clippy::cast_possible_truncation)]
         match addr {
             // DISPCNT
-            0x00 => self.dispcnt.cached_bits as u8,
-            0x01 => self.dispcnt.cached_bits.bits(8..) as u8,
+            0x00 => self.dispcnt.cached_bits.bits(..8).try_into().unwrap(),
+            0x01 => self.dispcnt.cached_bits.bits(8..).try_into().unwrap(),
             // GREENSWP (undocumented)
-            0x02 => self.greenswp as u8,
-            0x03 => self.greenswp.bits(8..) as u8,
+            0x02 => self.greenswp.bits(..8).try_into().unwrap(),
+            0x03 => self.greenswp.bits(8..).try_into().unwrap(),
             // DISPSTAT
             0x04 => self.dispstat.lo_bits(
                 self.y >= VBLANK_DOT && self.y != 227,
@@ -339,17 +339,17 @@ impl Bus for Video {
             // VCOUNT
             0x06 => self.y,
             // BG0CNT
-            0x08 => self.bgcnt[0].cached_bits as u8,
-            0x09 => self.bgcnt[0].cached_bits.bits(8..) as u8,
+            0x08 => self.bgcnt[0].cached_bits.bits(..8).try_into().unwrap(),
+            0x09 => self.bgcnt[0].cached_bits.bits(8..).try_into().unwrap(),
             // BG1CNT
-            0x0a => self.bgcnt[1].cached_bits as u8,
-            0x0b => self.bgcnt[1].cached_bits.bits(8..) as u8,
+            0x0a => self.bgcnt[1].cached_bits.bits(..8).try_into().unwrap(),
+            0x0b => self.bgcnt[1].cached_bits.bits(8..).try_into().unwrap(),
             // BG2CNT
-            0x0c => self.bgcnt[2].cached_bits as u8,
-            0x0d => self.bgcnt[2].cached_bits.bits(8..) as u8,
+            0x0c => self.bgcnt[2].cached_bits.bits(..8).try_into().unwrap(),
+            0x0d => self.bgcnt[2].cached_bits.bits(8..).try_into().unwrap(),
             // BG3CNT
-            0x0e => self.bgcnt[3].cached_bits as u8,
-            0x0f => self.bgcnt[3].cached_bits.bits(8..) as u8,
+            0x0e => self.bgcnt[3].cached_bits.bits(..8).try_into().unwrap(),
+            0x0f => self.bgcnt[3].cached_bits.bits(8..).try_into().unwrap(),
             // WININ
             0x48 => self.winin[0].cached_bits,
             0x49 => self.winin[1].cached_bits,
@@ -357,8 +357,8 @@ impl Bus for Video {
             0x4a => self.winout.cached_bits,
             0x4b => self.winobj.cached_bits,
             // BLDCNT
-            0x50 => self.bldcnt.cached_bits as u8,
-            0x51 => self.bldcnt.cached_bits.bits(8..) as u8,
+            0x50 => self.bldcnt.cached_bits.bits(..8).try_into().unwrap(),
+            0x51 => self.bldcnt.cached_bits.bits(8..).try_into().unwrap(),
             // BLDALPHA
             0x52 => self.bldalpha.0 .0,
             0x53 => self.bldalpha.1 .0,
@@ -440,9 +440,9 @@ impl Bus for Video {
             0x26 => self.bgp[0].d.set_bits(..8, value.into()),
             0x27 => self.bgp[0].d.set_bits(8.., value.into()),
             // BG2X
-            0x28..=0x2b => self.bgref[0].set_x_byte(addr as usize & 3, value),
+            0x28..=0x2b => self.bgref[0].set_x_byte((addr & 3).try_into().unwrap(), value),
             // BG2Y
-            0x2c..=0x2f => self.bgref[0].set_y_byte(addr as usize & 3, value),
+            0x2c..=0x2f => self.bgref[0].set_y_byte((addr & 3).try_into().unwrap(), value),
             // BG3PA
             0x30 => self.bgp[1].a.set_bits(..8, value.into()),
             0x31 => self.bgp[1].a.set_bits(8.., value.into()),
@@ -456,9 +456,9 @@ impl Bus for Video {
             0x36 => self.bgp[1].d.set_bits(..8, value.into()),
             0x37 => self.bgp[1].d.set_bits(8.., value.into()),
             // BG3X
-            0x38..=0x3b => self.bgref[1].set_x_byte(addr as usize & 3, value),
+            0x38..=0x3b => self.bgref[1].set_x_byte((addr & 3).try_into().unwrap(), value),
             // BG3Y
-            0x3c..=0x3f => self.bgref[1].set_y_byte(addr as usize & 3, value),
+            0x3c..=0x3f => self.bgref[1].set_y_byte((addr & 3).try_into().unwrap(), value),
             // WIN0H
             0x40 => self.win[0].horiz.1 = value,
             0x41 => self.win[0].horiz.0 = value,

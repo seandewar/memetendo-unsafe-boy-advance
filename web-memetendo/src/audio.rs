@@ -57,10 +57,9 @@ impl audio::Callback for Callback {
             return;
         }
 
-        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let sample = (
-            (self.sample_accum.0 / self.freq_counter as i32) as i16,
-            (self.sample_accum.1 / self.freq_counter as i32) as i16,
+            i16::try_from(self.sample_accum.0 / i32::try_from(self.freq_counter).unwrap()).unwrap(),
+            i16::try_from(self.sample_accum.1 / i32::try_from(self.freq_counter).unwrap()).unwrap(),
         );
         self.freq_counter = 0;
         self.sample_accum = (0, 0);

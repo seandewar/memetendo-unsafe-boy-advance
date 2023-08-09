@@ -1,10 +1,11 @@
 use intbits::Bits;
 
-#[allow(clippy::cast_possible_truncation)]
+// Panic is impossible as the first 8 bits of value always fits a u8.
+#[allow(clippy::missing_panics_doc)]
 #[inline]
 pub fn write_hword_as_bytes<T: Bus + ?Sized>(bus: &mut T, addr: u32, value: u16) {
-    bus.write_byte(addr, value as u8);
-    bus.write_byte(addr.wrapping_add(1), value.bits(8..) as _);
+    bus.write_byte(addr, value.bits(..8).try_into().unwrap());
+    bus.write_byte(addr.wrapping_add(1), value.bits(8..).try_into().unwrap());
 }
 
 pub trait Bus {
@@ -34,11 +35,10 @@ pub trait Bus {
         write_hword_as_bytes(self, addr, value);
     }
 
-    #[allow(clippy::cast_possible_truncation)]
     #[inline]
     fn write_word(&mut self, addr: u32, value: u32) {
-        self.write_hword(addr, value as u16);
-        self.write_hword(addr.wrapping_add(2), value.bits(16..) as _);
+        self.write_hword(addr, value.bits(..16).try_into().unwrap());
+        self.write_hword(addr.wrapping_add(2), value.bits(16..).try_into().unwrap());
     }
 
     #[inline]
@@ -48,19 +48,19 @@ pub trait Bus {
 impl Bus for &[u8] {
     #[inline]
     fn read_byte(&mut self, addr: u32) -> u8 {
-        self[addr as usize]
+        self[usize::try_from(addr).unwrap()]
     }
 }
 
 impl Bus for [u8] {
     #[inline]
     fn read_byte(&mut self, addr: u32) -> u8 {
-        self[addr as usize]
+        self[usize::try_from(addr).unwrap()]
     }
 
     #[inline]
     fn write_byte(&mut self, addr: u32, value: u8) {
-        self[addr as usize] = value;
+        self[usize::try_from(addr).unwrap()] = value;
     }
 }
 
@@ -139,20 +139,23 @@ pub(super) mod tests {
 
     impl Bus for VecBus {
         fn read_byte(&mut self, addr: u32) -> u8 {
-            self.buf.get(addr as usize).copied().unwrap_or_else(|| {
-                self.did_oob = true;
-                assert!(
-                    self.allow_oob,
-                    "oob VecBus read at address {addr:#010x} (len {})",
-                    self.buf.len()
-                );
+            self.buf
+                .get(usize::try_from(addr).unwrap())
+                .copied()
+                .unwrap_or_else(|| {
+                    self.did_oob = true;
+                    assert!(
+                        self.allow_oob,
+                        "oob VecBus read at address {addr:#010x} (len {})",
+                        self.buf.len()
+                    );
 
-                0xaa
-            })
+                    0xaa
+                })
         }
 
         fn write_byte(&mut self, addr: u32, value: u8) {
-            if let Some(v) = self.buf.get_mut(addr as usize) {
+            if let Some(v) = self.buf.get_mut(usize::try_from(addr).unwrap()) {
                 *v = value;
             } else {
                 self.did_oob = true;

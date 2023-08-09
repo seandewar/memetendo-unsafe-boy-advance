@@ -13,7 +13,7 @@ use crate::{
 use super::BlockTransferFlags;
 
 fn r_index(instr: u32, pos: u8) -> usize {
-    instr.bits(pos..pos + 4) as _
+    instr.bits(pos..pos + 4).try_into().unwrap()
 }
 
 impl Cpu {
@@ -21,8 +21,7 @@ impl Cpu {
     pub(in crate::arm7tdmi) fn execute_arm(&mut self, bus: &mut impl Bus, instr: u32) {
         assert_eq!(self.reg.cpsr.state, OperationState::Arm);
 
-        #[allow(clippy::cast_possible_truncation)]
-        if !self.meets_condition(instr.bits(28..) as u8) {
+        if !self.meets_condition(instr.bits(28..).try_into().unwrap()) {
             return; // TODO: 1S cycle anyway
         }
 
@@ -87,22 +86,20 @@ impl Cpu {
 
         let value2 = if instr.bit(25) {
             // Operand 2 is an ROR'd immediate value.
-            #[allow(clippy::cast_possible_truncation)]
             self.op_ror(
                 update_cond,
                 false,
                 instr.bits(..8),
-                2 * (instr.bits(8..12) as u8),
+                2 * u8::try_from(instr.bits(8..12)).unwrap(),
             )
         } else {
             // Operand 2 is from a register.
             let offset_from_reg = instr.bit(4);
 
-            #[allow(clippy::cast_possible_truncation)]
-            let offset = if offset_from_reg {
-                self.reg.r[r_index(instr, 8)] as u8
+            let offset: u8 = if offset_from_reg {
+                self.reg.r[r_index(instr, 8)].bits(..8).try_into().unwrap()
             } else {
-                instr.bits(7..12) as u8
+                instr.bits(7..12).try_into().unwrap()
             };
 
             let r_value2 = r_index(instr, 0);
@@ -116,9 +113,8 @@ impl Cpu {
                 }
             }
 
-            #[allow(clippy::cast_possible_truncation)]
             self.op_shift_operand(
-                instr.bits(5..7) as _,
+                instr.bits(5..7).try_into().unwrap(),
                 update_cond,
                 !offset_from_reg,
                 value2,
@@ -196,11 +192,11 @@ impl Cpu {
         let accum1 = self.reg.r[r_accum_or_lo];
         let accum2 = self.reg.r[r_dst_or_hi];
 
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         if instr.bit(23) {
             // 64-bit result written to RdHiLo.
             let accum_dword = u64::from(accum1).with_bits(32.., accum2.into());
 
+            #[allow(clippy::cast_possible_wrap)]
             let result = match instr.bits(21..23) {
                 // UMULL{cond}{S} RdLo,RdHi,Rm,Rs
                 0 => self.op_umlal(update_cond, value1, value2, 0),
@@ -218,8 +214,8 @@ impl Cpu {
                 _ => unreachable!(),
             };
 
-            self.reg.r[r_accum_or_lo] = result as u32;
-            self.reg.r[r_dst_or_hi] = result.bits(32..) as u32;
+            self.reg.r[r_accum_or_lo] = result.bits(..32).try_into().unwrap();
+            self.reg.r[r_dst_or_hi] = result.bits(32..).try_into().unwrap();
         } else {
             // 32-bit result written to Rd.
             self.reg.r[r_dst_or_hi] = if instr.bit(21) {
@@ -239,8 +235,12 @@ impl Cpu {
         if instr.bit(21) {
             let value = if instr.bit(25) {
                 // Immediate operand.
-                #[allow(clippy::cast_possible_truncation)]
-                self.op_ror(false, false, instr.bits(..8), 2 * (instr.bits(8..12) as u8))
+                self.op_ror(
+                    false,
+                    false,
+                    instr.bits(..8),
+                    2 * u8::try_from(instr.bits(8..12)).unwrap(),
+                )
             } else {
                 // Register operand.
                 self.reg.r[r_index(instr, 0)]
@@ -269,13 +269,18 @@ impl Cpu {
         let r_base_addr = r_index(instr, 16);
         let r_src_or_dst = r_index(instr, 12);
 
-        #[allow(clippy::cast_possible_truncation)]
         let offset = if instr.bit(25) {
             // Register offset shifted by immediate.
-            let shift_offset = instr.bits(7..12) as u8;
+            let shift_offset = u8::try_from(instr.bits(7..12)).unwrap();
             let value = self.reg.r[r_index(instr, 0)];
 
-            self.op_shift_operand(instr.bits(5..7) as _, false, true, value, shift_offset)
+            self.op_shift_operand(
+                instr.bits(5..7).try_into().unwrap(),
+                false,
+                true,
+                value,
+                shift_offset,
+            )
         } else {
             // Immediate offset.
             instr.bits(..12)
@@ -313,8 +318,7 @@ impl Cpu {
 
             // STR{cond}{B}{T} Rd,<Address>
             if transfer_byte {
-                #[allow(clippy::cast_possible_truncation)]
-                Self::op_strb(bus, transfer_addr, value as u8);
+                Self::op_strb(bus, transfer_addr, value.bits(..8).try_into().unwrap());
             } else {
                 Self::op_str(bus, transfer_addr, value);
             }
@@ -382,8 +386,7 @@ impl Cpu {
 
             if op == 1 {
                 // STR{cond}H Rd,<Address>; other opcodes are reserved.
-                #[allow(clippy::cast_possible_truncation)]
-                Self::op_strh(bus, transfer_addr, value as u16);
+                Self::op_strh(bus, transfer_addr, value.bits(..16).try_into().unwrap());
             }
         }
 
@@ -405,8 +408,7 @@ impl Cpu {
         };
 
         let r_base_addr = r_index(instr, 16);
-        #[allow(clippy::cast_possible_truncation)]
-        let r_list = instr as u16;
+        let r_list = instr.bits(..16).try_into().unwrap();
 
         if instr.bit(20) {
             // LDM{cond}{amod} Rn{!},<Rlist>{^}
@@ -425,8 +427,7 @@ impl Cpu {
         self.reg.r[r_index(instr, 12)] = if instr.bit(22) {
             // SWP{cond}B Rd,Rm,[Rn]
             let old_value = bus.read_byte(base_addr);
-            #[allow(clippy::cast_possible_truncation)]
-            bus.write_byte(base_addr, value as u8);
+            bus.write_byte(base_addr, value.bits(..8).try_into().unwrap());
 
             old_value.into()
         } else {

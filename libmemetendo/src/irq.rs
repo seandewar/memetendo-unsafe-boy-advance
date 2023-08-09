@@ -55,19 +55,18 @@ impl Irq {
 
 impl Bus for Irq {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        #[allow(clippy::cast_possible_truncation)]
         match addr {
             // IE
-            0x200 => self.inte as u8,
-            0x201 => self.inte.bits(8..) as u8,
+            0x200 => self.inte.bits(..8).try_into().unwrap(),
+            0x201 => self.inte.bits(8..).try_into().unwrap(),
             // IF
-            0x202 => self.intf as u8,
-            0x203 => self.intf.bits(8..) as u8,
+            0x202 => self.intf.bits(..8).try_into().unwrap(),
+            0x203 => self.intf.bits(8..).try_into().unwrap(),
             // IME
-            0x208 => self.intme as u8,
-            0x209 => self.intme.bits(8..16) as u8,
-            0x20a => self.intme.bits(16..24) as u8,
-            0x20b => self.intme.bits(24..) as u8,
+            0x208 => self.intme.bits(..8).try_into().unwrap(),
+            0x209 => self.intme.bits(8..16).try_into().unwrap(),
+            0x20a => self.intme.bits(16..24).try_into().unwrap(),
+            0x20b => self.intme.bits(24..).try_into().unwrap(),
             _ => panic!("IO register address OOB"),
         }
     }
