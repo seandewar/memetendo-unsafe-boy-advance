@@ -49,10 +49,10 @@ impl Bios {
         self.prefetch_addr = 0;
     }
 
-    pub fn update_protection(&mut self, prefetch_addr: Option<u32>) {
-        self.readable = prefetch_addr.is_some();
-        if let Some(addr) = prefetch_addr {
-            self.prefetch_addr = addr & !0b11;
+    pub fn update_protection(&mut self, prefetch_addr: u32) {
+        self.readable = prefetch_addr < 0x4000;
+        if self.readable {
+            self.prefetch_addr = prefetch_addr & !0b11;
         }
     }
 }

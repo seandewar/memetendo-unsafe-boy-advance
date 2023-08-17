@@ -93,7 +93,7 @@ impl Gba {
 
         if skip_bios {
             self.iwram[0x7e00..].fill(0);
-            self.bios.update_protection(Some(0xdc + 8));
+            self.bios.update_protection(0xdc + 8);
         }
     }
 
@@ -246,6 +246,6 @@ impl bus::Bus for Bus<'_> {
     }
 
     fn prefetch_instr(&mut self, addr: u32) {
-        self.bios.update_protection((addr < 0x4000).then_some(addr));
+        self.bios.update_protection(addr);
     }
 }
