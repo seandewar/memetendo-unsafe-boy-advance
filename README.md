@@ -1,15 +1,15 @@
 # Memetendo Unsafe Boy Advance
 
+![Doom 2 screenshot](media/doom2.png)
+![Pokemon FireRed screenshot](media/pokemon-firered.png)
+![OpenLara screenshot](media/openlara.png)
+
 A [Game Boy Advance](https://en.wikipedia.org/wiki/Game_Boy_Advance) emulator,
 written in Rust. 🦀
 
 [Try it out in your browser!](https://seandewar.github.io/memetendo-unsafe-boy-advance/)
 
 ## Status
-
-![Doom 2 screenshot](media/doom2.png)
-![Pokemon FireRed screenshot](media/pokemon-firered.png)
-![OpenLara screenshot](media/openlara.png)
 
 Unfinished; I'll be working on this in my spare time (for fun!) :)
 
