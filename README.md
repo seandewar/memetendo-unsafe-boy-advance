@@ -27,8 +27,8 @@ As for tests, it currently passes:
 
 ## Building
 
-For now, Memetendo Unsafe Boy Advance requires the latest stable Rust compiler
-(1.70) to build.
+Memetendo Unsafe Boy Advance currently targets Rust 1.72, but supports Rust 1.70
+as a minimum.
 
 Just use `cargo build` to build (optionally passing the `--release` argument to
 build with full optimizations), or `cargo run` to build and run.
@@ -47,7 +47,9 @@ enabled via `cargo test --release`.
 Integration tests exist that automate the running of various test ROMs.  
 To set them up, download the submodules in this repository by using
 `git submodule update --init` and copy a GBA BIOS ROM to
-`/libmemetendo/tests/bios.bin`.
+`/libmemetendo/tests/bios.bin` (if not provided, [Cult-of-GBA's BIOS](https://github.com/Cult-of-GBA/BIOS)
+will be used instead, but it does not currently pass [jsmolka's](https://github.com/jsmolka/gba-tests)
+BIOS tests).
 
 ## Performance
 
