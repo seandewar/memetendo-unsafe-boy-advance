@@ -31,3 +31,7 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace -- -Dwarnings
       - run: cargo build --workspace
+
+      # Falls back to Cult-of-GBA BIOS, which fails jsmolka's "bios" test, so
+      # skip it for now.
+      - run: cargo test --workspace -- --include-ignored --skip bios

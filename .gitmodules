@@ -7,3 +7,6 @@
 [submodule "armwrestler-gba-fixed"]
 	path = libmemetendo/tests/armwrestler_gba/armwrestler-gba-fixed
 	url = https://github.com/destoer/armwrestler-gba-fixed
+[submodule "libmemetendo/tests/BIOS"]
+	path = libmemetendo/tests/Cult-of-GBA-BIOS
+	url = https://github.com/Cult-of-GBA/BIOS.git

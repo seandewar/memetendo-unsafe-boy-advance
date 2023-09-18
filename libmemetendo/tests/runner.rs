@@ -11,9 +11,12 @@ use libmemetendo::{
 
 thread_local! {
     static BIOS_ROM: bios::Rom = {
-        let buf = fs::read("tests/bios.bin").expect(
-            "failed to read BIOS ROM; place it in a \"bios.bin\" file within the tests directory",
-        );
+        let buf = fs::read("tests/bios.bin").unwrap_or_else(|e| {
+            eprintln!("Failed to load \"tests/bios.bin\": {e}. Trying Cult-of-GBA BIOS...");
+
+            fs::read("tests/Cult-of-GBA-BIOS/bios.bin")
+                .expect("Failed to load Cult-of-GBA BIOS as fallback; did you fetch submodules?")
+        });
         bios::Rom::new(Rc::from(buf)).expect("bad BIOS ROM")
     };
 }
