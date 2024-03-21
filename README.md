@@ -1,7 +1,7 @@
 # Memetendo Unsafe Boy Advance
 
 ![Doom 2 screenshot](media/doom2.png)
-![Pokemon FireRed screenshot](media/pokemon-firered.png)
+![Pokémon FireRed screenshot](media/pokemon-firered.png)
 ![OpenLara screenshot](media/openlara.png)
 
 A [Game Boy Advance](https://en.wikipedia.org/wiki/Game_Boy_Advance) emulator,
@@ -10,8 +10,6 @@ written in Rust. 🦀
 [Try it out in your browser!](https://seandewar.github.io/memetendo-unsafe-boy-advance/)
 
 ## Status
-
-Unfinished; I'll be working on this in my spare time (for fun!) :)
 
 It's able to play most games, and has audio support!  
 [Here's a video of it running DOOM!](https://www.youtube.com/watch?v=mdFqmEEttws)
@@ -33,8 +31,7 @@ as a minimum.
 Just use `cargo build` to build (optionally passing the `--release` argument to
 build with full optimizations), or `cargo run` to build and run.
 
-Instructions for building Web Memetendo can be found
-[here](web-memetendo/README.md).
+Instructions for building Web Memetendo can be found [here](web-memetendo/README.md).
 
 ## Tests
 
@@ -57,12 +54,9 @@ Memetendo Unsafe Boy Advance uses a per-pixel based software renderer, which
 allows for graphical effects that modify video state mid-scanline to work, but
 performs badly in general.
 
-There's room for optimization, but in the future, I'd like to add a per-scanline
-based renderer instead, falling back to the per-pixel based renderer only if
-mid-scanline video state changes are detected.
-
-Maybe I'll also consider adding a hardware-accelerated renderer too at some
-point? Who knows!
+There's room for optimization. Possibly a per-scanline based renderer that falls
+back to a per-pixel based one would be an improvement (or even a hardware-based
+one), but this project currently isn't being actively maintained.
 
 ## What's with the name?
 

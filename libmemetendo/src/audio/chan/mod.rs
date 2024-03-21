@@ -9,14 +9,14 @@ const MAX_VOLUME: u8 = 15;
 #[derive(Debug, Default)]
 pub struct Length<const MAX_COUNTER: u16> {
     channel_enabled: bool,
-    length_enabled: bool,
+    enabled: bool,
     counter: u16,
     initial: u16,
 }
 
 impl<const MAX_COUNTER: u16> Length<MAX_COUNTER> {
     pub fn step(&mut self) {
-        if !self.length_enabled {
+        if !self.enabled {
             return;
         }
 
@@ -34,7 +34,7 @@ impl<const MAX_COUNTER: u16> Length<MAX_COUNTER> {
         match idx {
             0 => self.initial = u16::from(value) % MAX_COUNTER,
             1 => {
-                self.length_enabled = value.bit(6);
+                self.enabled = value.bit(6);
 
                 if value.bit(7) {
                     self.channel_enabled = true;

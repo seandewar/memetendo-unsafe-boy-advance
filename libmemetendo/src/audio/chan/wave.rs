@@ -13,7 +13,7 @@ const WAVE_RAM_BANK_LEN: usize = 16;
 #[derive(Debug, Default)]
 pub struct Wave {
     pub length: Length<256>,
-    wave_ram_banks: [[u8; WAVE_RAM_BANK_LEN]; 2],
+    ram_banks: [[u8; WAVE_RAM_BANK_LEN]; 2],
     two_banks: bool,
     bank_idx: usize,
     bank_initial_idx: usize,
@@ -33,11 +33,11 @@ pub struct WaveRam<'a>(&'a mut Wave);
 //       but is this worth implementing?
 impl Bus for WaveRam<'_> {
     fn read_byte(&mut self, addr: u32) -> u8 {
-        self.0.wave_ram_banks[(self.0.bank_idx + 1) % 2][usize::try_from(addr).unwrap()]
+        self.0.ram_banks[(self.0.bank_idx + 1) % 2][usize::try_from(addr).unwrap()]
     }
 
     fn write_byte(&mut self, addr: u32, value: u8) {
-        self.0.wave_ram_banks[(self.0.bank_idx + 1) % 2][usize::try_from(addr).unwrap()] = value;
+        self.0.ram_banks[(self.0.bank_idx + 1) % 2][usize::try_from(addr).unwrap()] = value;
     }
 }
 
@@ -67,7 +67,7 @@ impl Wave {
         if self.length.channel_enabled && self.play {
             let bit_idx = 4 * (self.sample_idx % 2);
             let sample =
-                self.wave_ram_banks[self.bank_idx][self.sample_idx / 2].bits(bit_idx..bit_idx + 4);
+                self.ram_banks[self.bank_idx][self.sample_idx / 2].bits(bit_idx..bit_idx + 4);
 
             if self.force_75_volume {
                 sample - (sample / 4)

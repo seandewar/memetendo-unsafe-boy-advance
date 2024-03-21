@@ -21,16 +21,16 @@ pub enum Key {
 }
 
 #[derive(Default, Copy, Clone, Debug)]
-struct Control {
-    irq_keys: u16,
-    irq_enabled: bool,
-    irq_all_pressed: bool,
+struct IrqControl {
+    keys: u16,
+    enabled: bool,
+    all_pressed: bool,
 }
 
 #[derive(Default, Copy, Clone, Debug)]
 pub struct Keypad {
     pressed: u16,
-    keycnt: Control,
+    keycnt: IrqControl,
 }
 
 impl Keypad {
@@ -40,14 +40,14 @@ impl Keypad {
     }
 
     pub fn step(&mut self, irq: &mut Irq) {
-        if !self.keycnt.irq_enabled {
+        if !self.keycnt.enabled {
             return;
         }
 
-        let do_irq = if self.keycnt.irq_all_pressed {
-            self.pressed != 0 && self.keycnt.irq_keys & self.pressed == self.pressed
+        let do_irq = if self.keycnt.all_pressed {
+            self.pressed != 0 && self.keycnt.keys & self.pressed == self.pressed
         } else {
-            self.keycnt.irq_keys & self.pressed != 0
+            self.keycnt.keys & self.pressed != 0
         };
         if do_irq {
             irq.request(Interrupt::Keypad);
@@ -66,11 +66,11 @@ impl Bus for Keypad {
             0x130 => (!self.pressed).bits(..8).try_into().unwrap(),
             0x131 => (!self.pressed).bits(8..).try_into().unwrap(),
             // KEYCNT
-            0x132 => self.keycnt.irq_keys.bits(..8).try_into().unwrap(),
-            0x133 => u8::try_from(self.keycnt.irq_keys.bits(8..))
+            0x132 => self.keycnt.keys.bits(..8).try_into().unwrap(),
+            0x133 => u8::try_from(self.keycnt.keys.bits(8..))
                 .unwrap()
-                .with_bit(6, self.keycnt.irq_enabled)
-                .with_bit(7, self.keycnt.irq_all_pressed),
+                .with_bit(6, self.keycnt.enabled)
+                .with_bit(7, self.keycnt.all_pressed),
             _ => panic!("IO register address OOB"),
         }
     }
@@ -78,8 +78,8 @@ impl Bus for Keypad {
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
             // KEYCNT
-            0x132 => self.keycnt.irq_keys.set_bits(..8, value.into()),
-            0x133 => self.keycnt.irq_keys.set_bits(8.., value.into()),
+            0x132 => self.keycnt.keys.set_bits(..8, value.into()),
+            0x133 => self.keycnt.keys.set_bits(8.., value.into()),
             0x130 | 0x131 => {}
             _ => panic!("IO register address OOB"),
         }
