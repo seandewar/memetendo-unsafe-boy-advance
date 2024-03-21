@@ -22,26 +22,30 @@
                   style="background: #0"></canvas>
       </div>
       <div>
-          <p>Select a BIOS and Cartridge ROM file to start!</p>
+          <p id="memetendo-status">Loading...</p>
       </div>
-      <div>
-          <label for="memetendo-bios-file">
-              BIOS:
-              <input id="memetendo-bios-file" type="file" accept=".gba,.bin"/>
-          </label>
-      </div>
-      <div>
-          <label for="memetendo-cart-file">
-              Cartridge:
-              <input id="memetendo-cart-file" type="file" accept=".gba,.bin"/>
-          </label>
-      </div>
-      <div>
-          <label for="memetendo-frame-skip">
-              Max Frame Skip:
-              <input id="memetendo-frame-skip" type="number" min="0"/>
-          </label>
-      </div>
+      <fieldset id="memetendo-options" style="display: inline" disabled>
+          <div>
+              <label for="memetendo-bios-file">
+                  BIOS:
+                  <input id="memetendo-bios-file" type="file"
+                         accept=".gba,.bin"/>
+              </label>
+          </div>
+          <div>
+              <label for="memetendo-cart-file">
+                  Cartridge:
+                  <input id="memetendo-cart-file" type="file"
+                         accept=".gba,.bin"/>
+              </label>
+          </div>
+          <div>
+              <label for="memetendo-frame-skip">
+                  Max Frame Skip:
+                  <input id="memetendo-frame-skip" type="number" min="0"/>
+              </label>
+          </div>
+      </fieldset>
       <div>
           <p>
               Web Memetendo is powered by
@@ -57,10 +61,8 @@
       <div>
           <h2>(QWERTY) Controls:</h2>
           <ul style="list-style-position: inside; padding-left: 0">
-              <li>X = A</li>
-              <li>Z = B</li>
-              <li>A = L</li>
-              <li>S = R</li>
+              <li>X/Z = A/B</li>
+              <li>A/S = L/R</li>
               <li>Arrows = D-Pad</li>
               <li>Shift = Select</li>
               <li>Return = Start</li>

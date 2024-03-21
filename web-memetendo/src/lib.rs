@@ -16,8 +16,8 @@ use libmemetendo::{
 use log::{info, Level};
 use wasm_bindgen::{prelude::*, Clamped, JsCast};
 use web_sys::{
-    CanvasRenderingContext2d, Document, Event, FileReader, HtmlCanvasElement, HtmlInputElement,
-    ImageData, KeyboardEvent, Window,
+    CanvasRenderingContext2d, Document, Event, FileReader, HtmlCanvasElement, HtmlFieldSetElement,
+    HtmlInputElement, HtmlParagraphElement, ImageData, KeyboardEvent, Window,
 };
 
 mod audio;
@@ -303,6 +303,19 @@ async fn memetendo_main() {
             .unchecked_ref()
         })
         .unwrap();
+
+    document
+        .get_element_by_id("memetendo-options")
+        .unwrap()
+        .dyn_into::<HtmlFieldSetElement>()
+        .unwrap()
+        .set_disabled(false);
+    document
+        .get_element_by_id("memetendo-status")
+        .unwrap()
+        .dyn_into::<HtmlParagraphElement>()
+        .unwrap()
+        .set_inner_text("Select a BIOS and Cartridge ROM file to start!");
 }
 
 // TODO: uses event.code(), so we need to have some sort of prompt that shows the actual key if the
