@@ -1,6 +1,6 @@
 #![warn(clippy::pedantic)]
 
-use std::{cell::RefCell, mem::take, panic, rc::Rc};
+use std::{cell::RefCell, fmt::Write, mem::take, panic, rc::Rc};
 
 use anyhow::{Context, Result};
 use audio::Audio;
@@ -97,13 +97,12 @@ impl VideoCallback {
 struct State {
     window: Window,
     document: Document,
-    // TODO: Rc<RefCell<T>> sucks; is there a good way around it?
-    audio: Rc<RefCell<Audio>>,
-    video_cb: Rc<RefCell<VideoCallback>>,
+    status: HtmlParagraphElement,
+    audio: Audio,
+    video_cb: VideoCallback,
     gba: Option<Gba>,
-    updater: Option<Closure<dyn Fn(f64)>>,
+    updater: Option<Closure<dyn FnMut(f64)>>,
     max_frame_skip: u32,
-    next_frame_ms: Option<f64>,
     selected_bios_rom: Option<bios::Rom>,
     selected_cart_rom: Option<cart::Rom>,
 }
@@ -118,15 +117,21 @@ impl State {
             audio
         });
 
+        let document = window.document().unwrap();
+
         Ok(Self {
             window: window.clone(),
-            document: window.document().unwrap(),
-            audio: Rc::new(RefCell::new(audio)),
-            video_cb: Rc::new(RefCell::new(VideoCallback::new(window)?)),
+            document: document.clone(),
+            status: document
+                .get_element_by_id("memetendo-status")
+                .unwrap()
+                .dyn_into::<HtmlParagraphElement>()
+                .unwrap(),
+            audio,
+            video_cb: VideoCallback::new(window)?,
             gba: None,
             updater: None,
             max_frame_skip: 3,
-            next_frame_ms: None,
             selected_bios_rom: None,
             selected_cart_rom: None,
         })
@@ -142,86 +147,96 @@ fn maybe_start_emulation(state: &Rc<RefCell<State>>) -> bool {
         return false;
     };
 
+    borrowed_state.status.set_inner_text("Starting...");
     let backup_type = cart_rom.parse_backup_type();
     info!("starting emulation - using cart backup type: {backup_type:?}");
     borrowed_state.gba = Some(Gba::new(
         bios_rom.clone(),
         Cartridge::new(cart_rom.clone(), backup_type),
     ));
-    borrowed_state.video_cb.borrow().clear();
-    borrowed_state.audio.borrow().resume();
-    borrowed_state.next_frame_ms = None;
+    borrowed_state.video_cb.clear();
+    borrowed_state.audio.resume();
+
+    let schedule_update = |state: &mut State| {
+        state
+            .window
+            .request_animation_frame(state.updater.as_ref().unwrap().as_ref().unchecked_ref())
+            .unwrap();
+    };
 
     if borrowed_state.updater.is_none() {
         borrowed_state.updater = Some({
             let state = Rc::clone(state);
-            let video_cb = Rc::clone(&borrowed_state.video_cb);
-            let audio = Rc::clone(&borrowed_state.audio);
+            let mut next_frame_ms: Option<f64> = None;
+            let mut next_second_ms: Option<f64> = None;
+            let (mut frame_counter, mut unskipped_frame_counter) = (0u32, 0u32);
+            let mut status_text_buf = String::new();
 
             Closure::new(move |ms: f64| {
                 const FRAME_DURATION_MS: f64 = 1000.0 / 59.737;
 
                 let mut borrowed_state = state.borrow_mut();
-                let mut next_frame_ms = borrowed_state.next_frame_ms.unwrap_or(ms);
 
-                if ms >= next_frame_ms {
-                    let max_frame_skip = borrowed_state.max_frame_skip;
+                if let Some(ref mut next_second_ms) = next_second_ms {
+                    if ms >= *next_second_ms {
+                        status_text_buf.clear();
+                        write!(&mut status_text_buf, "FPS: {unskipped_frame_counter}").unwrap();
+                        if frame_counter != unskipped_frame_counter {
+                            write!(&mut status_text_buf, " ({frame_counter})").unwrap();
+                        }
 
-                    let Some(ref mut gba) = borrowed_state.gba else {
+                        borrowed_state.status.set_inner_text(&status_text_buf);
+                        *next_second_ms = ms + 1000.0;
+                        (frame_counter, unskipped_frame_counter) = (0, 0);
+                    }
+                } else {
+                    next_second_ms = Some(ms + 1000.0);
+                }
+
+                let mut next_ms = next_frame_ms.unwrap_or(ms);
+                if ms >= next_ms {
+                    let State {
+                        gba: Some(ref mut gba),
+                        ref mut video_cb,
+                        ref mut audio,
+                        max_frame_skip,
+                        ..
+                    } = *borrowed_state
+                    else {
                         borrowed_state.updater = None;
                         return;
                     };
-                    let mut video_cb = video_cb.borrow_mut();
-                    let mut audio = audio.borrow_mut();
 
                     let mut skipped_frames = 0;
-                    loop {
+                    next_frame_ms = loop {
                         video_cb.frame_skipping = skipped_frames > 0;
                         while !take(&mut video_cb.new_frame) {
-                            gba.step(&mut *video_cb, &mut *audio);
+                            gba.step(video_cb, audio);
                         }
                         audio.queue_samples();
 
-                        next_frame_ms += FRAME_DURATION_MS;
-                        if next_frame_ms > ms {
-                            borrowed_state.next_frame_ms = Some(next_frame_ms);
-                            break;
+                        if skipped_frames == 0 {
+                            unskipped_frame_counter += 1;
                         }
+                        frame_counter += 1;
 
+                        next_ms += FRAME_DURATION_MS;
+                        if next_ms > ms {
+                            break Some(next_ms);
+                        }
                         if skipped_frames >= max_frame_skip {
                             // Too far behind; reschedule for the next frame.
-                            borrowed_state.next_frame_ms = None;
-                            break;
+                            break None;
                         }
                         skipped_frames += 1;
-                    }
+                    };
                 }
 
-                borrowed_state
-                    .window
-                    .request_animation_frame(
-                        borrowed_state
-                            .updater
-                            .as_ref()
-                            .unwrap()
-                            .as_ref()
-                            .unchecked_ref(),
-                    )
-                    .unwrap();
+                schedule_update(&mut borrowed_state);
             })
         });
 
-        borrowed_state
-            .window
-            .request_animation_frame(
-                borrowed_state
-                    .updater
-                    .as_ref()
-                    .unwrap()
-                    .as_ref()
-                    .unchecked_ref(),
-            )
-            .unwrap();
+        schedule_update(&mut borrowed_state);
     }
 
     true
@@ -310,11 +325,9 @@ async fn memetendo_main() {
         .dyn_into::<HtmlFieldSetElement>()
         .unwrap()
         .set_disabled(false);
-    document
-        .get_element_by_id("memetendo-status")
-        .unwrap()
-        .dyn_into::<HtmlParagraphElement>()
-        .unwrap()
+    state
+        .borrow_mut()
+        .status
         .set_inner_text("Select a BIOS and Cartridge ROM file to start!");
 }
 
