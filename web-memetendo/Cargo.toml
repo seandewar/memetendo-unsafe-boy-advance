@@ -28,6 +28,7 @@ features = [
             "AudioWorkletNode",
             "AudioWorkletNodeOptions",
             "Blob",
+            "BlobPropertyBag",
             "CanvasRenderingContext2d",
             "Document",
             "DomException",
@@ -36,6 +37,8 @@ features = [
             "File",
             "FileList",
             "FileReader",
+            "HtmlAnchorElement",
+            "HtmlButtonElement",
             "HtmlCanvasElement",
             "HtmlFieldSetElement",
             "HtmlInputElement",
@@ -43,5 +46,6 @@ features = [
             "ImageData",
             "KeyboardEvent",
             "MessagePort",
+            "Url",
             "Window",
 ]

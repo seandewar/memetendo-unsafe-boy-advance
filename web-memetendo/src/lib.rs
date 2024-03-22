@@ -4,10 +4,10 @@ use std::{cell::RefCell, fmt::Write, mem::take, panic, rc::Rc};
 
 use anyhow::{Context, Result};
 use audio::Audio;
-use js_sys::{Reflect, Uint8Array};
+use js_sys::{Array, Reflect, Uint8Array};
 use libmemetendo::{
     bios,
-    cart::{self, Cartridge},
+    cart::{self, BackupType, Cartridge},
     gba::Gba,
     keypad::Key,
     util::video::FrameBuffer,
@@ -16,8 +16,9 @@ use libmemetendo::{
 use log::{info, Level};
 use wasm_bindgen::{prelude::*, Clamped, JsCast};
 use web_sys::{
-    CanvasRenderingContext2d, Document, Event, FileReader, HtmlCanvasElement, HtmlFieldSetElement,
-    HtmlInputElement, HtmlParagraphElement, ImageData, KeyboardEvent, Window,
+    Blob, BlobPropertyBag, CanvasRenderingContext2d, Document, Event, FileReader,
+    HtmlAnchorElement, HtmlButtonElement, HtmlCanvasElement, HtmlFieldSetElement, HtmlInputElement,
+    HtmlParagraphElement, ImageData, KeyboardEvent, Url, Window,
 };
 
 mod audio;
@@ -98,6 +99,8 @@ struct State {
     window: Window,
     document: Document,
     status: HtmlParagraphElement,
+    backup_fields: HtmlFieldSetElement,
+    import_backup_field: HtmlInputElement,
     audio: Audio,
     video_cb: VideoCallback,
     gba: Option<Gba>,
@@ -127,6 +130,16 @@ impl State {
                 .unwrap()
                 .dyn_into::<HtmlParagraphElement>()
                 .unwrap(),
+            backup_fields: document
+                .get_element_by_id("memetendo-backups")
+                .unwrap()
+                .dyn_into::<HtmlFieldSetElement>()
+                .unwrap(),
+            import_backup_field: document
+                .get_element_by_id("memetendo-import-backup")
+                .unwrap()
+                .dyn_into::<HtmlInputElement>()
+                .unwrap(),
             audio,
             video_cb: VideoCallback::new(window)?,
             gba: None,
@@ -138,7 +151,7 @@ impl State {
     }
 }
 
-fn maybe_start_emulation(state: &Rc<RefCell<State>>) -> bool {
+fn maybe_start_emulation(state: &Rc<RefCell<State>>, cart_backup_buf: Option<Box<[u8]>>) -> bool {
     let mut borrowed_state = state.borrow_mut();
     let Some(ref bios_rom) = borrowed_state.selected_bios_rom else {
         return false;
@@ -147,15 +160,43 @@ fn maybe_start_emulation(state: &Rc<RefCell<State>>) -> bool {
         return false;
     };
 
+    let cart = if let Some(cart_backup_buf) = cart_backup_buf {
+        let len = cart_backup_buf.len();
+        let Some(cart) = Cartridge::try_from_backup(cart_rom, Some(cart_backup_buf)) else {
+            alert(
+                &borrowed_state.window,
+                format!("Failed to determine cartridge backup type from save file! (len: {len} B)"),
+            );
+            return false;
+        };
+        borrowed_state.backup_fields.set_hidden(false);
+
+        cart
+    } else {
+        let backup_type = cart_rom.parse_backup_type();
+        info!("parsed cart backup type: {backup_type:?}");
+        borrowed_state
+            .backup_fields
+            .set_hidden(backup_type == BackupType::None);
+        borrowed_state.import_backup_field.set_value("");
+
+        Cartridge::new(cart_rom.clone(), backup_type)
+    };
+
     borrowed_state.status.set_inner_text("Starting...");
-    let backup_type = cart_rom.parse_backup_type();
-    info!("starting emulation - using cart backup type: {backup_type:?}");
-    borrowed_state.gba = Some(Gba::new(
-        bios_rom.clone(),
-        Cartridge::new(cart_rom.clone(), backup_type),
-    ));
+    borrowed_state.gba = Some(Gba::new(bios_rom.clone(), cart));
     borrowed_state.video_cb.clear();
     borrowed_state.audio.resume();
+    drop(borrowed_state);
+
+    init_emulation_updater(state);
+    true
+}
+
+fn init_emulation_updater(state: &Rc<RefCell<State>>) {
+    if state.borrow().updater.is_some() {
+        return;
+    }
 
     let schedule_update = |state: &mut State| {
         state
@@ -164,82 +205,79 @@ fn maybe_start_emulation(state: &Rc<RefCell<State>>) -> bool {
             .unwrap();
     };
 
-    if borrowed_state.updater.is_none() {
-        borrowed_state.updater = Some({
-            let state = Rc::clone(state);
-            let mut next_frame_ms: Option<f64> = None;
-            let mut next_second_ms: Option<f64> = None;
-            let (mut frame_counter, mut unskipped_frame_counter) = (0u32, 0u32);
-            let mut status_text_buf = String::new();
+    let mut borrowed_state = state.borrow_mut();
+    {
+        let state = Rc::clone(state);
+        let mut next_frame_ms: Option<f64> = None;
+        let mut next_second_ms: Option<f64> = None;
+        let (mut frame_counter, mut unskipped_frame_counter) = (0u32, 0u32);
+        let mut status_text_buf = String::new();
 
-            Closure::new(move |ms: f64| {
-                const FRAME_DURATION_MS: f64 = 1000.0 / 59.737;
+        borrowed_state.updater = Some(Closure::new(move |ms: f64| {
+            const FRAME_DURATION_MS: f64 = 1000.0 / 59.737;
 
-                let mut borrowed_state = state.borrow_mut();
+            let mut borrowed_state = state.borrow_mut();
 
-                if let Some(ref mut next_second_ms) = next_second_ms {
-                    if ms >= *next_second_ms {
-                        status_text_buf.clear();
-                        write!(&mut status_text_buf, "FPS: {unskipped_frame_counter}").unwrap();
-                        if frame_counter != unskipped_frame_counter {
-                            write!(&mut status_text_buf, " ({frame_counter})").unwrap();
-                        }
-
-                        borrowed_state.status.set_inner_text(&status_text_buf);
-                        *next_second_ms = ms + 1000.0;
-                        (frame_counter, unskipped_frame_counter) = (0, 0);
+            if let Some(ref mut next_second_ms) = next_second_ms {
+                if ms >= *next_second_ms {
+                    status_text_buf.clear();
+                    write!(&mut status_text_buf, "FPS: {unskipped_frame_counter}").unwrap();
+                    if frame_counter != unskipped_frame_counter {
+                        write!(&mut status_text_buf, " ({frame_counter})").unwrap();
                     }
-                } else {
-                    next_second_ms = Some(ms + 1000.0);
+
+                    borrowed_state.status.set_inner_text(&status_text_buf);
+                    *next_second_ms = ms + 1000.0;
+                    (frame_counter, unskipped_frame_counter) = (0, 0);
                 }
+            } else {
+                next_second_ms = Some(ms + 1000.0);
+            }
 
-                let mut next_ms = next_frame_ms.unwrap_or(ms);
-                if ms >= next_ms {
-                    let State {
-                        gba: Some(ref mut gba),
-                        ref mut video_cb,
-                        ref mut audio,
-                        max_frame_skip,
-                        ..
-                    } = *borrowed_state
-                    else {
-                        borrowed_state.updater = None;
-                        return;
-                    };
+            let mut next_ms = next_frame_ms.unwrap_or(ms);
+            if ms >= next_ms {
+                let State {
+                    gba: Some(ref mut gba),
+                    ref mut video_cb,
+                    ref mut audio,
+                    max_frame_skip,
+                    ..
+                } = *borrowed_state
+                else {
+                    borrowed_state.updater = None;
+                    return;
+                };
 
-                    let mut skipped_frames = 0;
-                    next_frame_ms = loop {
-                        video_cb.frame_skipping = skipped_frames > 0;
-                        while !take(&mut video_cb.new_frame) {
-                            gba.step(video_cb, audio);
-                        }
-                        audio.queue_samples();
+                let mut skipped_frames = 0;
+                next_frame_ms = loop {
+                    video_cb.frame_skipping = skipped_frames > 0;
+                    while !take(&mut video_cb.new_frame) {
+                        gba.step(video_cb, audio);
+                    }
+                    audio.queue_samples();
 
-                        if skipped_frames == 0 {
-                            unskipped_frame_counter += 1;
-                        }
-                        frame_counter += 1;
+                    if skipped_frames == 0 {
+                        unskipped_frame_counter += 1;
+                    }
+                    frame_counter += 1;
 
-                        next_ms += FRAME_DURATION_MS;
-                        if next_ms > ms {
-                            break Some(next_ms);
-                        }
-                        if skipped_frames >= max_frame_skip {
-                            // Too far behind; reschedule for the next frame.
-                            break None;
-                        }
-                        skipped_frames += 1;
-                    };
-                }
+                    next_ms += FRAME_DURATION_MS;
+                    if next_ms > ms {
+                        break Some(next_ms);
+                    }
+                    if skipped_frames >= max_frame_skip {
+                        // Too far behind; reschedule for the next frame.
+                        break None;
+                    }
+                    skipped_frames += 1;
+                };
+            }
 
-                schedule_update(&mut borrowed_state);
-            })
-        });
-
-        schedule_update(&mut borrowed_state);
+            schedule_update(&mut borrowed_state);
+        }));
     }
 
-    true
+    schedule_update(&mut borrowed_state);
 }
 
 fn alert(window: &Window, message: impl AsRef<str>) {
@@ -264,7 +302,7 @@ async fn memetendo_main() {
                 return;
             };
             state.borrow_mut().selected_bios_rom = Some(rom);
-            maybe_start_emulation(&state);
+            maybe_start_emulation(&state, None);
         }
     });
     init_file_input(&state.borrow(), "memetendo-cart-file", {
@@ -275,9 +313,16 @@ async fn memetendo_main() {
                 return;
             };
             state.borrow_mut().selected_cart_rom = Some(rom);
-            maybe_start_emulation(&state);
+            maybe_start_emulation(&state, None);
         }
     });
+    init_file_input(&state.borrow(), "memetendo-import-backup", {
+        let state = Rc::clone(&state);
+        move |backup_buf: Vec<u8>| {
+            maybe_start_emulation(&state, Some(backup_buf.into_boxed_slice()));
+        }
+    });
+    init_export_backup_button(&state);
 
     let document = window.document().unwrap();
     document
@@ -412,6 +457,52 @@ fn init_file_input(state: &State, id: &str, mut callback: impl FnMut(Vec<u8>) + 
                 }
                 let file = files.item(0).unwrap();
                 reader.read_as_array_buffer(&file).unwrap();
+            })
+            .into_js_value()
+            .unchecked_ref()
+        })
+        .unwrap();
+}
+
+fn init_export_backup_button(state: &Rc<RefCell<State>>) {
+    state
+        .borrow()
+        .document
+        .get_element_by_id("memetendo-export-backup")
+        .unwrap()
+        .dyn_into::<HtmlButtonElement>()
+        .unwrap()
+        .add_event_listener_with_callback("click", {
+            let state = Rc::clone(state);
+            Closure::<dyn Fn()>::new(move || {
+                let borrowed_state = state.borrow();
+                let Some(backup_buf) = borrowed_state.gba.as_ref().unwrap().cart.backup_buffer()
+                else {
+                    // Possible if backup type is EEPROM and its size is currently unknown.
+                    alert(
+                        &borrowed_state.window,
+                        "There is currently no data to save.",
+                    );
+                    return;
+                };
+
+                let blob = Blob::new_with_u8_array_sequence_and_options(
+                    &Array::of1(&Uint8Array::from(backup_buf).into()),
+                    BlobPropertyBag::new().type_("application/octet-stream"),
+                )
+                .unwrap();
+                let url = Url::create_object_url_with_blob(&blob).unwrap();
+
+                let link = borrowed_state
+                    .document
+                    .create_element("a")
+                    .unwrap()
+                    .dyn_into::<HtmlAnchorElement>()
+                    .unwrap();
+                link.set_href(&url);
+                link.set_download("memetendo_save_data.sav");
+                link.click();
+                Url::revoke_object_url(&url).unwrap();
             })
             .into_js_value()
             .unchecked_ref()

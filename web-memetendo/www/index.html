@@ -45,13 +45,26 @@
                   <input id="memetendo-frame-skip" type="number" min="0"/>
               </label>
           </div>
+          <div>
+              <fieldset id="memetendo-backups"
+                        style="border: none; padding: 1em 0 0 0"
+                        hidden>
+                  <label for="memetendo-import-backup">
+                      Import Save Data:
+                      <input id="memetendo-import-backup" type="file"
+                                                          accept=".sav"/>
+                  </label>
+                  <br/>
+                  <button id="memetendo-export-backup" type="button">
+                      Export Save Data
+                  </button>
+              </fieldset>
+          </div>
       </fieldset>
       <div>
           <p>
               Web Memetendo is powered by
               <a href="https://webassembly.org/" target="_blank">Wasm</a>.
-              <br/>
-              Unlike the SDL version, saved game data is not persisted.
               <br/>
               GitHub:
               <a href="https://github.com/seandewar/memetendo-unsafe-boy-advance"
@@ -63,9 +76,8 @@
           <ul style="list-style-position: inside; padding-left: 0">
               <li>X/Z = A/B</li>
               <li>A/S = L/R</li>
+              <li>Shift/Return = Select/Start</li>
               <li>Arrows = D-Pad</li>
-              <li>Shift = Select</li>
-              <li>Return = Start</li>
           </ul>
       </div>
   </body>
