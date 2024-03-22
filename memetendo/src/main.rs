@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 
 use std::{
+    fmt::Write,
     fs, io,
     mem::take,
     path::Path,
@@ -310,7 +311,30 @@ fn main_loop(
     const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
     let mut next_redraw_time = Instant::now() + FRAME_DURATION;
+    let mut next_second_time = Instant::now() + Duration::from_secs(1);
+    let (mut frame_counter, mut unskipped_frame_counter) = (0u32, 0u32);
+    let mut title_text_buf = String::new();
+
     'main_loop: loop {
+        {
+            let now = Instant::now();
+            if now >= next_second_time {
+                title_text_buf.clear();
+                write!(
+                    &mut title_text_buf,
+                    "Memetendo Unsafe Boy Advance | FPS: {unskipped_frame_counter}"
+                )
+                .unwrap();
+                if frame_counter != unskipped_frame_counter {
+                    write!(&mut title_text_buf, " ({frame_counter})").unwrap();
+                }
+
+                win_canvas.window_mut().set_title(&title_text_buf).unwrap();
+                next_second_time = now + Duration::from_secs(1);
+                (frame_counter, unskipped_frame_counter) = (0, 0);
+            }
+        }
+
         let mut skipped_frames = 0;
         loop {
             video_cb.frame_skipping = skipped_frames > 0;
@@ -320,6 +344,11 @@ fn main_loop(
             if let Err(e) = audio.queue_samples() {
                 warn!("failed to queue audio samples: {e}");
             }
+
+            if skipped_frames == 0 {
+                unskipped_frame_counter += 1;
+            }
+            frame_counter += 1;
 
             let rem_time = next_redraw_time - Instant::now();
             next_redraw_time += FRAME_DURATION;
