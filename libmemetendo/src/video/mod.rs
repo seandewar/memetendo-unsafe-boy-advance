@@ -2,6 +2,8 @@ mod bg;
 mod obj;
 mod reg;
 
+use std::iter;
+
 use intbits::Bits;
 use tinyvec::{array_vec, ArrayVec};
 
@@ -278,21 +280,22 @@ impl Video {
 
         // TODO: mosaics
         let top_win = self.find_top_window();
-        let top_infos = self.compute_top_dots(top_win);
-        let top_dot = self.read_dot(top_infos[0]);
+        let mut top_iter = self.compute_top_dots_iter(top_win).peekable();
+        let top_info = top_iter.next().unwrap();
+        let top_dot = self.read_dot(top_info);
 
         let obj_alpha_mode = matches!(
-            top_infos[0],
+            top_info,
             DotInfo::Object(obj::DotInfo {
                 mode: obj::Mode::AlphaBlend,
                 ..
             })
         );
-        let is_target = |top_dot_idx: usize| {
-            let targeted = match top_infos[top_dot_idx] {
-                DotInfo::Object(_) => self.bldcnt.obj_target[top_dot_idx] || obj_alpha_mode,
-                DotInfo::Background(bg) => self.bldcnt.bg_target[top_dot_idx][bg.index()],
-                DotInfo::Backdrop => self.bldcnt.backdrop_target[top_dot_idx],
+        let is_target = |info: &DotInfo, dot_idx: usize| {
+            let targeted = match info {
+                DotInfo::Object(_) => self.bldcnt.obj_target[dot_idx] || obj_alpha_mode,
+                DotInfo::Background(bg) => self.bldcnt.bg_target[dot_idx][bg.index()],
+                DotInfo::Backdrop => self.bldcnt.backdrop_target[dot_idx],
             };
             let win_blendfx = self
                 .window_control(top_win)
@@ -302,9 +305,11 @@ impl Video {
         };
 
         match self.bldcnt.mode {
-            _ if !is_target(0) => top_dot,
-            mode if is_target(1) && (mode == BlendMode::Alpha || obj_alpha_mode) => {
-                let bot_dot = self.read_dot(top_infos[1]);
+            _ if !is_target(&top_info, 0) => top_dot,
+            mode if (mode == BlendMode::Alpha || obj_alpha_mode)
+                && is_target(top_iter.peek().unwrap(), 1) =>
+            {
+                let bot_dot = self.read_dot(top_iter.next().unwrap());
                 self.alpha_blend_dots(top_dot, bot_dot)
             }
             BlendMode::Brighten => self.adjust_dot_brightness(false, top_dot),
@@ -313,8 +318,8 @@ impl Video {
         }
     }
 
-    fn read_dot(&mut self, info: DotInfo) -> Dot {
-        let mut palette_ram = |offset| Dot::from(self.palette_ram.read_hword(offset));
+    fn read_dot(&self, info: DotInfo) -> Dot {
+        let palette_ram = |offset| Dot::from(self.palette_ram.0.as_ref().read_hword(offset));
         let vram = |offset| Dot::from(self.vram.as_ref().read_hword(offset));
 
         match info {
@@ -331,50 +336,35 @@ impl Video {
         }
     }
 
-    fn compute_top_dots(&mut self, top_win: Window) -> [DotInfo; 2] {
+    fn compute_top_dots_iter(&self, top_win: Window) -> impl Iterator<Item = DotInfo> + '_ {
         let mut obj_info = self.compute_top_obj_dot(top_win);
+        let mut bg_tile_mode_iter = self.compute_bg_tile_mode_dot_iter(top_win).peekable();
 
-        match self.dispcnt.mode() {
-            BackgroundMode::Tile => {
-                let mut infos = [DotInfo::Backdrop; 2];
-                let mut bg_iter = self.compute_bg_tile_mode_dot_iter(top_win).peekable();
-
-                while let DotInfo::Backdrop = infos[1] {
-                    let top = match (obj_info, bg_iter.peek()) {
-                        (Some(obj), Some(bg))
-                            if obj.priority <= self.bgcnt[bg.index()].priority =>
-                        {
-                            DotInfo::Object(obj_info.take().unwrap())
-                        }
-                        (_, Some(_)) => DotInfo::Background(bg_iter.next().unwrap()),
-                        (Some(_), None) => DotInfo::Object(obj_info.take().unwrap()),
-                        (None, None) => break,
-                    };
-
-                    if let DotInfo::Backdrop = infos[0] {
-                        infos[0] = top;
-                    } else {
-                        infos[1] = top;
-                    }
+        iter::from_fn(move || match self.dispcnt.mode() {
+            BackgroundMode::Tile => match (obj_info, bg_tile_mode_iter.peek()) {
+                (Some(obj), Some(bg)) if obj.priority <= self.bgcnt[bg.index()].priority => {
+                    Some(DotInfo::Object(obj_info.take().unwrap()))
                 }
+                (_, Some(_)) => Some(DotInfo::Background(bg_tile_mode_iter.next().unwrap())),
+                (Some(_), None) => Some(DotInfo::Object(obj_info.take().unwrap())),
+                (None, None) => Some(DotInfo::Backdrop),
+            },
 
-                infos
-            }
             BackgroundMode::Bitmap => {
-                let bg_info = self.compute_bg_bitmap_mode_dot(top_win);
+                let mut bg_info = self.compute_bg_bitmap_mode_dot(top_win);
 
                 match (obj_info, bg_info) {
                     (Some(obj), Some(bg)) if obj.priority <= self.bgcnt[bg.index()].priority => {
-                        [DotInfo::Object(obj), DotInfo::Background(bg)]
+                        Some(DotInfo::Object(obj_info.take().unwrap()))
                     }
-                    (Some(obj), Some(bg)) => [DotInfo::Background(bg), DotInfo::Object(obj)],
-                    (Some(obj), None) => [DotInfo::Object(obj), DotInfo::Backdrop],
-                    (None, Some(bg)) => [DotInfo::Background(bg), DotInfo::Backdrop],
-                    (None, None) => [DotInfo::Backdrop; 2],
+                    (_, Some(_)) => Some(DotInfo::Background(bg_info.take().unwrap())),
+                    (Some(_), None) => Some(DotInfo::Object(obj_info.take().unwrap())),
+                    (None, None) => Some(DotInfo::Backdrop),
                 }
             }
-            BackgroundMode::Invalid => [DotInfo::Backdrop; 2],
-        }
+
+            BackgroundMode::Invalid => Some(DotInfo::Backdrop),
+        })
     }
 
     fn alpha_blend_dots(&self, top: Dot, bot: Dot) -> Dot {
