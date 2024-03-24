@@ -205,7 +205,7 @@ impl Audio {
                 .zip(out_channels.iter().zip(self.fifo_full_volume.iter()))
                 .filter(|(_, (&out, _))| out)
                 .map(|(&sample, (_, &full_volume))| {
-                    (if full_volume { 4 } else { 2 }) * i16::from(sample)
+                    i16::from(sample) << (if full_volume { 2 } else { 1 })
                 })
                 .sum()
         };

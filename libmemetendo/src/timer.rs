@@ -56,13 +56,13 @@ impl Timers {
                 } else {
                     const MAX_DIV: u32 = 1024;
 
-                    let div = match timer.prescalar_select {
-                        PrescalarSelect::Div1 => 1,
-                        PrescalarSelect::Div64 => 64,
-                        PrescalarSelect::Div256 => 256,
-                        PrescalarSelect::Div1024 => MAX_DIV,
+                    let shift = match timer.prescalar_select {
+                        PrescalarSelect::Div1 => 10,
+                        PrescalarSelect::Div64 => 4,
+                        PrescalarSelect::Div256 => 2,
+                        PrescalarSelect::Div1024 => 0,
                     };
-                    timer.accum += u32::from(cycles) * MAX_DIV / div;
+                    timer.accum += u32::from(cycles) << shift;
                     if timer.accum < MAX_DIV {
                         continue;
                     }
