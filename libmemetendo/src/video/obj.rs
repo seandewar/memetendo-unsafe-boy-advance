@@ -3,87 +3,178 @@ use strum_macros::FromRepr;
 use tinyvec::ArrayVec;
 
 use crate::{
-    arbitrary_sign_extend,
     bus::Bus,
     video::{HBLANK_DOT, VBLANK_DOT},
 };
 
+use self::attrs::{AffineAttribute, Attributes};
+
 use super::{DotPaletteInfo, Video, Window, TILE_DOT_LEN};
 
-#[derive(Debug, Copy, Clone)]
-enum AffineAttribute {
-    Enabled { double_size: bool, params_idx: u8 },
-    Disabled { hidden: bool, flip: (bool, bool) },
-}
+mod attrs {
+    use intbits::Bits;
+    use strum_macros::FromRepr;
 
-impl Default for AffineAttribute {
-    fn default() -> Self {
-        Self::Disabled {
-            hidden: false,
-            flip: (false, false),
+    use crate::{
+        arbitrary_sign_extend,
+        video::{TILE_DOT_LEN, VBLANK_DOT},
+    };
+
+    use super::Mode;
+
+    #[derive(Debug, Copy, Clone)]
+    pub struct Attributes {
+        pos: (i16, i16),
+        affine: AffineAttribute,
+        mode: Option<Mode>,
+        _mosaic: bool, // TODO
+        shape: Shape,
+        size: u8,
+        dots_base_idx: u16,
+        priority: u8,
+        palette_idx: Option<u16>,
+
+        cached_tiles_size: (u8, u8),
+        cached_clip_dots_size: (u8, u8),
+    }
+
+    impl Default for Attributes {
+        fn default() -> Self {
+            Self::from(&[0; 3])
         }
     }
-}
 
-#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, FromRepr)]
-#[repr(u8)]
-enum Shape {
-    #[default]
-    Square,
-    RectangleHorizontal,
-    RectangleVertical,
-    Invalid,
-}
+    impl From<&[u16; 3]> for Attributes {
+        fn from(attrs: &[u16; 3]) -> Self {
+            let affine = if attrs[0].bit(8) {
+                AffineAttribute::Enabled {
+                    double_size: attrs[0].bit(9),
+                    params_idx: attrs[1].bits(9..14).try_into().unwrap(),
+                }
+            } else {
+                AffineAttribute::Disabled {
+                    hidden: attrs[0].bit(9),
+                    flip: (attrs[1].bit(12), attrs[1].bit(13)),
+                }
+            };
+            let color256 = attrs[0].bit(13);
+            let palette_idx = (!color256).then_some(attrs[2].bits(12..));
 
-#[derive(Debug, Default, Copy, Clone)]
-struct Attributes {
-    pos: (i16, i16),
-    affine: AffineAttribute,
-    mode: Option<Mode>,
-    _mosaic: bool, // TODO
-    shape: Shape,
-    size: u8,
-    dots_base_idx: u16,
-    priority: u8,
-    palette_idx: Option<u16>,
-}
-
-impl Attributes {
-    fn tiles_size(&self) -> (u8, u8) {
-        let tile_sizes = match self.shape {
-            Shape::Square => [(1, 1), (2, 2), (4, 4), (8, 8)],
-            Shape::RectangleHorizontal => [(2, 1), (4, 1), (4, 2), (8, 4)],
-            Shape::RectangleVertical => [(1, 2), (1, 4), (2, 4), (4, 8)],
-            Shape::Invalid => return (0, 0),
-        };
-
-        tile_sizes[usize::from(self.size)]
-    }
-
-    fn is_enabled(&self) -> bool {
-        !matches!(self.affine, AffineAttribute::Disabled { hidden: true, .. })
-            && self.mode.is_some()
-            && self.tiles_size() != (0, 0)
-    }
-
-    fn is_double_size(&self) -> bool {
-        matches!(
-            self.affine,
-            AffineAttribute::Enabled {
-                double_size: true,
-                ..
+            let mut y = i16::try_from(attrs[0].bits(..8)).unwrap();
+            #[allow(clippy::cast_possible_truncation)]
+            if y >= VBLANK_DOT.into() {
+                y = i16::from(y as i8);
             }
-        )
+
+            let shape = Shape::from_repr(attrs[0].bits(14..).try_into().unwrap()).unwrap();
+            let size = u8::try_from(attrs[1].bits(14..)).unwrap();
+            let tiles_size @ (tiles_width, tiles_height) = {
+                let tile_sizes = match shape {
+                    Shape::Square => [(1, 1), (2, 2), (4, 4), (8, 8)],
+                    Shape::RectangleHorizontal => [(2, 1), (4, 1), (4, 2), (8, 4)],
+                    Shape::RectangleVertical => [(1, 2), (1, 4), (2, 4), (4, 8)],
+                    Shape::Invalid => [(0, 0); 4],
+                };
+
+                tile_sizes[usize::from(size)]
+            };
+
+            let size_mul = if affine.is_double_size() { 2 } else { 1 };
+            let clip_dots_size = (
+                tiles_width * TILE_DOT_LEN * size_mul,
+                tiles_height * TILE_DOT_LEN * size_mul,
+            );
+
+            Self {
+                pos: (arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9), y),
+                affine,
+                mode: Mode::from_repr(attrs[0].bits(10..12).into()),
+                _mosaic: attrs[0].bit(12),
+                shape,
+                size,
+                dots_base_idx: attrs[2].bits(..10),
+                priority: attrs[2].bits(10..12).try_into().unwrap(),
+                palette_idx,
+
+                cached_tiles_size: tiles_size,
+                cached_clip_dots_size: clip_dots_size,
+            }
+        }
     }
 
-    fn clip_dots_size(&self) -> (u8, u8) {
-        let (width, height) = self.tiles_size();
-        let size_mul = if self.is_double_size() { 2 } else { 1 };
+    impl Attributes {
+        pub fn is_enabled(&self) -> bool {
+            !matches!(self.affine, AffineAttribute::Disabled { hidden: true, .. })
+                && self.mode.is_some()
+                && self.tiles_size() != (0, 0)
+        }
 
-        (
-            width * TILE_DOT_LEN * size_mul,
-            height * TILE_DOT_LEN * size_mul,
-        )
+        pub fn tiles_size(&self) -> (u8, u8) {
+            self.cached_tiles_size
+        }
+
+        pub fn clip_dots_size(&self) -> (u8, u8) {
+            self.cached_clip_dots_size
+        }
+
+        pub fn pos(&self) -> (i16, i16) {
+            self.pos
+        }
+
+        pub fn priority(&self) -> u8 {
+            self.priority
+        }
+
+        pub fn affine(&self) -> AffineAttribute {
+            self.affine
+        }
+
+        pub fn shape(&self) -> Shape {
+            self.shape
+        }
+
+        pub fn mode(&self) -> Option<Mode> {
+            self.mode
+        }
+
+        pub fn palette_idx(&self) -> Option<u16> {
+            self.palette_idx
+        }
+
+        pub fn dots_base_idx(&self) -> u16 {
+            self.dots_base_idx
+        }
+
+        pub fn size(&self) -> u8 {
+            self.size
+        }
+    }
+
+    #[derive(Debug, Copy, Clone)]
+    pub enum AffineAttribute {
+        Enabled { double_size: bool, params_idx: u8 },
+        Disabled { hidden: bool, flip: (bool, bool) },
+    }
+
+    impl AffineAttribute {
+        pub fn is_double_size(self) -> bool {
+            matches!(
+                self,
+                Self::Enabled {
+                    double_size: true,
+                    ..
+                }
+            )
+        }
+    }
+
+    #[derive(Debug, Copy, Clone, Eq, PartialEq, FromRepr)]
+    #[repr(u8)]
+    pub enum Shape {
+        Square,
+        RectangleHorizontal,
+        RectangleVertical,
+        Invalid,
     }
 }
 
@@ -134,7 +225,7 @@ impl Oam {
             }
 
             let (clip_width, clip_height) = attrs.clip_dots_size();
-            let (start_x, start_y) = attrs.pos;
+            let (start_x, start_y) = attrs.pos();
             let (end_x, end_y) = (
                 start_x + i16::from(clip_width) - 1,
                 start_y + i16::from(clip_height) - 1,
@@ -158,8 +249,8 @@ impl Oam {
 
             let cmp = |&i: &u8| {
                 self.attrs[usize::from(i)]
-                    .priority
-                    .cmp(&attrs.priority)
+                    .priority()
+                    .cmp(&attrs.priority())
                     .then_with(|| i.cmp(&idx))
             };
 
@@ -185,11 +276,11 @@ impl Oam {
         let new_attrs = self.read_attributes(idx);
         let old_attrs = &self.attrs[usize::from(idx)];
         let regions_maybe_stale = old_attrs.is_enabled() != new_attrs.is_enabled()
-            || old_attrs.is_double_size() != new_attrs.is_double_size()
-            || old_attrs.pos != new_attrs.pos
-            || old_attrs.shape != new_attrs.shape
-            || old_attrs.size != new_attrs.size
-            || old_attrs.priority != new_attrs.priority;
+            || old_attrs.affine().is_double_size() != new_attrs.affine().is_double_size()
+            || old_attrs.pos() != new_attrs.pos()
+            || old_attrs.shape() != new_attrs.shape()
+            || old_attrs.size() != new_attrs.size()
+            || old_attrs.priority() != new_attrs.priority();
 
         if force_region_update || regions_maybe_stale {
             update_regions(&mut self.regions, old_attrs, true);
@@ -227,37 +318,7 @@ impl Oam {
             self.buf.as_ref().read_hword(offset + 4),
         ];
 
-        let affine = if attrs[0].bit(8) {
-            AffineAttribute::Enabled {
-                double_size: attrs[0].bit(9),
-                params_idx: attrs[1].bits(9..14).try_into().unwrap(),
-            }
-        } else {
-            AffineAttribute::Disabled {
-                hidden: attrs[0].bit(9),
-                flip: (attrs[1].bit(12), attrs[1].bit(13)),
-            }
-        };
-        let color256 = attrs[0].bit(13);
-        let palette_idx = (!color256).then_some(attrs[2].bits(12..));
-
-        let mut y = i16::try_from(attrs[0].bits(..8)).unwrap();
-        #[allow(clippy::cast_possible_truncation)]
-        if y >= VBLANK_DOT.into() {
-            y = i16::from(y as i8);
-        }
-
-        Attributes {
-            pos: (arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9), y),
-            affine,
-            mode: Mode::from_repr(attrs[0].bits(10..12).into()),
-            _mosaic: attrs[0].bit(12),
-            shape: Shape::from_repr(attrs[0].bits(14..).try_into().unwrap()).unwrap(),
-            size: attrs[1].bits(14..).try_into().unwrap(),
-            dots_base_idx: attrs[2].bits(..10),
-            priority: attrs[2].bits(10..12).try_into().unwrap(),
-            palette_idx,
-        }
+        Attributes::from(&attrs)
     }
 }
 
@@ -288,7 +349,7 @@ impl Video {
         self.dispcnt.display_obj
             && self
                 .region_attrs_iter()
-                .filter(|&attrs| attrs.mode == Some(Mode::WindowMask))
+                .filter(|&attrs| attrs.mode() == Some(Mode::WindowMask))
                 .find_map(|attrs| self.compute_obj_dot(attrs))
                 .is_some()
     }
@@ -299,7 +360,7 @@ impl Video {
         }
 
         self.region_attrs_iter()
-            .filter(|&attrs| attrs.mode.is_some_and(|mode| mode != Mode::WindowMask))
+            .filter(|&attrs| attrs.mode().is_some_and(|mode| mode != Mode::WindowMask))
             .find_map(|attrs| self.compute_obj_dot(attrs))
     }
 
@@ -309,7 +370,7 @@ impl Video {
 
         #[allow(clippy::cast_possible_wrap)]
         let (x, y) = (self.x as i16, i16::from(self.y));
-        let (obj_x, obj_y) = attrs.pos;
+        let (obj_x, obj_y) = attrs.pos();
         let (clip_width, clip_height) = attrs.clip_dots_size();
         if !(obj_x..obj_x + i16::from(clip_width)).contains(&x)
             || !(obj_y..obj_y + i16::from(clip_height)).contains(&y)
@@ -321,7 +382,7 @@ impl Video {
             u8::try_from((x - obj_x).bits(..8)).unwrap(),
             u8::try_from((y - obj_y).bits(..8)).unwrap(),
         );
-        (obj_dot_x, obj_dot_y) = match attrs.affine {
+        (obj_dot_x, obj_dot_y) = match attrs.affine() {
             AffineAttribute::Enabled {
                 double_size,
                 params_idx,
@@ -354,14 +415,14 @@ impl Video {
         };
 
         let (tile_x, tile_y) = (obj_dot_x / TILE_DOT_LEN, obj_dot_y / TILE_DOT_LEN);
-        let color256 = attrs.palette_idx.is_none();
+        let color256 = attrs.palette_idx().is_none();
         let dots_row_stride = if self.dispcnt.obj_1d {
             usize::from(tile_width) * if color256 { 2 } else { 1 }
         } else {
             32 // 2D mapping always uses 32x32 tile maps
         };
         let dots_offset = 0x1_0000
-            + 32 * (usize::from(attrs.dots_base_idx)
+            + 32 * (usize::from(attrs.dots_base_idx())
                 + usize::from(tile_y) * dots_row_stride
                 + usize::from(tile_x) * if color256 { 2 } else { 1 });
 
@@ -372,10 +433,10 @@ impl Video {
             return None; // Outside of obj VRAM
         }
 
-        self.read_tile_dot_palette(attrs.palette_idx, dot_offset, dot_x)
+        self.read_tile_dot_palette(attrs.palette_idx(), dot_offset, dot_x)
             .map(|palette| DotInfo {
-                mode: attrs.mode.unwrap(),
-                priority: attrs.priority,
+                mode: attrs.mode().unwrap(),
+                priority: attrs.priority(),
                 palette,
             })
     }
