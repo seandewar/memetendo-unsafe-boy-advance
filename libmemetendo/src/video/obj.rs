@@ -386,7 +386,8 @@ impl Video {
             u8::try_from(y - obj_y).unwrap(),
         );
         let (mut obj_dot_x, mut obj_dot_y) = (obj_dot_actual_x, obj_dot_actual_y);
-        if attrs.mosaic() {
+        let mosaic = attrs.mosaic() && self.mosaic_obj.get() != (1, 1);
+        if mosaic {
             let (mosaic_width, mosaic_height) = self.mosaic_obj.get();
             obj_dot_x = obj_dot_x.saturating_sub(u8::try_from(self.x).unwrap() % mosaic_width);
             obj_dot_y = obj_dot_y.saturating_sub(self.y % mosaic_height);
@@ -418,13 +419,10 @@ impl Video {
                     return None; // Out of sprite bounds
                 }
 
-                if attrs.mosaic() {
+                if mosaic {
                     let (obj_dot_x, obj_dot_y) = apply_affine((obj_dot_x.into(), obj_dot_y.into()));
 
                     // Use the first/last-most dot if the position goes out-of-bounds.
-                    // NOTE: Not totally accurate; see the weird latching behaviour described at
-                    // https://github.com/mgba-emu/mgba/issues/2933, but this is a (more sensible)
-                    // compromise for now.
                     (
                         obj_dot_x
                             .clamp(0, i32::from(obj_width) - 1)
