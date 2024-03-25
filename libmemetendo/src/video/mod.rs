@@ -18,7 +18,7 @@ use self::{
     obj::Oam,
     reg::{
         BackgroundAffine, BackgroundControl, BackgroundOffset, BlendCoefficient, BlendControl,
-        BlendMode, DisplayControl, DisplayStatus, Mosaic, ReferencePoint, WindowControl,
+        BlendMode, DisplayControl, DisplayStatus, MosaicSize, ReferencePoint, WindowControl,
         WindowDimensions,
     },
 };
@@ -101,8 +101,8 @@ pub struct Video {
     winin: [WindowControl; 2],
     winout: WindowControl,
     winobj: WindowControl,
-    mosaic_bg: Mosaic,
-    mosaic_obj: Mosaic,
+    mosaic_bg: MosaicSize,
+    mosaic_obj: MosaicSize,
     bldcnt: BlendControl,
     bldalpha: (BlendCoefficient, BlendCoefficient),
     bldy: BlendCoefficient,
@@ -142,8 +142,8 @@ impl Video {
             winin: [WindowControl::default(); 2],
             winout: WindowControl::default(),
             winobj: WindowControl::default(),
-            mosaic_bg: Mosaic::default(),
-            mosaic_obj: Mosaic::default(),
+            mosaic_bg: MosaicSize::default(),
+            mosaic_obj: MosaicSize::default(),
             bldcnt: BlendControl::default(),
             bldalpha: (BlendCoefficient::default(), BlendCoefficient::default()),
             bldy: BlendCoefficient::default(),
@@ -278,7 +278,6 @@ impl Video {
             return Dot::WHITE;
         }
 
-        // TODO: mosaics
         let top_win = self.find_top_window();
         let mut top_iter = self.compute_top_dots_iter(top_win).peekable();
         let top_info = top_iter.next().unwrap();

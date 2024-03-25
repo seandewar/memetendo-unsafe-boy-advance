@@ -47,14 +47,14 @@ impl Video {
 
     fn compute_bg_tile_mode_dot(&self, bg_idx: usize) -> Option<DotInfo> {
         let text_mode = self.dispcnt.mode == 0 || bg_idx < 2;
-        let (x, y) = if text_mode {
-            let (x, y) = (i32::from(self.x), i32::from(self.y));
-            let (scroll_x, scroll_y) = self.bgofs[bg_idx].get();
 
+        let (mut x, mut y) = self.mosaic_transform_pos(bg_idx, (self.x.into(), self.y.into()));
+        (x, y) = if text_mode {
+            let (scroll_x, scroll_y) = self.bgofs[bg_idx].get();
             (i32::from(scroll_x) + x, i32::from(scroll_y) + y)
         } else {
             // Unlike text mode, this may result in a negative position.
-            self.bg_affine_transform_pos(bg_idx, self.x.into())
+            self.bg_affine_transform_pos(bg_idx, x)
         };
 
         let (tile_x, tile_y) = (
@@ -141,7 +141,8 @@ impl Video {
             return None;
         }
 
-        let (x, y) = self.bg_affine_transform_pos(2, self.x.into());
+        let x = self.mosaic_transform_pos(2, (self.x.into(), 0)).0;
+        let (x, y) = self.bg_affine_transform_pos(2, x);
         if x < 0 || y < 0 {
             return None;
         }
@@ -162,6 +163,15 @@ impl Video {
             5 => Some(DotInfo::Mode5 { pos: (x, y) }),
             _ => unreachable!(),
         }
+    }
+
+    fn mosaic_transform_pos(&self, bg_idx: usize, (mut x, mut y): (i32, i32)) -> (i32, i32) {
+        if self.bgcnt[bg_idx].mosaic {
+            let (mosaic_width, mosaic_height) = self.mosaic_bg.get();
+            x -= x % i32::from(mosaic_width);
+            y -= y % i32::from(mosaic_height);
+        }
+        (x, y)
     }
 
     fn bg_affine_transform_pos(&self, bg_idx: usize, x: i32) -> (i32, i32) {

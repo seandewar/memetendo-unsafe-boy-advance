@@ -260,12 +260,16 @@ impl WindowControl {
 }
 
 #[derive(Copy, Clone, Default, Debug)]
-pub(super) struct Mosaic(u8, u8);
+pub(super) struct MosaicSize(u8, u8);
 
-impl Mosaic {
+impl MosaicSize {
     fn set_bits(&mut self, bits: u8) {
-        self.0 = bits.bits(..4);
-        self.1 = bits.bits(4..);
+        self.0 = bits.bits(..4) + 1;
+        self.1 = bits.bits(4..) + 1;
+    }
+
+    pub fn get(self) -> (u8, u8) {
+        (self.0, self.1)
     }
 }
 

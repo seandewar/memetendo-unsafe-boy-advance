@@ -1,4 +1,3 @@
-use intbits::Bits;
 use strum_macros::FromRepr;
 use tinyvec::ArrayVec;
 
@@ -27,7 +26,7 @@ mod attrs {
         pos: (i16, i16),
         affine: AffineAttribute,
         mode: Option<Mode>,
-        _mosaic: bool, // TODO
+        mosaic: bool,
         shape: Shape,
         size: u8,
         dots_base_idx: u16,
@@ -89,7 +88,7 @@ mod attrs {
                 pos: (arbitrary_sign_extend!(i16, attrs[1].bits(..9), 9), y),
                 affine,
                 mode: Mode::from_repr(attrs[0].bits(10..12).into()),
-                _mosaic: attrs[0].bit(12),
+                mosaic: attrs[0].bit(12),
                 shape,
                 size,
                 dots_base_idx: attrs[2].bits(..10),
@@ -147,6 +146,10 @@ mod attrs {
 
         pub fn size(&self) -> u8 {
             self.size
+        }
+
+        pub fn mosaic(&self) -> bool {
+            self.mosaic
         }
     }
 
@@ -378,37 +381,68 @@ impl Video {
             return None; // Clipped
         }
 
-        let (mut obj_dot_x, mut obj_dot_y) = (
-            u8::try_from((x - obj_x).bits(..8)).unwrap(),
-            u8::try_from((y - obj_y).bits(..8)).unwrap(),
+        let (obj_dot_actual_x, obj_dot_actual_y) = (
+            u8::try_from(x - obj_x).unwrap(),
+            u8::try_from(y - obj_y).unwrap(),
         );
+        let (mut obj_dot_x, mut obj_dot_y) = (obj_dot_actual_x, obj_dot_actual_y);
+        if attrs.mosaic() {
+            let (mosaic_width, mosaic_height) = self.mosaic_obj.get();
+            obj_dot_x = obj_dot_x.saturating_sub(u8::try_from(self.x).unwrap() % mosaic_width);
+            obj_dot_y = obj_dot_y.saturating_sub(self.y % mosaic_height);
+        }
+
         (obj_dot_x, obj_dot_y) = match attrs.affine() {
             AffineAttribute::Enabled {
                 double_size,
                 params_idx,
             } => {
-                let (mut obj_dot_x, mut obj_dot_y) = (i32::from(obj_dot_x), i32::from(obj_dot_y));
-                if double_size {
-                    obj_dot_x -= i32::from(obj_width / 2);
-                    obj_dot_y -= i32::from(obj_height / 2);
-                }
+                let apply_affine = |(mut dot_x, mut dot_y): (i32, i32)| {
+                    if double_size {
+                        dot_x -= i32::from(obj_width / 2);
+                        dot_y -= i32::from(obj_height / 2);
+                    }
 
-                (obj_dot_x, obj_dot_y) = self.obj_affine_transform_pos(
-                    params_idx.into(),
-                    (tile_width, tile_height),
-                    (obj_dot_x, obj_dot_y),
-                );
-                if !(0..i32::from(obj_width)).contains(&obj_dot_x)
-                    || !(0..i32::from(obj_height)).contains(&obj_dot_y)
+                    self.obj_affine_transform_pos(
+                        params_idx.into(),
+                        (tile_width, tile_height),
+                        (dot_x, dot_y),
+                    )
+                };
+
+                let (obj_dot_actual_x, obj_dot_actual_y) =
+                    apply_affine((obj_dot_actual_x.into(), obj_dot_actual_y.into()));
+                if !(0..i32::from(obj_width)).contains(&obj_dot_actual_x)
+                    || !(0..i32::from(obj_height)).contains(&obj_dot_actual_y)
                 {
                     return None; // Out of sprite bounds
                 }
 
-                (
-                    obj_dot_x.bits(..8).try_into().unwrap(),
-                    obj_dot_y.bits(..8).try_into().unwrap(),
-                )
+                if attrs.mosaic() {
+                    let (obj_dot_x, obj_dot_y) = apply_affine((obj_dot_x.into(), obj_dot_y.into()));
+
+                    // Use the first/last-most dot if the position goes out-of-bounds.
+                    // NOTE: Not totally accurate; see the weird latching behaviour described at
+                    // https://github.com/mgba-emu/mgba/issues/2933, but this is a (more sensible)
+                    // compromise for now.
+                    (
+                        obj_dot_x
+                            .clamp(0, i32::from(obj_width) - 1)
+                            .try_into()
+                            .unwrap(),
+                        obj_dot_y
+                            .clamp(0, i32::from(obj_height) - 1)
+                            .try_into()
+                            .unwrap(),
+                    )
+                } else {
+                    (
+                        obj_dot_actual_x.try_into().unwrap(),
+                        obj_dot_actual_y.try_into().unwrap(),
+                    )
+                }
             }
+
             AffineAttribute::Disabled { flip, .. } => {
                 Self::flip_tile_dot_pos(flip, (tile_width, tile_height), (obj_dot_x, obj_dot_y))
             }
