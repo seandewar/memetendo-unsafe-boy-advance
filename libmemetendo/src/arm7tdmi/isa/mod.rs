@@ -23,10 +23,10 @@ impl StatusRegister {
 }
 
 fn op_add_impl(cpu: &mut Cpu, update_cond: bool, a: u32, b: u32, carry: bool) -> u32 {
-    #[allow(clippy::cast_possible_wrap)]
+    #[expect(clippy::cast_possible_wrap)]
     let (a_b, a_b_overflow) = (a as i32).overflowing_add(b as _);
     let (result, a_b_c_overflow) = a_b.overflowing_add(carry.into());
-    #[allow(clippy::cast_sign_loss)]
+    #[expect(clippy::cast_sign_loss)]
     let result = result as u32;
 
     if update_cond {
@@ -66,7 +66,7 @@ impl Cpu {
     }
 
     fn op_smlal(&mut self, update_cond: bool, a: i32, b: i32, accum: i64) -> u64 {
-        #[allow(clippy::cast_sign_loss)]
+        #[expect(clippy::cast_sign_loss)]
         let result = i64::from(a).wrapping_mul(b.into()).wrapping_add(accum) as u64;
         if update_cond {
             self.reg.cpsr.set_nz_from_dword(result);
@@ -191,7 +191,7 @@ impl Cpu {
         value: u32,
         offset: u8,
     ) -> u32 {
-        #[allow(clippy::cast_possible_wrap)]
+        #[expect(clippy::cast_possible_wrap)]
         let mut result = value as i32;
         // A value shifted 32 or more times is either 0 or has all bits set depending on the
         // initial value of the sign bit (due to sign extension)
@@ -213,7 +213,7 @@ impl Cpu {
             result = overflow_result;
         }
 
-        #[allow(clippy::cast_sign_loss)]
+        #[expect(clippy::cast_sign_loss)]
         let result = result as u32;
         if update_cond {
             self.reg.cpsr.set_nz_from_word(result);
@@ -360,7 +360,7 @@ fn r_list_for_each(
     final_addr
 }
 
-#[allow(clippy::struct_excessive_bools)]
+#[expect(clippy::struct_excessive_bools)]
 struct BlockTransferFlags {
     pub preindex: bool,
     pub ascend: bool,
@@ -472,7 +472,7 @@ impl Cpu {
 
         let result = u32::from(bus.read_hword_aligned(addr)).rotate_right(8 * (addr & 1));
 
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         if sign_extend {
             i32::from(result as i16) as _
         } else {
@@ -483,7 +483,7 @@ impl Cpu {
     fn op_ldrb_or_ldsb(bus: &mut impl Bus, addr: u32, sign_extend: bool) -> u32 {
         let result = bus.read_byte(addr);
 
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
+        #[expect(clippy::cast_sign_loss, clippy::cast_possible_wrap)]
         if sign_extend {
             i32::from(result as i8) as _
         } else {
@@ -491,7 +491,7 @@ impl Cpu {
         }
     }
 
-    #[allow(clippy::cast_sign_loss)]
+    #[expect(clippy::cast_sign_loss)]
     fn op_branch(&mut self, bus: &mut impl Bus, base_addr: u32, addr_offset: i32) {
         self.reg.r[PC_INDEX] = base_addr.wrapping_add(addr_offset as _);
         self.reload_pipeline(bus);
@@ -541,7 +541,7 @@ mod tests {
         bus::{tests::NullBus, Bus},
     };
 
-    #[allow(clippy::struct_excessive_bools)]
+    #[expect(clippy::struct_excessive_bools)]
     pub struct InstrTest<'a> {
         setup_fn: Option<&'a dyn Fn(&mut Cpu)>,
         state: OperationState,

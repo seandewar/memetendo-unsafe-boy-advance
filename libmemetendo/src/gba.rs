@@ -170,7 +170,7 @@ impl bus::Bus for Bus<'_> {
             // I/O Registers
             0x0400_0000..=0x0400_03fe => {
                 let addr = addr & 0x3ff;
-                #[allow(clippy::match_overlapping_arm)]
+                #[expect(clippy::match_overlapping_arm)]
                 match addr {
                     0x000..=0x056 => self.video.read_byte(addr),
                     0x060..=0x0a7 => self.audio.read_byte(addr),
@@ -205,7 +205,7 @@ impl bus::Bus for Bus<'_> {
             // I/O Registers
             0x0400_0000..=0x0400_03fe => {
                 let addr = addr & 0x3ff;
-                #[allow(clippy::match_overlapping_arm)]
+                #[expect(clippy::match_overlapping_arm)]
                 match addr {
                     0x000..=0x056 => self.video.write_byte(addr, value),
                     0x060..=0x0a7 => self.audio.write_byte(addr, value),

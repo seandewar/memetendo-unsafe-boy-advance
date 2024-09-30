@@ -349,7 +349,7 @@ impl Cpu {
 
     /// Thumb.16: Conditional branch.
     fn execute_thumb16(&mut self, bus: &mut impl Bus, instr: u16) {
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(clippy::cast_possible_truncation)]
         if self.meets_condition(instr.bits(8..12).try_into().unwrap()) {
             // B{cond} label
             self.op_branch(bus, self.reg.r[PC_INDEX], 2 * i32::from(instr as i8));
@@ -382,7 +382,7 @@ impl Cpu {
     }
 }
 
-#[allow(
+#[expect(
     clippy::unusual_byte_groupings,
     clippy::too_many_lines,
     clippy::unreadable_literal
@@ -476,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_sign_loss)]
+    #[expect(clippy::cast_sign_loss)]
     fn execute_thumb2() {
         // ADD{S} Rd,Rs,Rn
         InstrTest::new_thumb(0b00011_00_111_001_100) // R4,R1,R7
@@ -629,7 +629,7 @@ mod tests {
             .run();
 
         // SUB{S} Rd,#nn
-        #[allow(clippy::cast_sign_loss)]
+        #[expect(clippy::cast_sign_loss)]
         InstrTest::new_thumb(0b001_11_011_00001111) // R3,#15
             .setup(&|cpu| cpu.reg.r[3] = 10)
             .assert_r(3, -5 as _)
@@ -638,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_sign_loss)]
+    #[expect(clippy::cast_sign_loss)]
     fn execute_thumb4() {
         // AND{S} Rd,Rs
         InstrTest::new_thumb(0b010000_0000_001_000) // R0,R1
@@ -1243,7 +1243,7 @@ mod tests {
             .assert_r(13, 35)
             .run();
 
-        #[allow(clippy::cast_sign_loss)]
+        #[expect(clippy::cast_sign_loss)]
         InstrTest::new_thumb(0b010001_00_1_1_110_000) // R8,R14
             .setup(&|cpu| {
                 cpu.reg.r[8] = 5;

@@ -110,7 +110,7 @@ impl audio::Callback for Callback {
 pub struct Audio(Option<(AudioQueue<i16>, Callback)>);
 
 impl Audio {
-    #[allow(clippy::result_large_err)]
+    #[expect(clippy::result_large_err)]
     pub fn new(
         params: Option<(&AudioSubsystem, AudioSpecDesired)>,
     ) -> Result<Self, (String, Self)> {

@@ -41,7 +41,7 @@ impl Timers {
     }
 
     // Panics if the ticks calculation overflows u16, but that shouldn't be possible.
-    #[allow(clippy::missing_panics_doc)]
+    #[expect(clippy::missing_panics_doc)]
     pub fn step(&mut self, irq: &mut Irq, audio: &mut Audio, cycles: u8) {
         let mut prev_overflow_count = 0;
         for (i, timer) in self.0.iter_mut().enumerate() {

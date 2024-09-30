@@ -13,7 +13,7 @@ pub enum BackgroundMode {
     Invalid,
 }
 
-#[allow(clippy::struct_excessive_bools)]
+#[expect(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, Debug)]
 pub(super) struct DisplayControl {
     pub mode: u8,
@@ -81,7 +81,6 @@ pub(super) struct DisplayStatus {
 }
 
 impl DisplayStatus {
-    #[allow(clippy::similar_names)]
     fn lo_bits(self, vblanking: bool, hblanking: bool, vcount: u8) -> u8 {
         self.cached_bits
             .with_bit(0, vblanking)

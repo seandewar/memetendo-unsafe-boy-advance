@@ -37,7 +37,7 @@ enum TimingMode {
     Special,
 }
 
-#[allow(clippy::struct_excessive_bools)]
+#[expect(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
 struct Channel {
     initial_src_addr: u32,

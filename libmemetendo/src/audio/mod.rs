@@ -95,7 +95,7 @@ impl Audio {
 
     pub fn step(&mut self, cb: &mut impl Callback, dma: &mut Dma, cycles: u8) {
         // Frame sequencer runs at 512 Hz.
-        #[allow(clippy::cast_possible_truncation)] // it's fine clippy, gosh
+        #[expect(clippy::cast_possible_truncation)] // it's fine clippy, gosh
         const CYCLES_PER_FRAME_SEQ_CLOCK: u16 = (CYCLES_PER_SECOND / 512) as _;
 
         if !self.enabled {

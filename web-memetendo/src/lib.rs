@@ -486,9 +486,11 @@ fn init_export_backup_button(state: &Rc<RefCell<State>>) {
                     return;
                 };
 
+                let blob_prop_bag = BlobPropertyBag::new();
+                blob_prop_bag.set_type("application/octet-stream");
                 let blob = Blob::new_with_u8_array_sequence_and_options(
                     &Array::of1(&Uint8Array::from(backup_buf).into()),
-                    BlobPropertyBag::new().type_("application/octet-stream"),
+                    &blob_prop_bag,
                 )
                 .unwrap();
                 let url = Url::create_object_url_with_blob(&blob).unwrap();

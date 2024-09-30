@@ -85,7 +85,7 @@ impl Video {
                 return None; // Screen wraparound disabled and out of bounds
             }
 
-            #[allow(clippy::cast_sign_loss)]
+            #[expect(clippy::cast_sign_loss)]
             (tile_x as u32, tile_y as u32)
         };
         let screen_tile_idx = screen_tile_y * u32::from(screen_tile_len) + screen_tile_x;
@@ -146,7 +146,7 @@ impl Video {
         if x < 0 || y < 0 {
             return None;
         }
-        #[allow(clippy::cast_sign_loss)]
+        #[expect(clippy::cast_sign_loss)]
         let (x, y) = (x as u32, y as u32);
 
         match self.dispcnt.mode {

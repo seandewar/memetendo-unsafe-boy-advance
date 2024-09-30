@@ -19,19 +19,19 @@ struct Callback {
 
 impl Callback {
     async fn new() -> Result<Self, JsValue> {
+        let ctx_options = AudioContextOptions::new();
+        ctx_options.set_sample_rate(44_100.0);
         // TODO: maybe handle other sample rates or channel counts...
-        let ctx = AudioContext::new_with_context_options(
-            AudioContextOptions::new().sample_rate(44_100.0),
-        )?;
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+        let ctx = AudioContext::new_with_context_options(&ctx_options)?;
+
+        #[expect(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
         let freq = ctx.sample_rate() as u32;
 
         JsFuture::from(ctx.audio_worklet()?.add_module("audio_processor.js")?).await?;
-        let node = AudioWorkletNode::new_with_options(
-            &ctx,
-            "audio-processor",
-            AudioWorkletNodeOptions::new().output_channel_count(&js_sys::Array::of1(&2.into())),
-        )?;
+
+        let node_options = AudioWorkletNodeOptions::new();
+        node_options.set_output_channel_count(&js_sys::Array::of1(&2.into()));
+        let node = AudioWorkletNode::new_with_options(&ctx, "audio-processor", &node_options)?;
         node.connect_with_audio_node(&ctx.destination())?;
 
         Ok(Self {

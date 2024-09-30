@@ -1,7 +1,7 @@
 use intbits::Bits;
 
 // Panic is impossible as the first 8 bits of value always fits a u8.
-#[allow(clippy::missing_panics_doc)]
+#[expect(clippy::missing_panics_doc)]
 #[inline]
 pub fn write_hword_as_bytes<T: Bus + ?Sized>(bus: &mut T, addr: u32, value: u16) {
     bus.write_byte(addr, value.bits(..8).try_into().unwrap());

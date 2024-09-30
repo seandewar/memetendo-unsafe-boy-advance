@@ -76,7 +76,7 @@ impl Tone {
     }
 }
 
-#[allow(clippy::module_name_repetitions)]
+#[expect(clippy::module_name_repetitions)]
 #[derive(Debug, Default)]
 pub struct ToneAndSweep {
     tone: Tone,

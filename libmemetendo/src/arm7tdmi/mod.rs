@@ -124,7 +124,7 @@ impl Cpu {
 
     // We only panic if the priority number of a pending exception does not map to an exception,
     // which should be impossible.
-    #[allow(clippy::missing_panics_doc)]
+    #[expect(clippy::missing_panics_doc)]
     pub fn step(&mut self, bus: &mut impl Bus) {
         for priority in 0..self.pending_exceptions.len() {
             let raised = take(&mut self.pending_exceptions[priority]);
@@ -324,7 +324,7 @@ mod tests {
         assert_no_pending_exceptions(&cpu);
     }
 
-    #[allow(clippy::unusual_byte_groupings)]
+    #[expect(clippy::unusual_byte_groupings)]
     #[test]
     fn step_works() {
         let mut bus = VecBus::new(110);

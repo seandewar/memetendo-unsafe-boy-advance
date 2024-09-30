@@ -152,7 +152,7 @@ impl Video {
 
     // Panic should be impossible as self.x should be < HBLANK_DOT when calling screen.put_dot(),
     // which fits in a u8.
-    #[allow(clippy::missing_panics_doc)]
+    #[expect(clippy::missing_panics_doc)]
     pub fn step(&mut self, cb: &mut impl Callback, irq: &mut Irq, dma: &mut Dma, cycles: u8) {
         self.cycle_accum += u16::from(cycles);
         while self.cycle_accum >= 4 {
@@ -368,7 +368,7 @@ impl Video {
 
     fn alpha_blend_dots(&self, top: Dot, bot: Dot) -> Dot {
         let factor = (self.bldalpha.0.factor(), self.bldalpha.1.factor());
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let blend = |top: u8, bot: u8| {
             u8::try_from(
                 u32::from(Dot::MAX_COMPONENT)
@@ -390,7 +390,7 @@ impl Video {
         } else {
             |comp| f32::from(Dot::MAX_COMPONENT - comp)
         };
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let blend = |comp| (f32::from(comp) + mul(comp) * self.bldy.factor()) as u8;
 
         Dot::new(blend(dot.r), blend(dot.g), blend(dot.b))
@@ -473,7 +473,7 @@ impl DotPaletteInfo {
 const TILE_DOT_LEN: u8 = 8;
 
 impl Video {
-    #[allow(clippy::similar_names)]
+    #[expect(clippy::similar_names)]
     fn affine_transform_pos(
         (ref_x, ref_y): (i32, i32),
         (dmx, dmy): (i32, i32),

@@ -21,7 +21,7 @@ impl TryFrom<Rc<[u8]>> for Rom {
 
 impl Rom {
     /// See `Self::try_from(Rc<[u8]>)`
-    #[allow(clippy::missing_errors_doc)]
+    #[expect(clippy::missing_errors_doc)]
     pub fn new(buf: Rc<[u8]>) -> Result<Self, InvalidRomSize> {
         Self::try_from(buf)
     }

@@ -25,8 +25,7 @@ As for tests, it currently passes:
 
 ## Building
 
-Memetendo Unsafe Boy Advance currently targets Rust 1.72, but supports Rust 1.70
-as a minimum.
+Memetendo Unsafe Boy Advance currently requires Rust 1.81 as a minimum.
 
 Just use `cargo build` to build (optionally passing the `--release` argument to
 build with full optimizations), or `cargo run` to build and run.

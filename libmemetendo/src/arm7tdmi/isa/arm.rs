@@ -196,7 +196,7 @@ impl Cpu {
             // 64-bit result written to RdHiLo.
             let accum_dword = u64::from(accum1).with_bits(32.., accum2.into());
 
-            #[allow(clippy::cast_possible_wrap)]
+            #[expect(clippy::cast_possible_wrap)]
             let result = match instr.bits(21..23) {
                 // UMULL{cond}{S} RdLo,RdHi,Rm,Rs
                 0 => self.op_umlal(update_cond, value1, value2, 0),
@@ -440,7 +440,7 @@ impl Cpu {
     }
 }
 
-#[allow(clippy::unusual_byte_groupings, clippy::too_many_lines)]
+#[expect(clippy::unusual_byte_groupings, clippy::too_many_lines)]
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -760,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_sign_loss)]
+    #[expect(clippy::cast_sign_loss)]
     fn execute_arm_data_processing_ops() {
         // AND plus argument handling is already tested in execute_arm_data_processing_decode.
         // We'll test the other ops here with and without the condition bit set
@@ -1034,7 +1034,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn execute_arm_multiply() {
         // MUL{cond}{S} Rd,Rm,Rs
         // AL S R14,R2,R0
@@ -1090,7 +1090,7 @@ mod tests {
 
         // UMULL{cond}{S} RdLo,RdHi,Rs,Rn
         // AL S R2,R14,R0,R3
-        #[allow(clippy::cast_lossless)]
+        #[expect(clippy::cast_lossless)]
         InstrTest::new_arm(0b1110_000_0100_1_1110_0010_0000_1001_0011)
             .setup(&|cpu| {
                 cpu.reg.r[0] = 30;
@@ -1561,7 +1561,7 @@ mod tests {
 
         // LDR{cond}SH Rd,<Address>
         // AL SH R5,[R15,<#+7>]!
-        #[allow(clippy::cast_sign_loss)]
+        #[expect(clippy::cast_sign_loss)]
         bus.assert_oob(&|bus| {
             InstrTest::new_arm(0b1110_000_111_1_1_1111_0101_0000_1_11_1_0111)
                 .setup(&|cpu| cpu.reg.r[PC_INDEX] = -7i32 as u32)

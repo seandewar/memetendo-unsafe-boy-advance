@@ -22,7 +22,7 @@ impl OperationMode {
     }
 
     // Only panics if usize is smaller than 5 bits... which is impossible.
-    #[allow(clippy::missing_panics_doc)]
+    #[expect(clippy::missing_panics_doc)]
     #[must_use]
     pub fn from_bits(bits: u32) -> Option<Self> {
         Self::from_repr(bits.bits(..5).try_into().unwrap())
@@ -174,7 +174,7 @@ impl OperationState {
     }
 }
 
-#[allow(clippy::struct_excessive_bools)]
+#[expect(clippy::struct_excessive_bools)]
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub struct StatusRegister {
     pub signed: bool,

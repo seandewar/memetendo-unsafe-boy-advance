@@ -40,7 +40,7 @@ impl TryFrom<Rc<[u8]>> for Rom {
 
 impl Rom {
     /// See `Self::try_from(Rc<[u8]>)`
-    #[allow(clippy::missing_errors_doc)]
+    #[expect(clippy::missing_errors_doc)]
     pub fn new(buf: Rc<[u8]>) -> Result<Self, InvalidRomSize> {
         Self::try_from(buf)
     }
@@ -193,7 +193,7 @@ impl Bus for Cartridge {
     fn read_byte(&mut self, addr: u32) -> u8 {
         match addr {
             // TODO: WAITCNT with wait states 0, 1 and 2
-            #[allow(clippy::manual_range_patterns)]
+            #[expect(clippy::manual_range_patterns)]
             0x000_0000..=0x1ff_ffff | 0x200_0000..=0x3ff_ffff | 0x400_0000..=0x5ff_ffff => {
                 if self.is_eeprom_offset(addr) {
                     match self.backup.as_mut() {
@@ -224,7 +224,7 @@ impl Bus for Cartridge {
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
             // TODO: WAITCNT with wait states 0, 1 and 2
-            #[allow(clippy::manual_range_patterns)]
+            #[expect(clippy::manual_range_patterns)]
             0x000_0000..=0x1ff_ffff | 0x200_0000..=0x3ff_ffff | 0x400_0000..=0x5ff_ffff => {
                 if self.is_eeprom_offset(addr) {
                     if let Some(Backup::EepromUnknownSize) = self.backup {

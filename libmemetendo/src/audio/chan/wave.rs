@@ -9,7 +9,6 @@ use super::Length;
 
 const WAVE_RAM_BANK_LEN: usize = 16;
 
-#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default)]
 pub struct Wave {
     pub length: Length<256>,
@@ -26,7 +25,7 @@ pub struct Wave {
     cached_bits: u64,
 }
 
-#[allow(clippy::module_name_repetitions)]
+#[expect(clippy::module_name_repetitions)]
 pub struct WaveRam<'a>(&'a mut Wave);
 
 // TODO: As the wave RAM is basically one giant shift register, reads and writes may be shifted,
@@ -191,7 +190,7 @@ impl<const FIFO_A: bool> Bus for Fifo<FIFO_A> {
     }
 
     fn write_byte(&mut self, _addr: u32, value: u8) {
-        #[allow(clippy::cast_possible_wrap)]
+        #[expect(clippy::cast_possible_wrap)]
         let sample = value as i8;
         if self.len < self.samples.len() {
             self.samples[(self.start_idx + self.len) % self.samples.len()] = sample;

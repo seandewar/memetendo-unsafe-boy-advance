@@ -60,7 +60,7 @@ mod attrs {
             let palette_idx = (!color256).then_some(attrs[2].bits(12..));
 
             let mut y = i16::try_from(attrs[0].bits(..8)).unwrap();
-            #[allow(clippy::cast_possible_truncation)]
+            #[expect(clippy::cast_possible_truncation)]
             if y >= VBLANK_DOT.into() {
                 y = i16::from(y as i8);
             }
@@ -241,10 +241,10 @@ impl Oam {
                 return; // Fully outside of the drawable area; no region.
             }
 
-            #[allow(clippy::cast_sign_loss)]
+            #[expect(clippy::cast_sign_loss)]
             let (start_region_x, start_region_y) =
                 Self::region_pos((start_x.max(0) as u16, start_y.max(0) as u16));
-            #[allow(clippy::cast_sign_loss)]
+            #[expect(clippy::cast_sign_loss)]
             let (end_region_x, end_region_y) = Self::region_pos((
                 end_x.min(i16::from(HBLANK_DOT) - 1) as u16,
                 end_y.min(i16::from(VBLANK_DOT) - 1) as u16,
@@ -371,7 +371,7 @@ impl Video {
         let (tile_width, tile_height) = attrs.tiles_size();
         let (obj_width, obj_height) = (tile_width * TILE_DOT_LEN, tile_height * TILE_DOT_LEN);
 
-        #[allow(clippy::cast_possible_wrap)]
+        #[expect(clippy::cast_possible_wrap)]
         let (x, y) = (self.x as i16, i16::from(self.y));
         let (obj_x, obj_y) = attrs.pos();
         let (clip_width, clip_height) = attrs.clip_dots_size();
@@ -473,7 +473,7 @@ impl Video {
             })
     }
 
-    #[allow(clippy::similar_names)]
+    #[expect(clippy::similar_names)]
     fn obj_affine_transform_pos(
         &self,
         params_idx: u32,
@@ -481,7 +481,7 @@ impl Video {
         (dot_x, dot_y): (i32, i32),
     ) -> (i32, i32) {
         let params_offset = 6 + 32 * params_idx;
-        #[allow(clippy::cast_possible_wrap)]
+        #[expect(clippy::cast_possible_wrap)]
         let (dx, dmx, dy, dmy) = (
             i32::from(self.oam.buf.as_ref().read_hword(params_offset) as i16),
             i32::from(self.oam.buf.as_ref().read_hword(params_offset + 8) as i16),
