@@ -340,7 +340,7 @@ pub(super) struct DotInfo {
 }
 
 impl Video {
-    fn region_attrs_iter(&self) -> impl Iterator<Item = &Attributes> + '_ {
+    fn region_attrs_iter(&self) -> impl Iterator<Item = &Attributes> + use<'_> {
         let region_idx = Oam::region_index(Oam::region_pos((self.x, self.y.into())));
 
         self.oam.regions[region_idx]

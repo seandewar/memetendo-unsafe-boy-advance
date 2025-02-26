@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A Game Boy Advance emulator, written in Rust"
 authors = ["Sean Dewar <https://github.com/seandewar>"]
 edition = "2021"
+rust-version = "1.82"
 
 [dependencies]
 libmemetendo = { path = "../libmemetendo" }

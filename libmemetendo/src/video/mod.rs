@@ -298,7 +298,7 @@ impl Video {
             };
             let win_blendfx = self
                 .window_control(top_win)
-                .map_or(true, |w| w.blendfx_enabled);
+                .is_none_or(|w| w.blendfx_enabled);
 
             targeted && win_blendfx
         };
@@ -335,7 +335,7 @@ impl Video {
         }
     }
 
-    fn compute_top_dots_iter(&self, top_win: Window) -> impl Iterator<Item = DotInfo> + '_ {
+    fn compute_top_dots_iter(&self, top_win: Window) -> impl Iterator<Item = DotInfo> + use<'_> {
         let mut obj_info = self.compute_top_obj_dot(top_win);
         let mut bg_tile_mode_iter = self.compute_bg_tile_mode_dot_iter(top_win).peekable();
 

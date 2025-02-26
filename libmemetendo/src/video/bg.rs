@@ -35,12 +35,12 @@ impl Video {
     pub(super) fn compute_bg_tile_mode_dot_iter(
         &self,
         win: Window,
-    ) -> impl Iterator<Item = DotInfo> + '_ {
+    ) -> impl Iterator<Item = DotInfo> + use<'_> {
         self.tile_mode_bg_order
             .iter()
             .filter(move |&&i| {
                 self.dispcnt.display_bg[i]
-                    && self.window_control(win).map_or(true, |w| w.display_bg[i])
+                    && self.window_control(win).is_none_or(|w| w.display_bg[i])
             })
             .filter_map(|&i| self.compute_bg_tile_mode_dot(i))
     }

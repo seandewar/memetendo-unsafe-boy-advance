@@ -154,17 +154,17 @@ impl Audio {
         let fifo_samples = [self.channels.4.sample(), self.channels.5.sample()];
 
         // Might need to invalidate the cache if the channel outputs changed.
-        if !self
+        if self
             .mix_cache
             .dmg()
-            .is_some_and(|(volumes, _)| volumes == dmg_volumes)
+            .is_none_or(|(volumes, _)| volumes != dmg_volumes)
         {
             self.mix_cache.set_dmg(None);
         }
-        if !self
+        if self
             .mix_cache
             .fifo()
-            .is_some_and(|(samples, _)| samples == fifo_samples)
+            .is_none_or(|(samples, _)| samples != fifo_samples)
         {
             self.mix_cache.set_fifo(None);
         }

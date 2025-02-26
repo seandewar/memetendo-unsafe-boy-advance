@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Library for emulating the Game Boy Advance"
 authors = ["Sean Dewar <https://github.com/seandewar>"]
 edition = "2021"
+rust-version = "1.82"
 
 [dependencies]
 bitmatch = "0.1.1"

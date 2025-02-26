@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "WASM Web front-end for Memetendo Unsafe Boy Advance"
 authors = ["Sean Dewar <https://github.com/seandewar>"]
 edition = "2021"
+rust-version = "1.82"
 
 [lib]
 crate-type = ["cdylib"]
