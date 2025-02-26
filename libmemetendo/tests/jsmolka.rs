@@ -3,14 +3,13 @@
 mod runner;
 mod util;
 
-use std::path::Path;
+use std::{path::Path, sync::LazyLock};
 
 use image::RgbImage;
-use once_cell::sync::Lazy;
 use runner::Runner;
 use util::{read_cart_rom, read_image};
 
-static PASS_SCREEN: Lazy<RgbImage> = Lazy::new(|| read_image("tests/jsmolka/ok.png"));
+static PASS_SCREEN: LazyLock<RgbImage> = LazyLock::new(|| read_image("tests/jsmolka/ok.png"));
 
 fn run_test(path: impl AsRef<Path>, pass_screen: &RgbImage) {
     let mut runner = Runner::new(read_cart_rom(path));

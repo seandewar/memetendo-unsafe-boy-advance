@@ -285,7 +285,6 @@ dependencies = [
  "image",
  "intbits",
  "log",
- "once_cell",
  "strum",
  "strum_macros",
  "tinyvec",
